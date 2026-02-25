@@ -6,6 +6,6 @@ cd "$(dirname "$0")"
 [ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"
 git pull origin main
 npm ci --omit=dev
-pm2 restart tg-digest-bot 2>/dev/null || pm2 start ecosystem.config.js --name tg-digest-bot
+pm2 restart tg-digest-bot 2>/dev/null || pm2 start ecosystem.config.cjs --name tg-digest-bot
 pm2 save
 echo "Done."

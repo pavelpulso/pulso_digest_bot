@@ -15,5 +15,5 @@ if [ -z "$DEPLOY_SSH" ] || [ -z "$DEPLOY_PATH" ]; then
 fi
 
 echo "Deploying via SSH to $DEPLOY_SSH..."
-ssh "$DEPLOY_SSH" "cd $DEPLOY_PATH && ./deploy.sh"
+ssh "$DEPLOY_SSH" "bash -l -c 'cd $DEPLOY_PATH && ./deploy.sh'"
 echo "Done."

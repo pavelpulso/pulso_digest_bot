@@ -20,7 +20,7 @@ cp .env.example .env
 node src/auth.js
 
 # Run with PM2
-pm2 start ecosystem.config.js
+pm2 start ecosystem.config.cjs
 pm2 save
 pm2 startup
 ```
@@ -43,7 +43,7 @@ Repository: **https://github.com/pavelpulso/pulso_digest_bot**
    node src/auth.js     # obtain GramJS session
    npm ci
    chmod +x deploy.sh
-   pm2 start ecosystem.config.js
+   pm2 start ecosystem.config.cjs
    pm2 save
    pm2 startup
    ```
