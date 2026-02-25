@@ -60,6 +60,12 @@ const bot = new Telegraf(BOT_TOKEN)
 const pendingAddChannels = new Map()
 const pendingMinusWords = new Map()
 
+/**
+ * Кэш данных блока: postId → { fullText, expandedText, action, reason }.
+ * Нужен для редактирования сообщения на месте при нажатии «Подробнее».
+ */
+const blockCache = new Map()
+
 /** Ответ на callback_query без падения при "query is too old". */
 async function safeAnswerCbQuery(ctx, text) {
   try {
@@ -228,19 +234,44 @@ function formatBlockText(block, postById, useHtml = true, options = {}) {
   return text.length > MAX_MESSAGE_LEN ? text.slice(0, MAX_MESSAGE_LEN - 1) + "…" : text
 }
 
-/** Inline-кнопки для блока с одним постом: feedback + опционально «Подробнее» (гипотеза #38). */
-function blockKeyboard(postId, hasWhy = false) {
+/** Inline-кнопки для блока с одним постом.
+ * expanded=true — показываем «Свернуть», expanded=false — «Подробнее» (если hasWhy).
+ */
+function blockKeyboard(postId, hasWhy = false, expanded = false) {
   if (!postId) return undefined
-  const row = [
+  const feedbackRow = [
     { text: "👍 Релевантно", callback_data: `fb:${postId}:1` },
     { text: "👎 Не релевантно", callback_data: `fb:${postId}:-1` }
   ]
-  if (hasWhy) row.push({ text: "📌 Подробнее", callback_data: `why:${postId}` })
-  return {
-    reply_markup: {
-      inline_keyboard: [row]
+  if (expanded) {
+    return {
+      reply_markup: {
+        inline_keyboard: [
+          feedbackRow,
+          [{ text: "↩ Свернуть", callback_data: `why_collapse:${postId}` }]
+        ]
+      }
     }
   }
+  if (hasWhy) feedbackRow.push({ text: "📌 Подробнее", callback_data: `why:${postId}` })
+  return {
+    reply_markup: {
+      inline_keyboard: [feedbackRow]
+    }
+  }
+}
+
+/**
+ * Сохраняет данные блока в кэш (для редактирования на месте).
+ * @param {string} postId - внутренний id поста
+ * @param {string} normalText - краткий текст блока
+ * @param {object} block - блок из generateSummaryBlocks
+ * @param {object} postById - карта id→{channel,postUrl}
+ * @param {string|null} reason - объяснение из rankMap
+ */
+function storeBlockCache(postId, normalText, block, postById, reason) {
+  const action = block.action || null
+  blockCache.set(postId, { normalText, block, postById, action, reason })
 }
 
 function filterPostsForUser(posts, userId) {
@@ -374,15 +405,12 @@ async function digestReply(ctx, offset = 0, count = DIGEST_PAGE_SIZE) {
   })
   await ctx.telegram.sendMessage(ctx.chat.id, "<b>Главное для тебя:</b>", optsHtml)
   for (const block of blocks) {
-    const blockOpts =
-      block.ids.length === 1
-        ? { ...optsHtml, ...blockKeyboard(block.ids[0], !!rankMap[block.ids[0]]?.reason) }
-        : optsHtml
-    await ctx.telegram.sendMessage(
-      ctx.chat.id,
-      formatBlockText(block, postById, true, { compact }),
-      blockOpts
-    )
+    const postId = block.ids.length === 1 ? block.ids[0] : null
+    const hasWhy = postId ? !!rankMap[postId]?.reason : false
+    const blockOpts = postId ? { ...optsHtml, ...blockKeyboard(postId, hasWhy, false) } : optsHtml
+    const blockText = formatBlockText(block, postById, true, { compact })
+    await ctx.telegram.sendMessage(ctx.chat.id, blockText, blockOpts)
+    if (postId) storeBlockCache(postId, blockText, block, postById, rankMap[postId]?.reason || null)
   }
 }
 
@@ -503,11 +531,12 @@ async function sendSummaryBlocks(ctx, dateStr, label, offset = 0, options = {}) 
   const rankMap = getRankingsMap(userId, dateStr)
   const compact = getDigestFormat(userId) === "compact"
   for (const block of blocks) {
-    const blockOpts =
-      block.ids.length === 1
-        ? { ...optsHtml, ...blockKeyboard(block.ids[0], !!rankMap[block.ids[0]]?.reason) }
-        : optsHtml
-    await ctx.telegram.sendMessage(chatId, formatBlockText(block, postById, true, { compact }), blockOpts)
+    const postId = block.ids.length === 1 ? block.ids[0] : null
+    const hasWhy = postId ? !!rankMap[postId]?.reason : false
+    const blockOpts = postId ? { ...optsHtml, ...blockKeyboard(postId, hasWhy, false) } : optsHtml
+    const blockText = formatBlockText(block, postById, true, { compact })
+    await ctx.telegram.sendMessage(chatId, blockText, blockOpts)
+    if (postId) storeBlockCache(postId, blockText, block, postById, rankMap[postId]?.reason || null)
   }
 }
 
@@ -542,15 +571,12 @@ export async function sendMorningDigests(botInstance) {
         await botInstance.telegram.sendMessage(u.user_id, "<b>Главное для тебя:</b>", optsHtml)
         const compact = getDigestFormat(u.user_id) === "compact"
         for (const block of payload.blocks) {
-          const blockOpts =
-            block.ids.length === 1
-              ? { ...optsHtml, ...blockKeyboard(block.ids[0], !!payload.rankMap[block.ids[0]]?.reason) }
-              : optsHtml
-          await botInstance.telegram.sendMessage(
-            u.user_id,
-            formatBlockText(block, payload.postById, true, { compact }),
-            blockOpts
-          )
+          const postId = block.ids.length === 1 ? block.ids[0] : null
+          const hasWhy = postId ? !!payload.rankMap[postId]?.reason : false
+          const blockOpts = postId ? { ...optsHtml, ...blockKeyboard(postId, hasWhy, false) } : optsHtml
+          const blockText = formatBlockText(block, payload.postById, true, { compact })
+          await botInstance.telegram.sendMessage(u.user_id, blockText, blockOpts)
+          if (postId) storeBlockCache(postId, blockText, block, payload.postById, payload.rankMap[postId]?.reason || null)
         }
       }
     } catch (e) {
@@ -683,15 +709,12 @@ bot.action(/^more:(\d+):(\d+)$/, async (ctx) => {
     reply_markup: { inline_keyboard: [row] }
   })
   for (const block of blocks) {
-    const blockOpts =
-      block.ids.length === 1
-        ? { ...optsHtml, ...blockKeyboard(block.ids[0], !!rankMap[block.ids[0]]?.reason) }
-        : optsHtml
-    await ctx.telegram.sendMessage(
-      ctx.chat.id,
-      formatBlockText(block, postById, true, { compact }),
-      blockOpts
-    )
+    const postId = block.ids.length === 1 ? block.ids[0] : null
+    const hasWhy = postId ? !!rankMap[postId]?.reason : false
+    const blockOpts = postId ? { ...optsHtml, ...blockKeyboard(postId, hasWhy, false) } : optsHtml
+    const blockText = formatBlockText(block, postById, true, { compact })
+    await ctx.telegram.sendMessage(ctx.chat.id, blockText, blockOpts)
+    if (postId) storeBlockCache(postId, blockText, block, postById, rankMap[postId]?.reason || null)
   }
 })
 
@@ -702,17 +725,72 @@ bot.action(/^why:(.+)$/, async (ctx) => {
     await safeAnswerCbQuery(ctx)
     return
   }
-  const date = todayDate()
-  const r = getRankingByUserAndPost(userId, postId, date)
-  if (!r?.reason) {
-    await safeAnswerCbQuery(ctx, "Объяснение недоступно")
+
+  const cached = blockCache.get(postId)
+  if (!cached) {
+    // fallback: посылаем отдельное сообщение если кэш не найден
+    const date = todayDate()
+    const r = getRankingByUserAndPost(userId, postId, date)
+    if (!r?.reason) {
+      await safeAnswerCbQuery(ctx, "Объяснение недоступно")
+      return
+    }
+    await safeAnswerCbQuery(ctx)
+    await ctx.telegram.sendMessage(ctx.chat.id, `📌 <b>Почему в дайджесте:</b>\n\n${escapeHtml(r.reason)}`, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true
+    })
     return
   }
+
   await safeAnswerCbQuery(ctx)
-  await ctx.telegram.sendMessage(ctx.chat.id, `📌 <b>Почему в дайджесте:</b>\n\n${escapeHtml(r.reason)}`, {
-    parse_mode: "HTML",
-    disable_web_page_preview: true
-  })
+
+  const { normalText, action, reason } = cached
+  const lines = [normalText]
+  if (reason) lines.push(`\n📌 <b>Почему в дайджесте:</b>\n${escapeHtml(reason)}`)
+  if (action) lines.push(`⚡ <b>Quick action:</b> ${escapeHtml(action)}`)
+  const expandedText = lines.join("\n\n")
+
+  try {
+    await ctx.editMessageText(expandedText, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      ...blockKeyboard(postId, false, true)
+    })
+  } catch (e) {
+    // сообщение не изменилось или старое — игнорируем
+    console.error("[why] editMessageText error:", e.message)
+  }
+})
+
+bot.action(/^why_collapse:(.+)$/, async (ctx) => {
+  const postId = ctx.match[1]
+  const userId = ctx.from?.id
+  if (!userId || isUserBanned(userId)) {
+    await safeAnswerCbQuery(ctx)
+    return
+  }
+
+  const cached = blockCache.get(postId)
+  if (!cached) {
+    await safeAnswerCbQuery(ctx, "Невозможно свернуть")
+    return
+  }
+
+  await safeAnswerCbQuery(ctx)
+
+  const { normalText, reason } = cached
+  const hasWhy = !!reason
+
+  try {
+    await ctx.editMessageText(normalText, {
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      ...blockKeyboard(postId, hasWhy, false)
+    })
+  } catch (e) {
+    console.error("[why_collapse] editMessageText error:", e.message)
+  }
 })
 
 bot.action(/^fb:(.+):(-?1)$/, async (ctx) => {
