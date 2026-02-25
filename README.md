@@ -95,9 +95,16 @@ If you want the VPS to update automatically when you push to `main`:
 - `/start` — Welcome and short help
 - `/digest` — Top 10 posts for today
 - `/profile` — View or set your profile (interests)
-- `/summary` — Pick a date and get a summary for that day
-- `/channels` — List tracked channels
+- `/minus_words word1, word2` — Exclude posts containing these words from your digest (comma-separated)
+- `/summary` — Pick a date or **Weekly (last 7 days)** for a summary digest
+- `/channels` — List tracked channels; **Channel settings** — hide a channel from digest or mark as important
 - `/add @channel`, `/remove @channel` — Add or remove a channel
+
+**Morning digest:** every day at **07:00** (Europe/Moscow) the bot sends a **teaser** (main hook) with a button "Open digest", then the first page of the digest. Posts are collected at 06:00.
+
+**Feedback:** under each post in the digest you can tap **👍 Релевантно** / **👎 Не релевантно**; the bot uses this to improve future ranking for you.
+
+**Channel recommendations:** in **Profile** → **Рекомендация каналов** the bot suggests channels that match your interests (from the current channel list); you can mark them as **Important** in one tap.
 
 Forwarding a post from a channel to the bot adds that channel to the list.
 

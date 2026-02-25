@@ -4,6 +4,9 @@
 
 const DIGEST_PAGE_SIZE = 10;
 
+/** Минимальный score поста для попадания в дайджест (ниже — не показываем). */
+export const MIN_DIGEST_SCORE = 0.5;
+
 /**
  * Обрезает текст до maxLen, добавляет многоточие при необходимости.
  */
@@ -73,4 +76,16 @@ export function formatDateLabel(date) {
   const month = months[d.getMonth()];
   const year = d.getFullYear();
   return `${day} ${month} ${year}`;
+}
+
+/** Подпись для диапазона дат, например "19–25 Feb 2026". */
+export function formatDateRangeLabel(sinceDate, untilDate) {
+  const since = sinceDate instanceof Date ? sinceDate : new Date(sinceDate);
+  const until = untilDate instanceof Date ? untilDate : new Date(untilDate);
+  const months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
+  const sameMonth = since.getMonth() === until.getMonth() && since.getFullYear() === until.getFullYear();
+  if (sameMonth) {
+    return `${since.getDate()}–${until.getDate()} ${months[until.getMonth()]} ${until.getFullYear()}`;
+  }
+  return `${since.getDate()} ${months[since.getMonth()]} – ${until.getDate()} ${months[until.getMonth()]} ${until.getFullYear()}`;
 }

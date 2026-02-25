@@ -10,7 +10,7 @@
   "scripts": {
     "start": "node src/index.js",
     "auth": "node src/auth.js",
-    "dev": "node --watch src/index.js",
+    "dev": "nodemon src/index.js",
     "deploy": "./deploy-remote.sh"
   },
   "dependencies": {
@@ -20,5 +20,8 @@
     "telegraf": "^4.16.3",
     "telegram": "^2.19.50",
     "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.9"
   }
 }

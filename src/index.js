@@ -2,8 +2,8 @@ import "dotenv/config";
 import bot from "./bot.js";
 import { startCron } from "./cron.js";
 
-startCron();
 bot.launch().then(() => {
+  startCron(bot);
   console.log("Bot started.");
 }).catch((e) => {
   console.error("Bot failed to start:", e);

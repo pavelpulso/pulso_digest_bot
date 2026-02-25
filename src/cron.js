@@ -1,8 +1,10 @@
 import cron from "node-cron";
 import { collectChannelPosts } from "./gramjs.js";
 import { getChannelUsernames, addChannel } from "./db.js";
+import { sendMorningDigests } from "./bot.js";
 
 const CRON_SCHEDULE = "0 6 * * *"; // 06:00 каждый день
+const MORNING_DIGEST_SCHEDULE = "0 7 * * *"; // 07:00 — рассылка дайджеста
 
 function seedChannelsFromEnv() {
   const list = (process.env.CHANNELS || "").split(",").map((s) => s.trim().replace(/^@/, "")).filter(Boolean);
@@ -24,9 +26,15 @@ async function runCollection() {
   console.log(`[cron] Collected ${collected} posts.`);
 }
 
-export function startCron() {
+export function startCron(botInstance) {
   cron.schedule(CRON_SCHEDULE, runCollection, { timezone: "Europe/Moscow" });
   console.log("[cron] Scheduled daily collection at 06:00 (Europe/Moscow).");
+  if (botInstance) {
+    cron.schedule(MORNING_DIGEST_SCHEDULE, () => sendMorningDigests(botInstance), {
+      timezone: "Europe/Moscow"
+    });
+    console.log("[cron] Scheduled morning digest at 07:00 (Europe/Moscow).");
+  }
 }
 
 export async function runCollectionOnce() {
