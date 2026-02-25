@@ -25,11 +25,13 @@ pm2 save
 pm2 startup
 ```
 
-## GitHub and auto-deploy to VPS
+## Deploy to VPS
 
 Repository: **https://github.com/pavelpulso/pulso_digest_bot**
 
-1. **One-time VPS setup**  
+### Simple way (no GitHub Actions)
+
+1. **One-time on VPS**  
    Clone the project and configure the environment:
 
    ```bash
@@ -40,27 +42,41 @@ Repository: **https://github.com/pavelpulso/pulso_digest_bot**
    # edit .env
    node src/auth.js     # obtain GramJS session
    npm ci
+   chmod +x deploy.sh
    pm2 start ecosystem.config.js
    pm2 save
    pm2 startup
    ```
 
-   Remember the full path to the project directory (e.g. `/home/your_user/pulso_digest_bot`) — you will need it for the `DEPLOY_PATH` secret.
+2. **To deploy updates**  
+   Push from your machine: `git push origin main`.
 
-2. **GitHub secrets (required for auto-deploy)**  
-   In the repo: **Settings → Secrets and variables → Actions** → **New repository secret**. Add:
+   **Option A — from your machine (one command):**  
+   Create `.deploy.env` (copy from `.deploy.env.example`) and set your SSH target and path:
+   ```bash
+   cp .deploy.env.example .deploy.env
+   # Edit .deploy.env: DEPLOY_SSH=user@your-vps-ip, DEPLOY_PATH=/home/user/pulso_digest_bot
+   npm run deploy
+   ```
+   This SSHs to the VPS and runs `./deploy.sh` there (pull + npm ci + pm2 restart). `.deploy.env` is gitignored.
 
-   | Secret           | Description                                      |
-   |------------------|--------------------------------------------------|
-   | `VPS_HOST`       | VPS IP or hostname (no port)                     |
-   | `VPS_USER`       | SSH username (e.g. `root` or `deploy`)           |
-   | `SSH_PRIVATE_KEY`| Full contents of the private SSH key            |
-   | `DEPLOY_PATH`    | Path to the project directory on the VPS (above) |
+   **Option B — on the VPS:**  
+   SSH in and run:
+   ```bash
+   cd /path/to/pulso_digest_bot
+   ./deploy.sh
+   ```
+   No GitHub secrets or Actions — just SSH.
 
-   For the deploy key: on your machine run `ssh-keygen -t ed25519 -C "github-deploy" -f deploy_key` (no passphrase), add the public key to `~/.ssh/authorized_keys` on the VPS, and put the private key contents into the `SSH_PRIVATE_KEY` secret.
+---
 
-3. **Auto-deploy**  
-   On every `git push origin main`, GitHub Actions connects via SSH to the VPS and runs in `DEPLOY_PATH`: `git pull`, `npm ci --omit=dev`, `pm2 restart tg-digest-bot` (or starts the app if it isn’t running yet).
+### Optional: auto-deploy on every push (GitHub Actions)
+
+If you want the VPS to update automatically when you push to `main`:
+
+1. One-time VPS setup as above. Remember the project path.
+2. In the repo: **Settings → Secrets and variables → Actions** → add secrets: `VPS_HOST`, `VPS_USER`, `SSH_PRIVATE_KEY`, `DEPLOY_PATH` (see workflow file).
+3. Each `git push origin main` will trigger the deploy workflow.
 
 ## Environment variables (.env)
 

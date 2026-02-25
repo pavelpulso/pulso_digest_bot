@@ -10,7 +10,8 @@
   "scripts": {
     "start": "node src/index.js",
     "auth": "node src/auth.js",
-    "dev": "node --watch src/index.js"
+    "dev": "node --watch src/index.js",
+    "deploy": "./deploy-remote.sh"
   },
   "dependencies": {
     "better-sqlite3": "^11.6.0",
