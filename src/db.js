@@ -77,6 +77,9 @@ if (!userCols.includes("digest_max_items")) {
 if (!userCols.includes("minus_keywords")) {
   db.prepare("ALTER TABLE users ADD COLUMN minus_keywords TEXT").run();
 }
+if (!userCols.includes("digest_format")) {
+  db.prepare("ALTER TABLE users ADD COLUMN digest_format TEXT DEFAULT 'full'").run();
+}
 
 // user_channel_settings: per-user hide-in-digest and priority (1=normal, 2=important)
 db.exec(`
@@ -193,22 +196,22 @@ export function clearRankingsForUser(userId, date) {
 
 export function insertRankings(userId, date, items) {
   if (items.length === 0) return;
-  const placeholders = items.map(() => "?").join(",");
-  const postIds = items.map((it) => it.post_id);
-  const existing = new Set(
-    db.prepare(`SELECT id FROM posts WHERE id IN (${placeholders})`).all(...postIds).map((r) => r.id)
-  );
-  const valid = items.filter((it) => existing.has(it.post_id));
-  if (valid.length === 0) return;
-  const insert = db.prepare(
+  const normalized = items.map((it) => ({ ...it, post_id: String(it.post_id).trim() }));
+  const postIds = [...new Set(normalized.map((it) => it.post_id))];
+  if (postIds.length === 0) return;
+  const placeholders = postIds.map(() => "?").join(",");
+  const selectExisting = db.prepare(`SELECT id FROM posts WHERE id IN (${placeholders})`);
+  const insertStmt = db.prepare(
     "INSERT INTO rankings (id, user_id, post_id, score, reason, date) VALUES (?, ?, ?, ?, ?, ?)"
   );
   const tx = db.transaction((list) => {
+    const existing = new Set(selectExisting.all(...postIds).map((r) => r.id));
     for (const it of list) {
-      insert.run(it.id, userId, it.post_id, it.score, it.reason || null, date);
+      if (!existing.has(it.post_id)) continue;
+      insertStmt.run(it.id, userId, it.post_id, it.score, it.reason || null, date);
     }
   });
-  tx(valid);
+  tx(normalized);
 }
 
 export function getRankedPostIds(userId, date, limit = 10, offset = 0) {
@@ -286,7 +289,7 @@ export function getRatedPostIds(userId) {
 
 // Users
 const USER_SELECT =
-  "SELECT user_id, username, profile, is_banned, updated_at, COALESCE(digest_max_items, 7) AS digest_max_items, minus_keywords FROM users WHERE user_id = ?";
+  "SELECT user_id, username, profile, is_banned, updated_at, COALESCE(digest_max_items, 7) AS digest_max_items, minus_keywords, COALESCE(digest_format, 'full') AS digest_format FROM users WHERE user_id = ?";
 
 export function getUser(userId) {
   return db.prepare(USER_SELECT).get(userId);
@@ -319,6 +322,19 @@ export function updateUserMinusKeywords(userId, keywordsText) {
   const value = keywordsText == null || String(keywordsText).trim() === "" ? null : String(keywordsText).trim();
   db.prepare("UPDATE users SET minus_keywords = ?, updated_at = datetime('now') WHERE user_id = ?").run(value, userId);
   return value;
+}
+
+/** @returns {'full'|'compact'} */
+export function getDigestFormat(userId) {
+  const row = db.prepare("SELECT COALESCE(digest_format, 'full') AS digest_format FROM users WHERE user_id = ?").get(userId);
+  const v = row?.digest_format;
+  return v === "compact" ? "compact" : "full";
+}
+
+export function setDigestFormat(userId, format) {
+  const v = format === "compact" ? "compact" : "full";
+  db.prepare("UPDATE users SET digest_format = ?, updated_at = datetime('now') WHERE user_id = ?").run(v, userId);
+  return v;
 }
 
 /** @returns {string[]} list of keywords (comma-separated in DB) */
