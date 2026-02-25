@@ -1,99 +1,99 @@
 # Pulso Digest Bot
 
-Telegram-бот для агрегации постов из каналов и персонализированного дайджеста (Node.js, GramJS, Gemini API, SQLite).
+Telegram bot that aggregates posts from channels and delivers a personalized digest (Node.js, GramJS, Gemini API, SQLite).
 
-## Стек
+## Stack
 
 - Node.js 20+
 - Telegraf, GramJS (telegram), better-sqlite3, node-cron
-- Gemini API через OpenAI-совместимый прокси (xray)
-- БД: **SQLite** (файл `data/db.sqlite`)
+- Gemini API via an OpenAI-compatible proxy (xray)
+- **SQLite** database (file `data/db.sqlite`)
 
-## Установка и деплой
+## Setup and deploy
 
 ```bash
 npm install
 cp .env.example .env
-# Заполнить .env (BOT_TOKEN, TG_API_ID, TG_API_HASH, GEMINI_*, ADMIN_ID и т.д.)
+# Fill in .env (BOT_TOKEN, TG_API_ID, TG_API_HASH, GEMINI_*, ADMIN_ID, etc.)
 
-# Первый запуск — получить сессию GramJS
+# First run — obtain GramJS session
 node src/auth.js
 
-# Запуск через PM2
+# Run with PM2
 pm2 start ecosystem.config.js
 pm2 save
 pm2 startup
 ```
 
-## GitHub и автодеплой на VPS
+## GitHub and auto-deploy to VPS
 
-Репозиторий: **https://github.com/pavelpulso/pulso_digest_bot**
+Repository: **https://github.com/pavelpulso/pulso_digest_bot**
 
-1. **Один раз на VPS**  
-   Клонируйте проект и настройте окружение:
+1. **One-time VPS setup**  
+   Clone the project and configure the environment:
 
    ```bash
-   cd /home/your_user   # или другой каталог
+   cd /home/your_user   # or another directory
    git clone https://github.com/pavelpulso/pulso_digest_bot.git
    cd pulso_digest_bot
    cp .env.example .env
-   # отредактировать .env
-   node src/auth.js    # получить сессию GramJS
+   # edit .env
+   node src/auth.js     # obtain GramJS session
    npm ci
    pm2 start ecosystem.config.js
    pm2 save
    pm2 startup
    ```
 
-   Запомните полный путь к каталогу проекта (например `/home/your_user/pulso_digest_bot`) — он понадобится для секрета `DEPLOY_PATH`.
+   Remember the full path to the project directory (e.g. `/home/your_user/pulso_digest_bot`) — you will need it for the `DEPLOY_PATH` secret.
 
-2. **Секреты в GitHub (обязательно для автодеплоя)**  
-   В репозитории: **Settings → Secrets and variables → Actions** → **New repository secret**. Добавьте (без них автодеплой не заработает):
+2. **GitHub secrets (required for auto-deploy)**  
+   In the repo: **Settings → Secrets and variables → Actions** → **New repository secret**. Add:
 
-   | Секрет            | Описание                                      |
-   |-------------------|-----------------------------------------------|
-   | `VPS_HOST`        | IP или домен VPS (без порта)                  |
-   | `VPS_USER`        | Пользователь SSH (например `root` или `deploy`) |
-   | `SSH_PRIVATE_KEY` | Полное содержимое приватного SSH-ключа       |
-   | `DEPLOY_PATH`     | Путь к каталогу проекта на VPS (см. выше)     |
+   | Secret           | Description                                      |
+   |------------------|--------------------------------------------------|
+   | `VPS_HOST`       | VPS IP or hostname (no port)                     |
+   | `VPS_USER`       | SSH username (e.g. `root` or `deploy`)           |
+   | `SSH_PRIVATE_KEY`| Full contents of the private SSH key            |
+   | `DEPLOY_PATH`    | Path to the project directory on the VPS (above) |
 
-   Ключ для деплоя: на своей машине `ssh-keygen -t ed25519 -C "github-deploy" -f deploy_key` (без пароля), положите публичный ключ в `~/.ssh/authorized_keys` на VPS, в секрет — содержимое `deploy_key`.
+   For the deploy key: on your machine run `ssh-keygen -t ed25519 -C "github-deploy" -f deploy_key` (no passphrase), add the public key to `~/.ssh/authorized_keys` on the VPS, and put the private key contents into the `SSH_PRIVATE_KEY` secret.
 
-3. **Автодеплой**  
-   При каждом `git push origin main` GitHub Actions подключается по SSH к VPS и выполняет в `DEPLOY_PATH`: `git pull`, `npm ci --omit=dev`, `pm2 restart tg-digest-bot` (или первый запуск, если бот ещё не был запущен).
+3. **Auto-deploy**  
+   On every `git push origin main`, GitHub Actions connects via SSH to the VPS and runs in `DEPLOY_PATH`: `git pull`, `npm ci --omit=dev`, `pm2 restart tg-digest-bot` (or starts the app if it isn’t running yet).
 
-## Переменные окружения (.env)
+## Environment variables (.env)
 
-| Переменная | Описание |
-|------------|----------|
-| BOT_TOKEN | Токен бота от @BotFather |
-| TG_API_ID, TG_API_HASH | my.telegram.org |
-| TG_SESSION | Строка сессии GramJS (заполняется после `node src/auth.js`) |
-| CHANNELS | Начальные каналы через запятую, без @ |
-| GEMINI_API_KEY, GEMINI_PROXY_URL, GEMINI_MODEL | Gemini через прокси |
-| ADMIN_ID | Telegram user_id администратора |
-| DB_PATH | Путь к SQLite (по умолчанию ./data/db.sqlite) |
+| Variable | Description |
+|----------|-------------|
+| BOT_TOKEN | Bot token from @BotFather |
+| TG_API_ID, TG_API_HASH | From my.telegram.org |
+| TG_SESSION | GramJS session string (set after `node src/auth.js`) |
+| CHANNELS | Initial channels, comma-separated, without @ |
+| GEMINI_API_KEY, GEMINI_PROXY_URL, GEMINI_MODEL | Gemini via proxy |
+| ADMIN_ID | Telegram user_id of the admin |
+| DB_PATH | SQLite file path (default: ./data/db.sqlite) |
 
-## Команды бота
+## Bot commands
 
-- `/start` — приветствие
-- `/digest` — топ-10 постов за сегодня
-- `/profile` — просмотр/установка профиля (интересы)
-- `/summary` — выбор даты и саммари за день
-- `/channels` — список каналов
-- `/add @channel`, `/remove @channel` — добавить/удалить канал
+- `/start` — Welcome and short help
+- `/digest` — Top 10 posts for today
+- `/profile` — View or set your profile (interests)
+- `/summary` — Pick a date and get a summary for that day
+- `/channels` — List tracked channels
+- `/add @channel`, `/remove @channel` — Add or remove a channel
 
-Пересланный пост из канала добавляет канал в список.
+Forwarding a post from a channel to the bot adds that channel to the list.
 
-Админ (ADMIN_ID): `/ban`, `/unban`, `/close`, `/open`, `/stats`.
+Admin (ADMIN_ID): `/ban`, `/unban`, `/close`, `/open`, `/stats`.
 
-## Структура
+## Project structure
 
-- `src/index.js` — запуск бота и крона
-- `src/bot.js` — команды и обработчики
-- `src/cron.js` — сбор постов раз в 24ч (06:00)
-- `src/gramjs.js` — чтение каналов через GramJS
-- `src/gemini.js` — ранжирование и саммари через Gemini
+- `src/index.js` — Entry point, starts bot and cron
+- `src/bot.js` — Telegraf commands and handlers
+- `src/cron.js` — Daily post collection (06:00)
+- `src/gramjs.js` — Reading channels via GramJS
+- `src/gemini.js` — Ranking and summary via Gemini
 - `src/db.js` — SQLite (settings, channels, posts, rankings, users)
-- `src/utils.js` — форматирование, пагинация
-- `src/auth.js` — получение GramJS-сессии (запуск вручную)
+- `src/utils.js` — Formatting, pagination
+- `src/auth.js` — GramJS session setup (run manually)
