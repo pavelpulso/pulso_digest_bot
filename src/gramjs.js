@@ -16,9 +16,11 @@ function createClient() {
 
 /**
  * Собирает посты из всех каналов за последние 24 часа и сохраняет в БД.
+ * @param {{ onProgress?: (opts: { channel: string, index: number, total: number, collected: number }) => void|Promise<void> }} [options]
  * @returns {{ collected: number, errors: string[] }}
  */
-export async function collectChannelPosts() {
+export async function collectChannelPosts(options = {}) {
+  const { onProgress } = options;
   const channelUsernames = getChannelUsernames();
   if (channelUsernames.length === 0) {
     return { collected: 0, errors: [] };
@@ -27,6 +29,7 @@ export async function collectChannelPosts() {
   const client = createClient();
   const errors = [];
   let collected = 0;
+  const total = channelUsernames.length;
 
   try {
     await client.connect();
@@ -37,9 +40,13 @@ export async function collectChannelPosts() {
 
   const sinceTs = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
 
-  for (const username of channelUsernames) {
+  for (let i = 0; i < channelUsernames.length; i++) {
+    const username = channelUsernames[i];
+    const channelName = username.startsWith("@") ? username : `@${username}`;
+    if (onProgress) {
+      await Promise.resolve(onProgress({ channel: channelName.replace(/^@/, ""), index: i + 1, total, collected }));
+    }
     try {
-      const channelName = username.startsWith("@") ? username : `@${username}`;
       const count = await collectFromChannel(client, channelName, sinceTs);
       collected += count;
     } catch (e) {

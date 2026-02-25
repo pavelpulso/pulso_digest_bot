@@ -6,6 +6,7 @@ import {
   isBotOpen,
   setBotOpen,
   getChannels,
+  getChannelUsernames,
   addChannel,
   removeChannel,
   getPostsLast24h,
@@ -20,6 +21,7 @@ import {
   getStats,
   getPostsForDateRange
 } from "./db.js";
+import { collectChannelPosts } from "./gramjs.js";
 import { rankPosts, generateSummary } from "./gemini.js";
 import {
   formatDigestPage,
@@ -39,24 +41,38 @@ const bot = new Telegraf(BOT_TOKEN);
 
 const pendingAddChannels = new Map();
 
+const MENU_BTN_DIGEST = "📰 Digest";
+const MENU_BTN_SUMMARY = "📋 Summary";
+const MENU_BTN_CHANNELS = "📢 Channels";
+const MENU_BTN_PROFILE = "👤 Profile";
+const MENU_BTN_MENU = "📱 Menu";
+
+function mainReplyKeyboard() {
+  return Markup.keyboard([
+    [MENU_BTN_DIGEST, MENU_BTN_SUMMARY],
+    [MENU_BTN_CHANNELS, MENU_BTN_PROFILE],
+    [MENU_BTN_MENU]
+  ]).resize();
+}
+
 function mainMenuKeyboard() {
   return Markup.inlineKeyboard([
     [
-      Markup.button.callback("Digest", "digest"),
-      Markup.button.callback("Summary", "summary"),
-      Markup.button.callback("Channels", "channels")
+      Markup.button.callback("📰 Digest", "digest"),
+      Markup.button.callback("📋 Summary", "summary"),
+      Markup.button.callback("📢 Channels", "channels")
     ],
     [
-      Markup.button.callback("Profile", "profile"),
-      Markup.button.callback("Add channel", "add_channels"),
-      Markup.button.callback("Remove channel", "remove_channel")
+      Markup.button.callback("👤 Profile", "profile"),
+      Markup.button.callback("➕ Add channel", "add_channels"),
+      Markup.button.callback("➖ Remove channel", "remove_channel")
     ]
   ]);
 }
 
 function channelsKeyboard() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("Add channel", "add_channels"), Markup.button.callback("Remove channel", "remove_channel")]
+    [Markup.button.callback("➕ Add channel", "add_channels"), Markup.button.callback("➖ Remove channel", "remove_channel")]
   ]);
 }
 
@@ -119,8 +135,8 @@ function digestReply(ctx, offset = 0) {
   const hasMore = offset + DIGEST_PAGE_SIZE < totalRanked;
 
   const buttons = [];
-  if (hasMore) buttons.push(Markup.button.callback("More 10", `more:${offset + DIGEST_PAGE_SIZE}`));
-  buttons.push(Markup.button.callback("Summary", "summary"));
+  if (hasMore) buttons.push(Markup.button.callback("▶️ More 10", `more:${offset + DIGEST_PAGE_SIZE}`));
+  buttons.push(Markup.button.callback("📋 Summary", "summary"));
 
   return ctx.replyWithMarkdown(text, Markup.inlineKeyboard(buttons));
 }
@@ -153,14 +169,15 @@ bot.start(async (ctx) => {
 
   await ctx.reply(
     "Hi! I collect posts from your channels and build a digest.\n\n" +
-      "Commands:\n" +
+      "Use the buttons below or:\n" +
       "/digest — top posts for today\n" +
       "/profile — set interests for personalization\n" +
       "/summary — digest for a chosen day\n" +
       "/channels — list of channels\n" +
       "/add @channel — add a channel\n" +
       "/remove @channel — remove a channel\n\n" +
-      "You can forward a post from a channel — the channel will be added automatically."
+      "You can forward a post from a channel — the channel will be added automatically.",
+    mainReplyKeyboard()
   );
   await ctx.reply("Choose an action:", mainMenuKeyboard());
 });
@@ -215,8 +232,8 @@ bot.action(/^more:(\d+)$/, async (ctx) => {
   const hasMore = offset + DIGEST_PAGE_SIZE < totalRanked;
 
   const buttons = [];
-  if (hasMore) buttons.push(Markup.button.callback("More 10", `more:${offset + DIGEST_PAGE_SIZE}`));
-  buttons.push(Markup.button.callback("Summary", "summary"));
+  if (hasMore) buttons.push(Markup.button.callback("▶️ More 10", `more:${offset + DIGEST_PAGE_SIZE}`));
+  buttons.push(Markup.button.callback("📋 Summary", "summary"));
 
   await ctx.editMessageText(text, {
     parse_mode: "Markdown",
@@ -318,22 +335,90 @@ bot.action(/^summary_date:(.+)$/, async (ctx) => {
   const user = getOrCreateUser(userId);
   const since = `${dateStr}T00:00:00.000Z`;
   const until = new Date(new Date(since).getTime() + 24 * 60 * 60 * 1000).toISOString();
-  const posts = getPostsForDateRange(since, until);
+  let posts = getPostsForDateRange(since, until);
+  const chatId = ctx.chat.id;
+  let messageToEdit = null;
+
+  if (posts.length === 0) {
+    const channelUsernames = getChannelUsernames();
+    if (channelUsernames.length === 0) {
+      await ctx.telegram.sendMessage(
+        chatId,
+        "Add channels first (Channels → Add channel, or forward a post from a channel)."
+      );
+      return;
+    }
+
+    const statusMsg = await ctx.telegram.sendMessage(
+      chatId,
+      "No posts for this day yet. Fetching from all channels — this may take a minute…"
+    );
+    messageToEdit = statusMsg.message_id;
+
+    try {
+      await collectChannelPosts({
+        onProgress: async ({ channel, index, total, collected }) => {
+          await ctx.telegram.editMessageText(
+            chatId,
+            statusMsg.message_id,
+            null,
+            `Fetching channels: ${index}/${total} @${channel}… (posts collected: ${collected})`
+          ).catch(() => {});
+        }
+      });
+    } catch (e) {
+      console.error("Collect posts error:", e);
+      await ctx.telegram.editMessageText(
+        chatId,
+        statusMsg.message_id,
+        null,
+        "Failed to fetch posts. Try again later."
+      );
+      return;
+    }
+
+    await ctx.telegram.editMessageText(
+      chatId,
+      statusMsg.message_id,
+      null,
+      "Checking posts for the selected day…"
+    ).catch(() => {});
+
+    posts = getPostsForDateRange(since, until);
+
+    if (posts.length === 0) {
+      await ctx.telegram.editMessageText(
+        chatId,
+        statusMsg.message_id,
+        null,
+        "No posts for the selected day. Only recent days are available."
+      );
+      return;
+    }
+
+    await ctx.telegram.editMessageText(
+      chatId,
+      statusMsg.message_id,
+      null,
+      "Done. Generating summary…"
+    ).catch(() => {});
+  } else {
+    const loading = await ctx.telegram.sendMessage(chatId, "Generating summary…");
+    messageToEdit = loading.message_id;
+  }
 
   const label = formatDateLabel(dateStr);
-  const loading = await ctx.telegram.sendMessage(ctx.chat.id, "Generating summary…");
-
   try {
     const summaryText = await generateSummary(posts, label, user.profile || "");
-    await ctx.telegram.editMessageText(ctx.chat.id, loading.message_id, null, summaryText, {
+    await ctx.telegram.editMessageText(chatId, messageToEdit, null, summaryText, {
       parse_mode: "Markdown",
       disable_web_page_preview: true
     });
   } catch (e) {
     console.error("Summary error:", e);
     await ctx.telegram.editMessageText(
-      ctx.chat.id,
-      loading.message_id,
+      chatId,
+      messageToEdit,
       null,
       "Failed to generate summary. Try again later."
     );
@@ -407,6 +492,62 @@ function parseChannelUsernames(text) {
     .map((m) => m.slice(1).toLowerCase())
     .filter((u) => u.length >= 5 && u.length <= 32 && !seen.has(u) && seen.add(u));
 }
+
+bot.on("message", async (ctx, next) => {
+  const userId = ctx.from?.id;
+  if (!userId || isUserBanned(userId)) return next();
+
+  const text = ctx.message.text?.trim();
+  if (!text) return next();
+  if (pendingAddChannels.get(userId)) return next();
+
+  if (text === MENU_BTN_DIGEST) {
+    const user = getOrCreateUser(userId);
+    const date = todayDate();
+    const hasRankings = getRankedPostIds(userId, date, 1).length > 0;
+    if (!hasRankings) {
+      const loading = await ctx.reply("Ranking posts for your profile…");
+      try {
+        await ensureRankingsForUser(userId, user.profile || "");
+      } catch (e) {
+        await ctx.telegram.editMessageText(
+          ctx.chat.id,
+          loading.message_id,
+          null,
+          "Failed to get ranking (Gemini error). Try again later."
+        );
+        return;
+      }
+      await ctx.telegram.deleteMessage(ctx.chat.id, loading.message_id);
+    }
+    return digestReply(ctx, 0);
+  }
+
+  if (text === MENU_BTN_SUMMARY) {
+    const days = getLastDays(7);
+    const buttons = days.map((d) => Markup.button.callback(d.label, `summary_date:${d.date}`));
+    return ctx.reply("Choose date for summary:", Markup.inlineKeyboard(buttons));
+  }
+
+  if (text === MENU_BTN_CHANNELS) {
+    const channels = getChannels();
+    return ctx.reply(formatChannelList(channels), channelsKeyboard());
+  }
+
+  if (text === MENU_BTN_PROFILE) {
+    const user = getOrCreateUser(userId);
+    const profileText = user.profile || "not set";
+    return ctx.reply(
+      `Your profile (interests, profession):\n${profileText}\n\nSend a new profile as text to update.`
+    );
+  }
+
+  if (text === MENU_BTN_MENU) {
+    return ctx.reply("Choose an action:", mainMenuKeyboard());
+  }
+
+  return next();
+});
 
 bot.on("message", async (ctx, next) => {
   const userId = ctx.from?.id;
