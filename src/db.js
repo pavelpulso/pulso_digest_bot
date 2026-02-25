@@ -74,6 +74,35 @@ const userCols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name)
 if (!userCols.includes("digest_max_items")) {
   db.prepare("ALTER TABLE users ADD COLUMN digest_max_items INTEGER DEFAULT 10").run();
 }
+if (!userCols.includes("minus_keywords")) {
+  db.prepare("ALTER TABLE users ADD COLUMN minus_keywords TEXT").run();
+}
+
+// user_channel_settings: per-user hide-in-digest and priority (1=normal, 2=important)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_channel_settings (
+    user_id INTEGER NOT NULL,
+    channel TEXT NOT NULL,
+    hidden INTEGER DEFAULT 0,
+    priority INTEGER DEFAULT 1,
+    PRIMARY KEY (user_id, channel),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ucs_user ON user_channel_settings(user_id);
+`);
+
+// post_feedback: like/dislike for personalization (rating: 1 = like, -1 = dislike)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS post_feedback (
+    user_id INTEGER NOT NULL,
+    post_id TEXT NOT NULL,
+    rating INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, post_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_post_feedback_user ON post_feedback(user_id);
+`);
 
 // Settings
 export function getSetting(key) {
@@ -163,6 +192,14 @@ export function clearRankingsForUser(userId, date) {
 }
 
 export function insertRankings(userId, date, items) {
+  if (items.length === 0) return;
+  const placeholders = items.map(() => "?").join(",");
+  const postIds = items.map((it) => it.post_id);
+  const existing = new Set(
+    db.prepare(`SELECT id FROM posts WHERE id IN (${placeholders})`).all(...postIds).map((r) => r.id)
+  );
+  const valid = items.filter((it) => existing.has(it.post_id));
+  if (valid.length === 0) return;
   const insert = db.prepare(
     "INSERT INTO rankings (id, user_id, post_id, score, reason, date) VALUES (?, ?, ?, ?, ?, ?)"
   );
@@ -171,7 +208,7 @@ export function insertRankings(userId, date, items) {
       insert.run(it.id, userId, it.post_id, it.score, it.reason || null, date);
     }
   });
-  tx(items);
+  tx(valid);
 }
 
 export function getRankedPostIds(userId, date, limit = 10, offset = 0) {
@@ -179,6 +216,25 @@ export function getRankedPostIds(userId, date, limit = 10, offset = 0) {
     `SELECT post_id FROM rankings WHERE user_id = ? AND date = ? ORDER BY score DESC LIMIT ? OFFSET ?`
   ).all(userId, date, limit, offset);
   return rows.map((r) => r.post_id);
+}
+
+/** Посты с score >= minScore для дайджеста (только качественные). */
+export function getRankedPostIdsAboveScore(userId, date, minScore, limit = 10, offset = 0) {
+  const rows = db.prepare(
+    `SELECT post_id FROM rankings WHERE user_id = ? AND date = ? AND score >= ? ORDER BY score DESC LIMIT ? OFFSET ?`
+  ).all(userId, date, minScore, limit, offset);
+  return rows.map((r) => r.post_id);
+}
+
+/** Возвращает { postIds, total } для пагинации по rankings. */
+export function getRankedPostIdsWithTotal(userId, date, limit = 10, offset = 0, minScore = 0) {
+  const rows = db.prepare(
+    `SELECT post_id FROM rankings WHERE user_id = ? AND date = ? AND score >= ? ORDER BY score DESC LIMIT ? OFFSET ?`
+  ).all(userId, date, minScore, limit, offset);
+  const totalRow = db.prepare(
+    `SELECT COUNT(*) as total FROM rankings WHERE user_id = ? AND date = ? AND score >= ?`
+  ).get(userId, date, minScore);
+  return { postIds: rows.map((r) => r.post_id), total: totalRow?.total || 0 };
 }
 
 export function getRankingByUserAndPost(userId, postId, date) {
@@ -196,8 +252,41 @@ export function getRankingsMap(userId, date) {
   return map;
 }
 
+// Post feedback (like/dislike) for personalization
+/** Saves or updates feedback. rating: 1 = like, -1 = dislike. */
+export function upsertPostFeedback(userId, postId, rating) {
+  const r = rating === 1 || rating === "1" ? 1 : -1;
+  db.prepare(
+    `INSERT INTO post_feedback (user_id, post_id, rating) VALUES (?, ?, ?)
+     ON CONFLICT(user_id, post_id) DO UPDATE SET rating = excluded.rating, created_at = datetime('now')`
+  ).run(userId, postId, r);
+  return r;
+}
+
+/** Returns { liked: string[], disliked: string[] } for last 90 days (for ranking prompt). */
+export function getPostFeedbackForRanking(userId) {
+  const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+  const rows = db.prepare(
+    "SELECT post_id, rating FROM post_feedback WHERE user_id = ? AND created_at >= ?"
+  ).all(userId, since);
+  const liked = [];
+  const disliked = [];
+  for (const r of rows) {
+    if (r.rating === 1) liked.push(r.post_id);
+    else disliked.push(r.post_id);
+  }
+  return { liked, disliked };
+}
+
+/** Returns Set of post_id that user already rated (to hide or disable buttons). */
+export function getRatedPostIds(userId) {
+  const rows = db.prepare("SELECT post_id FROM post_feedback WHERE user_id = ?").all(userId);
+  return new Set(rows.map((r) => r.post_id));
+}
+
 // Users
-const USER_SELECT = "SELECT user_id, username, profile, is_banned, updated_at, COALESCE(digest_max_items, 10) AS digest_max_items FROM users WHERE user_id = ?";
+const USER_SELECT =
+  "SELECT user_id, username, profile, is_banned, updated_at, COALESCE(digest_max_items, 7) AS digest_max_items, minus_keywords FROM users WHERE user_id = ?";
 
 export function getUser(userId) {
   return db.prepare(USER_SELECT).get(userId);
@@ -206,7 +295,7 @@ export function getUser(userId) {
 export function getOrCreateUser(userId, username = null) {
   let row = db.prepare(USER_SELECT).get(userId);
   if (!row) {
-    db.prepare("INSERT INTO users (user_id, username, profile, is_banned, digest_max_items) VALUES (?, ?, NULL, 0, 10)").run(userId, username);
+    db.prepare("INSERT INTO users (user_id, username, profile, is_banned, digest_max_items) VALUES (?, ?, NULL, 0, 7)").run(userId, username);
     row = db.prepare(USER_SELECT).get(userId);
   } else if (username != null) {
     db.prepare("UPDATE users SET username = ?, updated_at = datetime('now') WHERE user_id = ?").run(username, userId);
@@ -224,6 +313,89 @@ export function updateUserDigestMax(userId, maxItems) {
   if (Number.isNaN(n)) return null;
   db.prepare("UPDATE users SET digest_max_items = ?, updated_at = datetime('now') WHERE user_id = ?").run(n, userId);
   return n;
+}
+
+export function updateUserMinusKeywords(userId, keywordsText) {
+  const value = keywordsText == null || String(keywordsText).trim() === "" ? null : String(keywordsText).trim();
+  db.prepare("UPDATE users SET minus_keywords = ?, updated_at = datetime('now') WHERE user_id = ?").run(value, userId);
+  return value;
+}
+
+/** @returns {string[]} list of keywords (comma-separated in DB) */
+export function getUserMinusKeywords(userId) {
+  const row = db.prepare("SELECT minus_keywords FROM users WHERE user_id = ?").get(userId);
+  const raw = row?.minus_keywords;
+  if (!raw || typeof raw !== "string") return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+/** @returns {string[]} channel usernames hidden from digest for this user */
+export function getUserHiddenChannels(userId) {
+  const rows = db.prepare(
+    "SELECT channel FROM user_channel_settings WHERE user_id = ? AND hidden = 1"
+  ).all(userId);
+  return rows.map((r) => r.channel);
+}
+
+/** @returns {Record<string, number>} channel -> priority (1=normal, 2=important) */
+export function getUserChannelPriorities(userId) {
+  const rows = db.prepare(
+    "SELECT channel, priority FROM user_channel_settings WHERE user_id = ? AND priority = 2"
+  ).all(userId);
+  const map = {};
+  for (const r of rows) map[r.channel] = 2;
+  return map;
+}
+
+export function setUserChannelHidden(userId, channel, hidden) {
+  const norm = channel.replace(/^@/, "").toLowerCase();
+  db.prepare(
+    `INSERT INTO user_channel_settings (user_id, channel, hidden, priority) VALUES (?, ?, ?, 1)
+     ON CONFLICT(user_id, channel) DO UPDATE SET hidden = excluded.hidden`
+  ).run(userId, norm, hidden ? 1 : 0);
+}
+
+export function setUserChannelPriority(userId, channel, priority) {
+  const norm = channel.replace(/^@/, "").toLowerCase();
+  const p = priority === 2 || priority === "important" ? 2 : 1;
+  db.prepare(
+    `INSERT INTO user_channel_settings (user_id, channel, hidden, priority) VALUES (?, ?, 0, ?)
+     ON CONFLICT(user_id, channel) DO UPDATE SET priority = excluded.priority`
+  ).run(userId, norm, p);
+}
+
+/** Toggle hidden: returns new state (true/false). */
+export function toggleUserChannelHidden(userId, channel) {
+  const norm = channel.replace(/^@/, "").toLowerCase();
+  const row = db.prepare("SELECT hidden FROM user_channel_settings WHERE user_id = ? AND channel = ?").get(userId, norm);
+  const next = row ? (row.hidden === 1 ? 0 : 1) : 1;
+  setUserChannelHidden(userId, norm, next === 1);
+  return next === 1;
+}
+
+/** Cycle priority 1 -> 2 -> 1; returns new priority (1 or 2). */
+export function cycleUserChannelPriority(userId, channel) {
+  const norm = channel.replace(/^@/, "").toLowerCase();
+  const row = db.prepare("SELECT priority FROM user_channel_settings WHERE user_id = ? AND channel = ?").get(userId, norm);
+  const current = row?.priority === 2 ? 2 : 1;
+  const next = current === 2 ? 1 : 2;
+  setUserChannelPriority(userId, norm, next);
+  return next;
+}
+
+/** @returns {Record<string, { hidden: boolean, priority: number }>} channel -> settings */
+export function getUserChannelSettings(userId) {
+  const rows = db.prepare(
+    "SELECT channel, hidden, priority FROM user_channel_settings WHERE user_id = ?"
+  ).all(userId);
+  const map = {};
+  for (const r of rows) {
+    map[r.channel] = { hidden: r.hidden === 1, priority: r.priority === 2 ? 2 : 1 };
+  }
+  return map;
 }
 
 export function isUserBanned(userId) {
@@ -270,6 +442,11 @@ export function getStats() {
     channels: channels.c,
     posts: posts.c
   };
+}
+
+/** Users that should receive morning digest (not banned). */
+export function getUsersForMorningDigest() {
+  return db.prepare("SELECT user_id, profile FROM users WHERE is_banned = 0").all();
 }
 
 export function getPostsForDateRange(since, until) {
