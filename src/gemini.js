@@ -18,6 +18,7 @@ async function chat(prompt, options = {}) {
     temperature: options.temperature ?? 0,
     stream: false
   }
+  if (options.maxTokens) body.max_tokens = options.maxTokens
   if (options.responseFormat) {
     body.response_format = options.responseFormat
   }
@@ -215,9 +216,9 @@ export async function recommendChannels(userProfile, channelUsernames) {
 
 Список каналов: ${list.join(", ")}
 
-Выбери до 5 каналов, которые наиболее релевантны этому читателю. Учитывай типичную тематику канала по названию (username часто отражает тематику). Верни JSON-объект с полем channels — массив объектов: username (строка, из списка), reason (одно короткое предложение, почему канал подходит).`
+Выбери до 5 каналов, которые наиболее релевантны этому читателю. Учитывай типичную тематику канала по названию (username часто отражает тематику). Верни JSON-объект с полем channels — массив объектов: username (строка, из списка), reason (до 10 слов, почему канал подходит).`
 
-  const raw = await chat(prompt, { responseFormat: { type: "json_object" } })
+  const raw = await chat(prompt, { responseFormat: { type: "json_object" }, maxTokens: 1024 })
   const cleaned = raw.replace(/```\w*\n?/g, "").trim()
   let parsed
   try {
