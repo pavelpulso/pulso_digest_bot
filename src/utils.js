@@ -22,7 +22,7 @@ export function formatDigestItem(index, post, reason = "") {
   const desc = truncate(post.text, 200);
   const link = post.link || `https://t.me/${channel}/${post.post_id}`;
   const reasonLine = reason ? `\n   ✦ ${reason}` : "";
-  return `${index}. **${channel}**\n${desc}\n[Открыть →](${link})${reasonLine}`;
+  return `${index}. **${channel}**\n${desc}\n[Open →](${link})${reasonLine}`;
 }
 
 /**
@@ -46,7 +46,7 @@ export { DIGEST_PAGE_SIZE };
  * Форматирует список каналов для вывода.
  */
 export function formatChannelList(channels) {
-  if (!channels || channels.length === 0) return "Пока нет каналов. Добавьте через /add @channel или перешлите пост из канала.";
+  if (!channels || channels.length === 0) return "No channels yet. Add via /add @channel or forward a post from a channel.";
   return channels.map((c) => `• @${c.username}`).join("\n");
 }
 
@@ -69,7 +69,7 @@ export function getLastDays(count = 7) {
 export function formatDateLabel(date) {
   const d = date instanceof Date ? date : new Date(date);
   const day = d.getDate();
-  const months = "янв фев мар апр май июн июл авг сен окт ноя дек".split(" ");
+  const months = "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split(" ");
   const month = months[d.getMonth()];
   const year = d.getFullYear();
   return `${day} ${month} ${year}`;

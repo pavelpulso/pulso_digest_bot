@@ -37,6 +37,29 @@ if (!BOT_TOKEN) throw new Error("BOT_TOKEN is required");
 
 const bot = new Telegraf(BOT_TOKEN);
 
+const pendingAddChannels = new Map();
+
+function mainMenuKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback("Digest", "digest"),
+      Markup.button.callback("Summary", "summary"),
+      Markup.button.callback("Channels", "channels")
+    ],
+    [
+      Markup.button.callback("Profile", "profile"),
+      Markup.button.callback("Add channel", "add_channels"),
+      Markup.button.callback("Remove channel", "remove_channel")
+    ]
+  ]);
+}
+
+function channelsKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback("Add channel", "add_channels"), Markup.button.callback("Remove channel", "remove_channel")]
+  ]);
+}
+
 function todayDate() {
   const d = new Date();
   return d.toISOString().slice(0, 10);
@@ -72,13 +95,13 @@ async function ensureRankingsForUser(userId, userProfile) {
 
 function digestReply(ctx, offset = 0) {
   const userId = ctx.from?.id;
-  if (!userId) return ctx.reply("Ошибка: неизвестный пользователь.");
+  if (!userId) return ctx.reply("Error: unknown user.");
 
   const date = todayDate();
   const postIds = getRankedPostIds(userId, date, DIGEST_PAGE_SIZE, offset);
   if (postIds.length === 0) {
     return ctx.reply(
-      "Нет постов за сегодня или рейтинг ещё не готов. Попробуйте позже или добавьте каналы через /add или пересылку."
+      "No posts for today or ranking not ready yet. Try later or add channels via /add or by forwarding a post."
     );
   }
 
@@ -96,8 +119,8 @@ function digestReply(ctx, offset = 0) {
   const hasMore = offset + DIGEST_PAGE_SIZE < totalRanked;
 
   const buttons = [];
-  if (hasMore) buttons.push(Markup.button.callback("Ещё 10", `more:${offset + DIGEST_PAGE_SIZE}`));
-  buttons.push(Markup.button.callback("Саммари", "summary"));
+  if (hasMore) buttons.push(Markup.button.callback("More 10", `more:${offset + DIGEST_PAGE_SIZE}`));
+  buttons.push(Markup.button.callback("Summary", "summary"));
 
   return ctx.replyWithMarkdown(text, Markup.inlineKeyboard(buttons));
 }
@@ -114,31 +137,32 @@ bot.use((ctx, next) => {
 
 bot.start(async (ctx) => {
   const userId = ctx.from?.id;
-  if (!userId) return ctx.reply("Ошибка.");
+  if (!userId) return ctx.reply("Error.");
 
   if (!isBotOpen()) {
     const existing = getUser(userId);
     if (!existing) {
-      return ctx.reply("🔒 Бот сейчас закрыт для новых пользователей.");
+      return ctx.reply("Bot is closed to new users.");
     }
   }
 
   getOrCreateUser(userId, ctx.from?.username ? String(ctx.from.username).toLowerCase() : null);
   if (isUserBanned(userId)) {
-    return ctx.reply("Вы заблокированы.");
+    return ctx.reply("You are blocked.");
   }
 
   await ctx.reply(
-    "Привет! Я собираю посты из ваших каналов и делаю дайджест.\n\n" +
-      "Команды:\n" +
-      "/digest — топ постов за сегодня\n" +
-      "/profile — указать интересы для персонализации\n" +
-      "/summary — дайджест за выбранный день\n" +
-      "/channels — список каналов\n" +
-      "/add @channel — добавить канал\n" +
-      "/remove @channel — удалить канал\n\n" +
-      "Можно переслать пост из канала — канал добавится автоматически."
+    "Hi! I collect posts from your channels and build a digest.\n\n" +
+      "Commands:\n" +
+      "/digest — top posts for today\n" +
+      "/profile — set interests for personalization\n" +
+      "/summary — digest for a chosen day\n" +
+      "/channels — list of channels\n" +
+      "/add @channel — add a channel\n" +
+      "/remove @channel — remove a channel\n\n" +
+      "You can forward a post from a channel — the channel will be added automatically."
   );
+  await ctx.reply("Choose an action:", mainMenuKeyboard());
 });
 
 bot.command("digest", async (ctx) => {
@@ -149,7 +173,7 @@ bot.command("digest", async (ctx) => {
   const date = todayDate();
   const hasRankings = getRankedPostIds(userId, date, 1).length > 0;
   if (!hasRankings) {
-    const loading = await ctx.reply("Ранжирую посты под ваш профиль…");
+    const loading = await ctx.reply("Ranking posts for your profile…");
     try {
       await ensureRankingsForUser(userId, user.profile || "");
     } catch (e) {
@@ -157,7 +181,7 @@ bot.command("digest", async (ctx) => {
         ctx.chat.id,
         loading.message_id,
         null,
-        "Не удалось получить рейтинг (ошибка Gemini). Попробуйте позже."
+        "Failed to get ranking (Gemini error). Try again later."
       );
       return;
     }
@@ -175,7 +199,7 @@ bot.action(/^more:(\d+)$/, async (ctx) => {
   const date = todayDate();
   const postIds = getRankedPostIds(userId, date, DIGEST_PAGE_SIZE, offset);
   if (postIds.length === 0) {
-    return ctx.answerCbQuery("Больше нет.");
+    return ctx.answerCbQuery("No more.");
   }
 
   const posts = getPostsByIds(postIds);
@@ -191,8 +215,8 @@ bot.action(/^more:(\d+)$/, async (ctx) => {
   const hasMore = offset + DIGEST_PAGE_SIZE < totalRanked;
 
   const buttons = [];
-  if (hasMore) buttons.push(Markup.button.callback("Ещё 10", `more:${offset + DIGEST_PAGE_SIZE}`));
-  buttons.push(Markup.button.callback("Саммари", "summary"));
+  if (hasMore) buttons.push(Markup.button.callback("More 10", `more:${offset + DIGEST_PAGE_SIZE}`));
+  buttons.push(Markup.button.callback("Summary", "summary"));
 
   await ctx.editMessageText(text, {
     parse_mode: "Markdown",
@@ -200,11 +224,89 @@ bot.action(/^more:(\d+)$/, async (ctx) => {
   });
 });
 
+bot.action("digest", async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from?.id;
+  if (!userId || isUserBanned(userId)) return;
+  const user = getOrCreateUser(userId);
+  const date = todayDate();
+  const hasRankings = getRankedPostIds(userId, date, 1).length > 0;
+  if (!hasRankings) {
+    const loading = await ctx.telegram.sendMessage(ctx.chat.id, "Ranking posts for your profile…");
+    try {
+      await ensureRankingsForUser(userId, user.profile || "");
+    } catch (e) {
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        loading.message_id,
+        null,
+        "Failed to get ranking (Gemini error). Try again later."
+      );
+      return;
+    }
+    await ctx.telegram.deleteMessage(ctx.chat.id, loading.message_id);
+  }
+  await digestReply(ctx, 0);
+});
+
 bot.action("summary", async (ctx) => {
   await ctx.answerCbQuery();
   const days = getLastDays(7);
   const buttons = days.map((d) => Markup.button.callback(d.label, `summary_date:${d.date}`));
-  await ctx.editMessageText("Выберите дату для саммари:", Markup.inlineKeyboard(buttons));
+  await ctx.editMessageText("Choose date for summary:", Markup.inlineKeyboard(buttons));
+});
+
+bot.action("channels", async (ctx) => {
+  await ctx.answerCbQuery();
+  const channels = getChannels();
+  await ctx.editMessageText(formatChannelList(channels), channelsKeyboard());
+});
+
+bot.action("profile", async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from?.id;
+  if (!userId || isUserBanned(userId)) return;
+  const user = getOrCreateUser(userId);
+  const profileText = user.profile || "not set";
+  await ctx.editMessageText(
+    `Your profile (interests, profession):\n${profileText}\n\nSend a new profile as text to update.`
+  );
+});
+
+bot.action("add_channels", async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from?.id;
+  if (!userId || isUserBanned(userId)) return;
+  pendingAddChannels.set(userId, true);
+  await ctx.reply(
+    "Send any message with @channel names (e.g. @ai_newz @cryptoessay). I'll add all of them and skip already added."
+  );
+});
+
+bot.action("remove_channel", async (ctx) => {
+  await ctx.answerCbQuery();
+  const channels = getChannels();
+  if (!channels.length) {
+    await ctx.editMessageText("No channels yet. Add via Add channel or /add @channel.");
+    return;
+  }
+  const maxButtons = 20;
+  const rows = channels.slice(0, maxButtons).map((c) => [
+    Markup.button.callback(`@${c.username}`, `remove_ch:${c.username}`)
+  ]);
+  await ctx.editMessageText(
+    "Send @channel to remove or tap one below:",
+    Markup.inlineKeyboard(rows)
+  );
+});
+
+bot.action(/^remove_ch:(.+)$/, async (ctx) => {
+  await ctx.answerCbQuery();
+  const username = ctx.match[1].toLowerCase();
+  const removed = removeChannel(username);
+  await ctx.editMessageText(
+    removed ? `Channel @${username} removed.` : `Channel @${username} not found.`
+  );
 });
 
 bot.action(/^summary_date:(.+)$/, async (ctx) => {
@@ -219,7 +321,7 @@ bot.action(/^summary_date:(.+)$/, async (ctx) => {
   const posts = getPostsForDateRange(since, until);
 
   const label = formatDateLabel(dateStr);
-  const loading = await ctx.telegram.sendMessage(ctx.chat.id, "Генерирую саммари…");
+  const loading = await ctx.telegram.sendMessage(ctx.chat.id, "Generating summary…");
 
   try {
     const summaryText = await generateSummary(posts, label, user.profile || "");
@@ -233,7 +335,7 @@ bot.action(/^summary_date:(.+)$/, async (ctx) => {
       ctx.chat.id,
       loading.message_id,
       null,
-      "Не удалось сгенерировать саммари. Попробуйте позже."
+      "Failed to generate summary. Try again later."
     );
   }
 });
@@ -244,27 +346,32 @@ bot.command("profile", (ctx) => {
 
   const user = getOrCreateUser(userId);
   if (ctx.message.text.trim() === "/profile") {
-    const profileText = user.profile || "не задан";
-    return ctx.reply(`Ваш профиль (интересы, профессия):\n${profileText}\n\nОтправьте текстом новый профиль, чтобы обновить.`);
+    const profileText = user.profile || "not set";
+    return ctx.reply(`Your profile (interests, profession):\n${profileText}\n\nSend a new profile as text to update.`);
   }
 
   const profile = ctx.message.text.replace(/^\/profile\s*/i, "").trim();
-  if (!profile) return ctx.reply("Напишите описание: интересы, профессия, цели.");
+  if (!profile) return ctx.reply("Write a description: interests, profession, goals.");
   updateUserProfile(userId, profile);
-  return ctx.reply("Профиль сохранён. Он будет учитываться при ранжировании.");
+  return ctx.reply("Profile saved. It will be used for ranking.");
 });
 
 bot.command("summary", (ctx) => {
   if (!ctx.from?.id || isUserBanned(ctx.from.id)) return;
   const days = getLastDays(7);
   const buttons = days.map((d) => Markup.button.callback(d.label, `summary_date:${d.date}`));
-  return ctx.reply("Выберите дату для саммари:", Markup.inlineKeyboard(buttons));
+  return ctx.reply("Choose date for summary:", Markup.inlineKeyboard(buttons));
 });
 
 bot.command("channels", (ctx) => {
   if (!ctx.from?.id || isUserBanned(ctx.from.id)) return;
   const channels = getChannels();
-  return ctx.reply(formatChannelList(channels));
+  return ctx.reply(formatChannelList(channels), channelsKeyboard());
+});
+
+bot.command("menu", (ctx) => {
+  if (!ctx.from?.id || isUserBanned(ctx.from.id)) return;
+  return ctx.reply("Choose an action:", mainMenuKeyboard());
 });
 
 bot.command("add", (ctx) => {
@@ -273,12 +380,12 @@ bot.command("add", (ctx) => {
 
   const match = ctx.message.text.match(/\s*@?(\w+)/);
   const username = match ? match[1].toLowerCase() : null;
-  if (!username) return ctx.reply("Использование: /add @channel или /add channel");
+  if (!username) return ctx.reply("Usage: /add @channel or /add channel");
 
   const result = addChannel(username, userId);
-  if (result.ok) return ctx.reply(`✅ Канал @${result.username} добавлен`);
-  if (result.exists) return ctx.reply(`⚠️ Канал @${result.username} уже отслеживается`);
-  return ctx.reply("Не удалось добавить канал.");
+  if (result.ok) return ctx.reply(`Channel @${result.username} added.`);
+  if (result.exists) return ctx.reply(`@${result.username} is already tracked.`);
+  return ctx.reply("Failed to add channel.");
 });
 
 bot.command("remove", (ctx) => {
@@ -286,15 +393,47 @@ bot.command("remove", (ctx) => {
 
   const match = ctx.message.text.match(/\s*@?(\w+)/);
   const username = match ? match[1].toLowerCase() : null;
-  if (!username) return ctx.reply("Использование: /remove @channel или /remove channel");
+  if (!username) return ctx.reply("Usage: /remove @channel or /remove channel");
 
   const removed = removeChannel(username);
-  return ctx.reply(removed ? `Канал @${username} удалён.` : `Канал @${username} не найден.`);
+  return ctx.reply(removed ? `Channel @${username} removed.` : `Channel @${username} not found.`);
 });
+
+function parseChannelUsernames(text) {
+  if (!text || typeof text !== "string") return [];
+  const matches = text.match(/@([a-zA-Z0-9_]+)/g) || [];
+  const seen = new Set();
+  return matches
+    .map((m) => m.slice(1).toLowerCase())
+    .filter((u) => u.length >= 5 && u.length <= 32 && !seen.has(u) && seen.add(u));
+}
 
 bot.on("message", async (ctx, next) => {
   const userId = ctx.from?.id;
   if (!userId || isUserBanned(userId)) return next();
+
+  const text = ctx.message.text;
+  if (pendingAddChannels.get(userId)) {
+    pendingAddChannels.delete(userId);
+    if (!text || !text.trim()) {
+      return ctx.reply("No text received. Send a message with @channel names (e.g. @ai_newz @cryptoessay).");
+    }
+    const usernames = parseChannelUsernames(text);
+    if (usernames.length === 0) {
+      return ctx.reply("No channel usernames found. Use @username format (e.g. @ai_newz).");
+    }
+    const added = [];
+    const already = [];
+    for (const username of usernames) {
+      const result = addChannel(username, userId);
+      if (result.ok) added.push(result.username);
+      if (result.exists) already.push(result.username);
+    }
+    const parts = [];
+    if (added.length) parts.push(`Added: ${added.map((u) => `@${u}`).join(", ")}`);
+    if (already.length) parts.push(`Already tracked: ${already.map((u) => `@${u}`).join(", ")}`);
+    return ctx.reply(parts.length ? parts.join(". ") : "No channels added.");
+  }
 
   const fwd = ctx.message?.forward_origin;
   if (fwd?.type === "channel") {
@@ -302,9 +441,9 @@ bot.on("message", async (ctx, next) => {
     if (channelUsername) {
       const normalized = String(channelUsername).replace(/^@/, "").toLowerCase();
       const result = addChannel(normalized, userId);
-      if (result.ok) return ctx.reply(`✅ Канал @${result.username} добавлен`);
-      if (result.exists) return ctx.reply(`⚠️ Канал @${result.username} уже отслеживается`);
-      return ctx.reply("Не удалось добавить канал (возможно, приватный).");
+      if (result.ok) return ctx.reply(`Channel @${result.username} added.`);
+      if (result.exists) return ctx.reply(`@${result.username} is already tracked.`);
+      return ctx.reply("Failed to add channel (maybe private).");
     }
   }
   return next();
@@ -316,40 +455,40 @@ bot.command("ban", (ctx) => {
   if (!ctx.from?.id || !isAdmin(ctx.from.id)) return;
 
   const match = ctx.message.text.replace(/^\/ban\s*/i, "").trim();
-  if (!match) return ctx.reply("Использование: /ban @username или /ban user_id");
+  if (!match) return ctx.reply("Usage: /ban @username or /ban user_id");
 
   const result = banUserByUsernameOrId(match);
-  if (result.ok) return ctx.reply(`Пользователь ${result.user_id} заблокирован.`);
-  return ctx.reply("Пользователь не найден.");
+  if (result.ok) return ctx.reply(`User ${result.user_id} banned.`);
+  return ctx.reply("User not found.");
 });
 
 bot.command("unban", (ctx) => {
   if (!ctx.from?.id || !isAdmin(ctx.from.id)) return;
 
   const match = ctx.message.text.replace(/^\/unban\s*/i, "").trim();
-  if (!match) return ctx.reply("Использование: /unban @username или /unban user_id");
+  if (!match) return ctx.reply("Usage: /unban @username or /unban user_id");
 
   const result = unbanUserByUsernameOrId(match);
-  if (!result.ok) return ctx.reply("Пользователь не найден.");
-  return ctx.reply(`Пользователь ${result.user_id} разблокирован.`);
+  if (!result.ok) return ctx.reply("User not found.");
+  return ctx.reply(`User ${result.user_id} unbanned.`);
 });
 
 bot.command("close", (ctx) => {
   if (!ctx.from?.id || !isAdmin(ctx.from.id)) return;
   setBotOpen(false);
-  return ctx.reply("Бот закрыт для новых пользователей.");
+  return ctx.reply("Bot is closed to new users.");
 });
 
 bot.command("open", (ctx) => {
   if (!ctx.from?.id || !isAdmin(ctx.from.id)) return;
   setBotOpen(true);
-  return ctx.reply("Бот снова открыт.");
+  return ctx.reply("Bot is open again.");
 });
 
 bot.command("stats", (ctx) => {
   if (!ctx.from?.id || !isAdmin(ctx.from.id)) return;
   const s = getStats();
-  return ctx.reply(`Пользователей: ${s.users}\nКаналов: ${s.channels}\nПостов в БД: ${s.posts}`);
+  return ctx.reply(`Users: ${s.users}\nChannels: ${s.channels}\nPosts in DB: ${s.posts}`);
 });
 
 export default bot;
