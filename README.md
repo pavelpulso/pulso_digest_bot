@@ -27,24 +27,14 @@ pm2 startup
 
 ## GitHub и автодеплой на VPS
 
-1. **Репозиторий на GitHub**  
-   Создайте репозиторий (например `pulso_digest_bot`), затем:
+Репозиторий: **https://github.com/pavelpulso/pulso_digest_bot**
 
-   ```bash
-   git init
-   git add .
-   git commit -m "Initial commit"
-   git branch -M main
-   git remote add origin https://github.com/YOUR_USERNAME/pulso_digest_bot.git
-   git push -u origin main
-   ```
-
-2. **Один раз на VPS**  
+1. **Один раз на VPS**  
    Клонируйте проект и настройте окружение:
 
    ```bash
    cd /home/your_user   # или другой каталог
-   git clone https://github.com/YOUR_USERNAME/pulso_digest_bot.git
+   git clone https://github.com/pavelpulso/pulso_digest_bot.git
    cd pulso_digest_bot
    cp .env.example .env
    # отредактировать .env
@@ -57,8 +47,8 @@ pm2 startup
 
    Запомните полный путь к каталогу проекта (например `/home/your_user/pulso_digest_bot`) — он понадобится для секрета `DEPLOY_PATH`.
 
-3. **Секреты в GitHub**  
-   В репозитории: **Settings → Secrets and variables → Actions** → **New repository secret**. Добавьте:
+2. **Секреты в GitHub (обязательно для автодеплоя)**  
+   В репозитории: **Settings → Secrets and variables → Actions** → **New repository secret**. Добавьте (без них автодеплой не заработает):
 
    | Секрет            | Описание                                      |
    |-------------------|-----------------------------------------------|
@@ -69,7 +59,7 @@ pm2 startup
 
    Ключ для деплоя: на своей машине `ssh-keygen -t ed25519 -C "github-deploy" -f deploy_key` (без пароля), положите публичный ключ в `~/.ssh/authorized_keys` на VPS, в секрет — содержимое `deploy_key`.
 
-4. **Автодеплой**  
+3. **Автодеплой**  
    При каждом `git push origin main` GitHub Actions подключается по SSH к VPS и выполняет в `DEPLOY_PATH`: `git pull`, `npm ci --omit=dev`, `pm2 restart tg-digest-bot` (или первый запуск, если бот ещё не был запущен).
 
 ## Переменные окружения (.env)
