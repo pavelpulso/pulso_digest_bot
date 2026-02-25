@@ -91,6 +91,16 @@ function formatErrorForChat(e) {
   return oneLine.length > 250 ? oneLine.slice(0, 247) + "…" : oneLine;
 }
 
+function formatCollectAnalytics({ collected, perChannel = [], errors = [] }) {
+  const channelLines = (perChannel || []).map(
+    (p) => `@${p.channel} ${"error" in p && p.error ? `— ${p.error}` : p.count + " posts"}`
+  );
+  let text = `Collected: ${collected} posts.`;
+  if (channelLines.length) text += "\nChannels: " + channelLines.join("; ");
+  if (errors.length) text += "\n\nErrors: " + errors.join("; ");
+  return text;
+}
+
 async function ensureRankingsForUser(userId, userProfile) {
   const date = todayDate();
   const existing = getRankedPostIds(userId, date, 1);
@@ -122,9 +132,13 @@ function digestReply(ctx, offset = 0) {
   const date = todayDate();
   const postIds = getRankedPostIds(userId, date, DIGEST_PAGE_SIZE, offset);
   if (postIds.length === 0) {
-    return ctx.reply(
-      "No posts for today or ranking not ready yet. Try later or add channels via /add or by forwarding a post."
-    );
+    const noPostsText =
+      "No posts for today or ranking not ready yet. Try later or add channels via /add or by forwarding a post.";
+    const hasChannels = getChannelUsernames().length > 0;
+    const keyboard = hasChannels
+      ? Markup.inlineKeyboard([[Markup.button.callback("Fetch posts and show digest", "fetch_then_digest")]])
+      : undefined;
+    return ctx.reply(noPostsText, keyboard);
   }
 
   const posts = getPostsByIds(postIds);
@@ -272,6 +286,61 @@ bot.action("digest", async (ctx) => {
   await digestReply(ctx, 0);
 });
 
+bot.action("fetch_then_digest", async (ctx) => {
+  await ctx.answerCbQuery();
+  const userId = ctx.from?.id;
+  if (!userId || isUserBanned(userId)) return;
+  const chatId = ctx.chat.id;
+
+  if (getChannelUsernames().length === 0) {
+    await ctx.telegram.sendMessage(chatId, "Add channels first (Channels → Add channel, or forward a post).");
+    return;
+  }
+
+  const statusMsg = await ctx.telegram.sendMessage(
+    chatId,
+    "Fetching from channels — this may take a minute…"
+  );
+
+  let collectResult;
+  try {
+    collectResult = await collectChannelPosts({
+      onProgress: async ({ channel, index, total, collected }) => {
+        await ctx.telegram.editMessageText(
+          chatId,
+          statusMsg.message_id,
+          null,
+          `Fetching channels: ${index}/${total} @${channel}… (posts collected: ${collected})`
+        ).catch(() => {});
+      }
+    });
+  } catch (e) {
+    console.error("Fetch then digest collect error:", e);
+    await ctx.telegram.editMessageText(
+      chatId,
+      statusMsg.message_id,
+      null,
+      "Failed to fetch posts.\n\nError: " + formatErrorForChat(e)
+    );
+    return;
+  }
+
+  await ctx.telegram.sendMessage(chatId, formatCollectAnalytics(collectResult)).catch(() => {});
+
+  const user = getOrCreateUser(userId);
+  try {
+    await ensureRankingsForUser(userId, user.profile || "");
+  } catch (e) {
+    await ctx.telegram.sendMessage(
+      chatId,
+      "Failed to get ranking.\n\nError: " + formatErrorForChat(e)
+    );
+    return;
+  }
+
+  await digestReply(ctx, 0);
+});
+
 bot.action("summary", async (ctx) => {
   await ctx.answerCbQuery();
   const days = getLastDays(7);
@@ -361,8 +430,9 @@ bot.action(/^summary_date:(.+)$/, async (ctx) => {
     );
     messageToEdit = statusMsg.message_id;
 
+    let collectResult;
     try {
-      await collectChannelPosts({
+      collectResult = await collectChannelPosts({
         onProgress: async ({ channel, index, total, collected }) => {
           await ctx.telegram.editMessageText(
             chatId,
@@ -383,6 +453,7 @@ bot.action(/^summary_date:(.+)$/, async (ctx) => {
       return;
     }
 
+    await ctx.telegram.sendMessage(chatId, formatCollectAnalytics(collectResult)).catch(() => {});
     await ctx.telegram.editMessageText(
       chatId,
       statusMsg.message_id,
