@@ -85,6 +85,12 @@ function isAdmin(userId) {
   return Number.isInteger(ADMIN_ID) && userId === ADMIN_ID;
 }
 
+function formatErrorForChat(e) {
+  const raw = (e && (e.message || e.reason)) || String(e);
+  const oneLine = raw.replace(/\s+/g, " ").trim();
+  return oneLine.length > 250 ? oneLine.slice(0, 247) + "…" : oneLine;
+}
+
 async function ensureRankingsForUser(userId, userProfile) {
   const date = todayDate();
   const existing = getRankedPostIds(userId, date, 1);
@@ -198,7 +204,7 @@ bot.command("digest", async (ctx) => {
         ctx.chat.id,
         loading.message_id,
         null,
-        "Failed to get ranking (Gemini error). Try again later."
+        "Failed to get ranking (Gemini error). Try again later.\n\nError: " + formatErrorForChat(e)
       );
       return;
     }
@@ -257,7 +263,7 @@ bot.action("digest", async (ctx) => {
         ctx.chat.id,
         loading.message_id,
         null,
-        "Failed to get ranking (Gemini error). Try again later."
+        "Failed to get ranking (Gemini error). Try again later.\n\nError: " + formatErrorForChat(e)
       );
       return;
     }
@@ -372,7 +378,7 @@ bot.action(/^summary_date:(.+)$/, async (ctx) => {
         chatId,
         statusMsg.message_id,
         null,
-        "Failed to fetch posts. Try again later."
+        "Failed to fetch posts. Try again later.\n\nError: " + formatErrorForChat(e)
       );
       return;
     }
@@ -408,20 +414,30 @@ bot.action(/^summary_date:(.+)$/, async (ctx) => {
   }
 
   const label = formatDateLabel(dateStr);
+  const opts = { parse_mode: "Markdown", disable_web_page_preview: true };
   try {
-    const summaryText = await generateSummary(posts, label, user.profile || "");
-    await ctx.telegram.editMessageText(chatId, messageToEdit, null, summaryText, {
-      parse_mode: "Markdown",
-      disable_web_page_preview: true
-    });
+    let summaryText = await generateSummary(posts, label, user.profile || "");
+    const maxLen = 4096;
+    if (summaryText.length > maxLen) summaryText = summaryText.slice(0, maxLen - 1) + "…";
+
+    try {
+      await ctx.telegram.editMessageText(chatId, messageToEdit, null, summaryText, opts);
+    } catch (editErr) {
+      console.error("Summary editMessageText failed:", editErr.message || editErr);
+      await ctx.telegram.sendMessage(chatId, summaryText, opts);
+      await ctx.telegram.sendMessage(
+        chatId,
+        "Summary sent above. (Could not update the previous message: " + formatErrorForChat(editErr) + ")"
+      ).catch(() => {});
+    }
   } catch (e) {
     console.error("Summary error:", e);
-    await ctx.telegram.editMessageText(
-      chatId,
-      messageToEdit,
-      null,
-      "Failed to generate summary. Try again later."
-    );
+    const errMsg = "Failed to generate summary. Try again later.\n\nError: " + formatErrorForChat(e);
+    try {
+      await ctx.telegram.editMessageText(chatId, messageToEdit, null, errMsg);
+    } catch (_) {
+      await ctx.telegram.sendMessage(chatId, errMsg);
+    }
   }
 });
 
@@ -514,7 +530,7 @@ bot.on("message", async (ctx, next) => {
           ctx.chat.id,
           loading.message_id,
           null,
-          "Failed to get ranking (Gemini error). Try again later."
+          "Failed to get ranking (Gemini error). Try again later.\n\nError: " + formatErrorForChat(e)
         );
         return;
       }
