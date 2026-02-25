@@ -248,4 +248,103 @@ export async function recommendChannels(userProfile, channelUsernames) {
     }))
 }
 
-export default { rankPosts, generateSummaryBlocks, recommendChannels, chat }
+/**
+ * Анализирует канал по последним постам и возвращает персонализированный скоринг.
+ * @param {Array<{ id: string, channel: string, text: string, link: string }>} posts
+ * @param {string} channel имя канала (без @)
+ * @param {string} [userProfile]
+ * @returns {Promise<{ score: number, signal_noise: number, verdict: 'keep'|'mute'|'unsubscribe', summary: string, arguments: string[] }>}
+ */
+export async function analyzeChannel(posts, channel, userProfile = "") {
+  const list = posts.map((p) => ({
+    text: (p.text || "").slice(0, 1000),
+    link: p.link
+  }))
+
+  const prompt = `Ты — персональный редактор. Проанализируй канал @${channel} для этого читателя по его последним постам.
+
+Профиль читателя (интересы, профессия, цели): ${userProfile || "не указан"}
+
+Последние посты канала (${list.length} шт.):
+${JSON.stringify(list, null, 2)}
+
+Верни JSON-объект с полями:
+- score: число от 0 до 10 (насколько канал полезен именно этому читателю; учитывай релевантность тематики, соотношение полезного контента к рекламе/шуму)
+- signal_noise: число от 0.0 до 1.0 (доля постов с реальной пользой vs шум/реклама/репосты)
+- verdict: строка — одно из: "keep" (держать, канал реально полезен), "mute" (снизить приоритет, посмотрим), "unsubscribe" (мало пользы, стоит отписаться)
+- summary: строка до 20 слов — суть канала и почему такой вердикт
+- arguments: массив из 3 строк — конкретные аргументы вердикта (каждый до 15 слов), с привязкой к профилю читателя`
+
+  const raw = await chat(prompt, { responseFormat: { type: "json_object" } })
+  const cleaned = raw.replace(/```\w*\n?/g, "").trim()
+  let parsed
+  try {
+    parsed = JSON.parse(cleaned)
+  } catch (e) {
+    throw new Error("Gemini: invalid JSON for analyzeChannel")
+  }
+  return {
+    score: Number(parsed.score) || 0,
+    signal_noise: Number(parsed.signal_noise) || 0,
+    verdict: ["keep", "mute", "unsubscribe"].includes(parsed.verdict) ? parsed.verdict : "mute",
+    summary: String(parsed.summary || "").trim().slice(0, 300),
+    arguments: Array.isArray(parsed.arguments)
+      ? parsed.arguments.slice(0, 3).map((a) => String(a).trim())
+      : []
+  }
+}
+
+/**
+ * Батч-анализ всех каналов пользователя.
+ * @param {Array<{ channel: string, posts: Array<{ text: string }> }>} channelsData
+ * @param {string} [userProfile]
+ * @returns {Promise<Array<{ channel: string, score: number, verdict: string, summary: string }>>}
+ */
+export async function auditAllChannels(channelsData, userProfile = "") {
+  if (channelsData.length === 0) return []
+
+  const list = channelsData.map((cd) => ({
+    channel: cd.channel,
+    posts: cd.posts.slice(0, 20).map((p) => (p.text || "").slice(0, 500))
+  }))
+
+  const prompt = `Ты — персональный редактор. Оцени каждый канал для этого читателя по его последним постам.
+
+Профиль читателя (интересы, профессия, цели): ${userProfile || "не указан"}
+
+Каналы и их последние посты:
+${JSON.stringify(list, null, 2)}
+
+Верни JSON-объект с полем channels — массив объектов, для каждого канала:
+- channel: имя канала (из входного списка)
+- score: число от 0 до 10 (польза для ЭТОГО читателя)
+- verdict: "keep", "mute" или "unsubscribe"
+- summary: до 12 слов — суть вердикта
+
+Отсортируй по score убыванию. Будь строг: ставь низкий score каналам без явной пользы для профиля читателя.`
+
+  const raw = await chat(prompt, { responseFormat: { type: "json_object" }, maxTokens: 2048 })
+  const cleaned = raw.replace(/```\w*\n?/g, "").trim()
+  let parsed
+  try {
+    parsed = JSON.parse(cleaned)
+  } catch (e) {
+    throw new Error("Gemini: invalid JSON for auditAllChannels")
+  }
+  let arr = []
+  if (Array.isArray(parsed)) arr = parsed
+  else if (parsed && Array.isArray(parsed.channels)) arr = parsed.channels
+
+  const known = new Set(channelsData.map((cd) => cd.channel.toLowerCase()))
+  return arr
+    .filter((item) => known.has(String(item.channel || "").toLowerCase()))
+    .map((item) => ({
+      channel: String(item.channel).toLowerCase(),
+      score: Number(item.score) || 0,
+      verdict: ["keep", "mute", "unsubscribe"].includes(item.verdict) ? item.verdict : "mute",
+      summary: String(item.summary || "").trim().slice(0, 200)
+    }))
+    .sort((a, b) => b.score - a.score)
+}
+
+export default { rankPosts, generateSummaryBlocks, recommendChannels, analyzeChannel, auditAllChannels, chat }
