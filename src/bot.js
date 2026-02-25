@@ -16,13 +16,14 @@ import {
   clearRankingsForUser,
   insertRankings,
   updateUserProfile,
+  updateUserDigestMax,
   banUserByUsernameOrId,
   unbanUserByUsernameOrId,
   getStats,
   getPostsForDateRange
 } from "./db.js";
 import { collectChannelPosts } from "./gramjs.js";
-import { rankPosts, generateSummary } from "./gemini.js";
+import { rankPosts, generateSummaryBlocks } from "./gemini.js";
 import {
   formatDigestPage,
   formatChannelList,
@@ -486,20 +487,44 @@ bot.action(/^summary_date:(.+)$/, async (ctx) => {
 
   const label = formatDateLabel(dateStr);
   const opts = { parse_mode: "Markdown", disable_web_page_preview: true };
+  const maxItems = Math.min(20, Math.max(3, user.digest_max_items ?? 10));
   try {
-    let summaryText = await generateSummary(posts, label, user.profile || "");
-    const maxLen = 4096;
-    if (summaryText.length > maxLen) summaryText = summaryText.slice(0, maxLen - 1) + "…";
+    const { teaser, blocks } = await generateSummaryBlocks(posts, label, user.profile || "", maxItems);
+    const postById = Object.fromEntries(
+      posts.map((p) => {
+        const postUrl =
+          p.link && String(p.link).includes(String(p.post_id))
+            ? p.link
+            : `https://t.me/${p.channel}/${p.post_id}`;
+        return [p.id, { channel: p.channel, postUrl }];
+      })
+    );
 
     try {
-      await ctx.telegram.editMessageText(chatId, messageToEdit, null, summaryText, opts);
-    } catch (editErr) {
-      console.error("Summary editMessageText failed:", editErr.message || editErr);
-      await ctx.telegram.sendMessage(chatId, summaryText, opts);
-      await ctx.telegram.sendMessage(
-        chatId,
-        "Summary sent above. (Could not update the previous message: " + formatErrorForChat(editErr) + ")"
-      ).catch(() => {});
+      await ctx.telegram.deleteMessage(chatId, messageToEdit).catch(() => {});
+    } catch (_) {}
+
+    if (blocks.length === 0) {
+      await ctx.telegram.sendMessage(chatId, `📋 Дайджест за ${label}\n\nНе удалось сформировать блоки. Попробуйте позже.`);
+      return;
+    }
+
+    const header = teaser
+      ? `📋 Дайджест за ${label}\n\n**Главное:** ${teaser}\n\n(${blocks.length} пунктов)`
+      : `📋 Дайджест за ${label} (${blocks.length} пунктов)`;
+    await ctx.telegram.sendMessage(chatId, header, opts);
+
+    const maxLen = 4096;
+    for (const block of blocks) {
+      const linksParts = block.ids.map((id) => {
+        const { channel, postUrl } = postById[id] || { channel: "channel", postUrl: "#" };
+        return `[${block.ids.length > 1 ? "@" + channel : "Подробнее →"}](${postUrl})`;
+      });
+      const linksLine = linksParts.join(block.ids.length > 1 ? ", " : "");
+      const sourcesPrefix = block.ids.length > 1 ? "Подробнее: " : "";
+      let text = `${block.emoji} **Суть:** ${block.essence}\n\n💡 **Зачем:** ${block.potential}\n\n${sourcesPrefix}${linksLine}`;
+      if (text.length > maxLen) text = text.slice(0, maxLen - 1) + "…";
+      await ctx.telegram.sendMessage(chatId, text, opts);
     }
   } catch (e) {
     console.error("Summary error:", e);
@@ -519,13 +544,30 @@ bot.command("profile", (ctx) => {
   const user = getOrCreateUser(userId);
   if (ctx.message.text.trim() === "/profile") {
     const profileText = user.profile || "not set";
-    return ctx.reply(`Your profile (interests, profession):\n${profileText}\n\nSend a new profile as text to update.`);
+    const maxDigest = user.digest_max_items ?? 10;
+    return ctx.reply(
+      `Your profile (interests, profession):\n${profileText}\n\n` +
+        `Max digest items: ${maxDigest}. Change: /digest_max 5 or 10 or 15\n\n` +
+        `Send a new profile as text to update.`
+    );
   }
 
   const profile = ctx.message.text.replace(/^\/profile\s*/i, "").trim();
   if (!profile) return ctx.reply("Write a description: interests, profession, goals.");
   updateUserProfile(userId, profile);
   return ctx.reply("Profile saved. It will be used for ranking.");
+});
+
+bot.command("digest_max", (ctx) => {
+  const userId = ctx.from?.id;
+  if (!userId || isUserBanned(userId)) return;
+
+  const match = ctx.message.text.match(/\s+(\d+)/);
+  const value = match ? updateUserDigestMax(userId, match[1]) : null;
+  if (value != null) {
+    return ctx.reply(`Max digest items set to ${value}. Summary will show up to ${value} items.`);
+  }
+  return ctx.reply("Usage: /digest_max 5 or 10 or 15 (max items in summary digest).");
 });
 
 bot.command("summary", (ctx) => {

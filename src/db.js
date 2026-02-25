@@ -69,6 +69,12 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_rankings_user_date ON rankings(user_id, date);
 `);
 
+// Migration: digest_max_items (default 10)
+const userCols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name);
+if (!userCols.includes("digest_max_items")) {
+  db.prepare("ALTER TABLE users ADD COLUMN digest_max_items INTEGER DEFAULT 10").run();
+}
+
 // Settings
 export function getSetting(key) {
   const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
@@ -191,24 +197,33 @@ export function getRankingsMap(userId, date) {
 }
 
 // Users
+const USER_SELECT = "SELECT user_id, username, profile, is_banned, updated_at, COALESCE(digest_max_items, 10) AS digest_max_items FROM users WHERE user_id = ?";
+
 export function getUser(userId) {
-  return db.prepare("SELECT user_id, username, profile, is_banned, updated_at FROM users WHERE user_id = ?").get(userId);
+  return db.prepare(USER_SELECT).get(userId);
 }
 
 export function getOrCreateUser(userId, username = null) {
-  let row = db.prepare("SELECT user_id, username, profile, is_banned, updated_at FROM users WHERE user_id = ?").get(userId);
+  let row = db.prepare(USER_SELECT).get(userId);
   if (!row) {
-    db.prepare("INSERT INTO users (user_id, username, profile, is_banned) VALUES (?, ?, NULL, 0)").run(userId, username);
-    row = db.prepare("SELECT user_id, username, profile, is_banned, updated_at FROM users WHERE user_id = ?").get(userId);
+    db.prepare("INSERT INTO users (user_id, username, profile, is_banned, digest_max_items) VALUES (?, ?, NULL, 0, 10)").run(userId, username);
+    row = db.prepare(USER_SELECT).get(userId);
   } else if (username != null) {
     db.prepare("UPDATE users SET username = ?, updated_at = datetime('now') WHERE user_id = ?").run(username, userId);
-    row = { ...row, username };
+    row = db.prepare(USER_SELECT).get(userId);
   }
   return row;
 }
 
 export function updateUserProfile(userId, profile) {
   db.prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE user_id = ?").run(profile, userId);
+}
+
+export function updateUserDigestMax(userId, maxItems) {
+  const n = Math.min(20, Math.max(3, parseInt(maxItems, 10)));
+  if (Number.isNaN(n)) return null;
+  db.prepare("UPDATE users SET digest_max_items = ?, updated_at = datetime('now') WHERE user_id = ?").run(n, userId);
+  return n;
 }
 
 export function isUserBanned(userId) {
