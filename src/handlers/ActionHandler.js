@@ -9,7 +9,8 @@ import {
 	upsertPostFeedback,
 	setUserChannelHidden,
 	getPostsForCalendarDay,
-	removeChannelsByUsernames
+	removeChannelsByUsernames,
+	removeChannel
 } from "../db.js"
 import { formatDateLabel, formatChannelList } from "../utils.js"
 import { collectChannelPosts } from "../gramjs.js"
@@ -263,6 +264,22 @@ export class ActionHandler extends BaseHandler {
 
 		try {
 			await ctx.editMessageText(`✅ Удалено ${removed} слабых каналов:\n${weakChannels.slice(0, 10).map(c => `@${c}`).join("\n")}${weakChannels.length > 10 ? `\n... и ещё ${weakChannels.length - 10}` : ""}`)
+		} catch (_) { }
+	}
+
+	async handleRemoveOneChannel(ctx) {
+		const channel = ctx.match[1]
+		const userId = ctx.from?.id
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+
+		await this.safeAnswerCbQuery(ctx, `🗑 Удаляю @${channel}...`)
+
+		const removed = removeChannel(channel)
+		this.mgr.cache.deleteAuditWeak(userId)
+		this.mgr.cache.deleteAuditScores(userId)
+
+		try {
+			await ctx.editMessageText(removed ? `✅ Удалён @${channel}` : `❌ Не удалось удалить @${channel}`)
 		} catch (_) { }
 	}
 

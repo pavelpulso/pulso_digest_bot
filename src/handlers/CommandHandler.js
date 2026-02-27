@@ -249,15 +249,8 @@ export class CommandHandler extends BaseHandler {
 					too_basic: "Слишком базовый уровень",
 					none: "Низкая ценность"
 				}[s.problemType] || "Низкая ценность"
-				
-				const recLabel = {
-					remove: "🗑 Удалить",
-					keep: "✅ Оставить",
-					keep_if: s.keepIfCondition ? `⚠️ Оставить если: ${s.keepIfCondition}` : "",
-					mute_temporarily: "🔕 Скрыть временно"
-				}[s.recommendation] || ""
 
-				return `@${s.channel} — ${s.score.toFixed(1)}\n   Проблема: ${problemLabel}\n   ${s.reason}\n   ${recLabel}`
+				return `@${s.channel} — ${s.score.toFixed(1)}\n   Проблема: ${problemLabel}\n   ${s.reason}`
 			}
 
 			// Динамическое ограничение топ-N
@@ -282,17 +275,30 @@ export class CommandHandler extends BaseHandler {
 			}
 
 			const noDataNote = noDataChannels.length > 0 ? `\n\n⚠️ Нет постов по: ${noDataChannels.map((c) => "@" + c).join(", ")}` : ""
-			
+
 			// Легенда метрик
 			const metricsLegend = "\n\n<i>Метрики: Q=Качество контента, R=Релевантность профилю, S=Чистота от спама</i>"
-			
+
 			const fullText = `📋 Аудит каналов: ${scores.length} каналов\n\n` + sections.join("\n\n") + noDataNote + metricsLegend
 			const safeText = fullText.length > 4096 ? fullText.slice(0, 4093) + "…" : fullText
 
 			// Кнопки действий
 			const actionButtons = []
+
+			// Индивидуальные кнопки для слабых каналов (до 10)
+			const weakChannelButtons = muteChannels.slice(0, 10).map((s) => ({
+				text: `🗑 @${s.channel}`,
+				callback_data: `audit_remove_one:${s.channel}`
+			}))
+
+			// Группируем по 2 в ряд
+			for (let i = 0; i < weakChannelButtons.length; i += 2) {
+				actionButtons.push(weakChannelButtons.slice(i, i + 2))
+			}
+
+			// Общая кнопка удаления всех слабых
 			if (muteChannels.length > 0) {
-				actionButtons.push([{ text: `🗑 Удалить слабые (${muteChannels.length})`, callback_data: "audit_remove_weak" }])
+				actionButtons.push([{ text: `🗑 Удалить все слабые (${muteChannels.length})`, callback_data: "audit_remove_weak" }])
 			}
 			if (scores.length > topLimit) {
 				actionButtons.push([{ text: "📊 Полный отчёт", callback_data: "audit_full_report" }])
