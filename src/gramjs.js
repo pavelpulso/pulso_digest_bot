@@ -110,8 +110,16 @@ export async function fetchRecentPostsFromChannel(channelName, limit = 20) {
   }
 
   try {
-    for await (const message of client.iterMessages(channelName, { limit })) {
-      if (!message.id || (!message.text && !message.message)) continue
+    // Fetch more messages to account for media-only posts we'll skip
+    // Some channels have many posts without text (photos, videos, polls)
+    const fetchLimit = limit * 3
+    let fetched = 0
+    
+    for await (const message of client.iterMessages(channelName, { limit: fetchLimit })) {
+      if (!message.id) continue
+      
+      // Skip media-only posts (no text content)
+      if (!message.text && !message.message) continue
 
       const text = message.text || message.message || ""
       const views = message.views || 0
@@ -124,6 +132,10 @@ export async function fetchRecentPostsFromChannel(channelName, limit = 20) {
       upsertPost(id, channel, message.id, text, link, views, date)
 
       posts.push({ id, channel, post_id: message.id, text, link, views, date })
+      fetched++
+      
+      // Stop when we have enough text posts
+      if (fetched >= limit) break
     }
   } finally {
     try {
