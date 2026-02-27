@@ -6,6 +6,9 @@ const GEMINI_PROXY_URL = (process.env.GEMINI_PROXY_URL || "").replace(/\/$/, "")
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ""
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-3-flash"
 
+/**
+ * Делает запрос к Gemini API с повторными попытками при 429.
+ */
 async function chat(prompt, options = {}) {
   if (!GEMINI_PROXY_URL || !GEMINI_API_KEY) {
     throw new Error("GEMINI_PROXY_URL and GEMINI_API_KEY must be set")
@@ -23,35 +26,60 @@ async function chat(prompt, options = {}) {
     body.response_format = options.responseFormat
   }
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${GEMINI_API_KEY}`
-    },
-    body: JSON.stringify(body)
-  })
+  const maxRetries = 3
+  let lastError = null
 
-  if (!res.ok) {
-    const errText = await res.text()
-    throw new Error(`Gemini API ${res.status}: ${errText}`)
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${GEMINI_API_KEY}`
+        },
+        body: JSON.stringify(body)
+      })
+
+      if (res.status === 429) {
+        const waitMs = 1000 * attempt // 1s, 2s, 3s
+        console.log(`[Gemini] 429 Too Many Requests. Retry ${attempt}/${maxRetries} after ${waitMs}ms`)
+        await new Promise(r => setTimeout(r, waitMs))
+        continue
+      }
+
+      if (!res.ok) {
+        const errText = await res.text()
+        throw new Error(`Gemini API ${res.status}: ${errText}`)
+      }
+
+      const data = await res.json()
+      const text = data.choices?.[0]?.message?.content
+      if (text == null) throw new Error("Gemini API: empty response")
+      return text
+    } catch (e) {
+      if (e.message.includes("429") && attempt < maxRetries) {
+        lastError = e
+        continue
+      }
+      throw e
+    }
   }
 
-  const data = await res.json()
-  const text = data.choices?.[0]?.message?.content
-  if (text == null) throw new Error("Gemini API: empty response")
-  return text
+  throw lastError || new Error("Gemini API: max retries exceeded")
 }
 
 /**
  * Ранжирует посты для пользователя. Возвращает массив { post_id, score, reason }.
  * @param {Array<{ id: string, channel: string, text: string }>} posts
  * @param {string} [userProfile]
- * @param {{ channelPriorities?: Record<string, number>, feedback?: { liked: string[], disliked: string[] } }} [options]
+ * @param {{ channelPriorities?: Record<string, number>, feedback?: { liked: string[], disliked: string[] }, onProgress?: (percent: number) => void }} [options]
  * @returns {Promise<Array<{ post_id: string, score: number, reason: string }>>}
  */
 export async function rankPosts(posts, userProfile = "", options = {}) {
   if (posts.length === 0) return []
+
+  const { onProgress } = options
+  if (typeof onProgress === "function") onProgress(10)
 
   const list = posts.map((p) => ({
     id: p.id,
@@ -97,7 +125,10 @@ ${JSON.stringify(list, null, 2)}
 
 В reason обязательно укажи: как именно этот пост может помочь этому читателю двигаться вперёд (карьера, жизнь, решения) — привязка к его профилю и целям, не общие слова. Верни JSON — массив объектов: post_id (строка), score (число 0–1), reason (строка, одно предложение).`
 
+  if (typeof onProgress === "function") onProgress(50)
   const raw = await chat(prompt, { responseFormat: { type: "json_object" } })
+  if (typeof onProgress === "function") onProgress(80)
+  
   const cleaned = raw.replace(/```\w*\n?/g, "").trim()
   let parsed
   try {
@@ -112,6 +143,8 @@ ${JSON.stringify(list, null, 2)}
     else throw new Error("Gemini: expected array in JSON")
   }
   if (!Array.isArray(parsed)) throw new Error("Gemini: expected array")
+  
+  if (typeof onProgress === "function") onProgress(100)
   return parsed.map((item) => ({
     post_id: String(item.post_id),
     score: Number(item.score) || 0,
@@ -125,10 +158,14 @@ ${JSON.stringify(list, null, 2)}
  * @param {string} dateLabel например "24 Feb 2026"
  * @param {string} [userProfile]
  * @param {number} [maxItems=10] максимум блоков в дайджесте
+ * @param {{ onProgress?: (percent: number) => void }} [options]
  * @returns {Promise<{ teaser: string|null, blocks: Array<{ ids: string[], essence: string, potential: string, emoji: string }> }>}
  */
-export async function generateSummaryBlocks(posts, dateLabel, userProfile = "", maxItems = 10) {
+export async function generateSummaryBlocks(posts, dateLabel, userProfile = "", maxItems = 10, options = {}) {
   if (posts.length === 0) return { teaser: null, blocks: [] }
+
+  const { onProgress } = options
+  if (typeof onProgress === "function") onProgress(10)
 
   const list = posts.map((p) => ({
     id: p.id,
@@ -158,7 +195,10 @@ ${JSON.stringify(list, null, 2)}
 
 Верни JSON-объект с полями teaser и blocks.`
 
+  if (typeof onProgress === "function") onProgress(50)
   const raw = await chat(prompt, { responseFormat: { type: "json_object" } })
+  if (typeof onProgress === "function") onProgress(75)
+  
   const cleaned = raw.replace(/```\w*\n?/g, "").trim()
   let parsed
   try {
@@ -197,6 +237,7 @@ ${JSON.stringify(list, null, 2)}
     })
     .filter(Boolean)
 
+  if (typeof onProgress === "function") onProgress(100)
   return { teaser, blocks: blocks.slice(0, maxBlocks) }
 }
 

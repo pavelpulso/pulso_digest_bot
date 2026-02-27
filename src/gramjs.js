@@ -15,12 +15,12 @@ function createClient() {
 }
 
 /**
- * Собирает посты из всех каналов за последние 24 часа и сохраняет в БД.
- * @param {{ onProgress?: (opts: { channel: string, index: number, total: number, collected: number }) => void|Promise<void> }} [options]
+ * Собирает посты из всех каналов за указанный период.
+ * @param {{ onProgress?: (opts: { channel: string, index: number, total: number, collected: number }) => void|Promise<void>, sinceTs?: number, untilTs?: number }} [options]
  * @returns {{ collected: number, errors: string[], perChannel: Array<{ channel: string, count: number, error?: string }> }}
  */
 export async function collectChannelPosts(options = {}) {
-  const { onProgress } = options;
+  const { onProgress, sinceTs: customSinceTs, untilTs: customUntilTs } = options;
   const channelUsernames = getChannelUsernames();
   if (channelUsernames.length === 0) {
     return { collected: 0, errors: [], perChannel: [] };
@@ -39,7 +39,9 @@ export async function collectChannelPosts(options = {}) {
     return { collected: 0, errors, perChannel: [] };
   }
 
-  const sinceTs = Math.floor((Date.now() - 24 * 60 * 60 * 1000) / 1000);
+  const nowTs = Math.floor(Date.now() / 1000);
+  const sinceTs = customSinceTs || (nowTs - 24 * 60 * 60);
+  const untilTs = customUntilTs || nowTs;
 
   for (let i = 0; i < channelUsernames.length; i++) {
     const username = channelUsernames[i];
@@ -49,7 +51,7 @@ export async function collectChannelPosts(options = {}) {
       await Promise.resolve(onProgress({ channel: channelKey, index: i + 1, total, collected }));
     }
     try {
-      const count = await collectFromChannel(client, channelName, sinceTs);
+      const count = await collectFromChannel(client, channelName, sinceTs, untilTs);
       collected += count;
       perChannel.push({ channel: channelKey, count });
     } catch (e) {
@@ -65,12 +67,11 @@ export async function collectChannelPosts(options = {}) {
   return { collected, errors, perChannel };
 }
 
-async function collectFromChannel(client, channelName, sinceTs) {
+async function collectFromChannel(client, channelName, sinceTs, untilTs) {
   let count = 0;
-  const nowTs = Math.floor(Date.now() / 1000);
 
   for await (const message of client.iterMessages(channelName, {
-    offsetDate: nowTs,
+    offsetDate: untilTs,
     limit: 500
   })) {
     if (message.date < sinceTs) break;

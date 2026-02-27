@@ -16,11 +16,13 @@ import {
 	getUserMinusKeywords,
 	getPostsForDateRange,
 	getRankedPostIdsWithTotal,
-	getUsersForMorningDigest
+	getUsersForMorningDigest,
+	getPostsForCalendarDay
 } from "../db.js"
 import { formatDateLabel, MIN_DIGEST_SCORE, DIGEST_PAGE_SIZE } from "../utils.js"
 import { UIFormatter } from "../ui/UIFormatter.js"
 import { KeyboardProvider } from "../ui/KeyboardProvider.js"
+import { collectChannelPosts } from "../gramjs.js"
 
 export class BotService {
 	constructor(botManager) {
@@ -39,7 +41,47 @@ export class BotService {
 		const date = this.todayDate()
 		if (this.hasRankings(userId, date)) return
 
-		const allPosts = getPostsLast24h()
+		let allPosts = getPostsForCalendarDay(date)
+		
+		// Если постов нет — выкачиваем за последние 24 часа
+		if (allPosts.length === 0) {
+			const nowTs = Math.floor(Date.now() / 1000)
+			const sinceTs = nowTs - 24 * 60 * 60
+			await collectChannelPosts({ sinceTs, untilTs: nowTs })
+			allPosts = getPostsForCalendarDay(date)
+		}
+		
+		const posts = this.filterPostsForUser(allPosts, userId)
+		if (posts.length === 0) return
+
+		const priorities = getUserChannelPriorities(userId)
+		const feedback = getPostFeedbackForRanking(userId)
+
+		const ranked = await this.mgr.ai.rankPosts(posts, userProfile, { channelPriorities: priorities, feedback })
+		clearRankingsForUser(userId, date)
+
+		const items = ranked.map((r) => ({
+			id: uuidv4(),
+			post_id: r.post_id,
+			score: r.score,
+			reason: r.reason
+		}))
+		insertRankings(userId, date, items)
+	}
+
+	async ensureRankingsForDate(userId, date, userProfile) {
+		if (this.hasRankings(userId, date)) return
+
+		let allPosts = getPostsForCalendarDay(date)
+		
+		// Если постов нет — выкачиваем за выбранный день
+		if (allPosts.length === 0) {
+			const sinceTs = Math.floor(new Date(`${date}T00:00:00.000Z`).getTime() / 1000)
+			const untilTs = sinceTs + 24 * 60 * 60
+			await collectChannelPosts({ sinceTs, untilTs })
+			allPosts = getPostsForCalendarDay(date)
+		}
+		
 		const posts = this.filterPostsForUser(allPosts, userId)
 		if (posts.length === 0) return
 
@@ -78,12 +120,19 @@ export class BotService {
 		}
 	}
 
-	async digestReply(ctx, offset = 0, count = DIGEST_PAGE_SIZE) {
+	async digestReply(ctx, offset = 0, count = DIGEST_PAGE_SIZE, status = null) {
 		const userId = ctx.from?.id
 		const date = this.todayDate()
 		const { postIds, total } = this.getDigestPostIds(userId, date, count, offset)
 
-		if (postIds.length === 0) return ctx.reply("No posts yet. Add channels or wait for /fetch.")
+		if (postIds.length === 0) {
+			if (status) {
+				await status.replace("❌ Нет постов для дайджеста. Добавьте каналы или дождитесь /fetch.")
+			} else {
+				await ctx.reply("No posts yet. Add channels or wait for /fetch.")
+			}
+			return
+		}
 
 		const posts = getPostsByIds(postIds)
 		const orderMap = Object.fromEntries(postIds.map((id, i) => [id, i]))
@@ -91,7 +140,18 @@ export class BotService {
 
 		const user = getOrCreateUser(userId)
 		const label = formatDateLabel(date)
-		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", user.digest_max_items)
+
+		// Обновляем прогресс перед генерацией блоков
+		if (status) await status.percent("⏳ <b>Генерирую блоки дайджеста...</b>", 95)
+
+		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", user.digest_max_items, {
+			onProgress: (pct) => {
+				if (status) {
+					const progress = 95 + Math.round(pct / 100 * 5)
+					status.percent("⏳ <b>Генерирую блоки дайджеста...</b>", progress)
+				}
+			}
+		})
 
 		const postById = UIFormatter.buildPostById(posts)
 		const rankMap = getRankingsMap(userId, date)
@@ -105,10 +165,16 @@ export class BotService {
 		}
 		row.push({ text: "📋 Summary", callback_data: "summary" })
 
-		await ctx.telegram.sendMessage(ctx.chat.id, header, {
-			parse_mode: "HTML",
-			reply_markup: { inline_keyboard: [row] }
-		})
+		// Заменяем статусное сообщение на заголовок дайджеста (100%)
+		if (status) {
+			await status.replace(header, { reply_markup: { inline_keyboard: [row] }, disable_web_page_preview: true })
+		} else {
+			await ctx.telegram.sendMessage(ctx.chat.id, header, {
+				parse_mode: "HTML",
+				reply_markup: { inline_keyboard: [row] },
+				disable_web_page_preview: true
+			})
+		}
 
 		for (const block of result.blocks) {
 			const postId = block.ids.length === 1 ? block.ids[0] : null
@@ -116,7 +182,7 @@ export class BotService {
 			const blockText = UIFormatter.formatBlockText(block, postById, { compact })
 			const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false)
 
-			await ctx.telegram.sendMessage(ctx.chat.id, blockText, { parse_mode: "HTML", ...kb })
+			await ctx.telegram.sendMessage(ctx.chat.id, blockText, { parse_mode: "HTML", ...kb, disable_web_page_preview: true })
 			if (postId) this.mgr.cache.setBlock(postId, { normalText: blockText, block, postById, reason })
 		}
 	}
@@ -189,7 +255,14 @@ export class BotService {
 		const orderMap = Object.fromEntries(postIds.map((id, i) => [id, i]))
 		rankedPosts.sort((a, b) => orderMap[a.id] - orderMap[b.id])
 
-		const result = await this.mgr.ai.generateSummaryBlocks(rankedPosts, label, user.profile || "", maxItems)
+		const result = await this.mgr.ai.generateSummaryBlocks(rankedPosts, label, user.profile || "", maxItems, {
+			onProgress: (pct) => {
+				if (options.status) {
+					const progress = 70 + Math.round(pct / 100 * 30)
+					options.status.percent("⏳ <b>Генерирую блоки...</b>", progress)
+				}
+			}
+		})
 		const postById = UIFormatter.buildPostById(rankedPosts)
 		const rankMap = getRankingsMap(userId, dateStr)
 		const compact = getDigestFormat(userId) === "compact"
@@ -202,36 +275,41 @@ export class BotService {
 		if (hasMore) row.push({ text: `▶️ Ещё ${maxItems}`, callback_data: `summary_more:${dateStr}:${offset + maxItems}:${maxItems}` })
 		row.push({ text: "📋 Меню", callback_data: "menu" })
 
-		await ctx.telegram.sendMessage(chatId, header, { parse_mode: "HTML", reply_markup: { inline_keyboard: [row] } })
+		await ctx.telegram.sendMessage(chatId, header, { parse_mode: "HTML", reply_markup: { inline_keyboard: [row] }, disable_web_page_preview: true })
 		for (const block of result.blocks) {
 			const postId = block.ids.length === 1 ? block.ids[0] : null
 			const reason = postId ? rankMap[postId]?.reason : null
 			const blockText = UIFormatter.formatBlockText(block, postById, { compact })
 			const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false)
-			await ctx.telegram.sendMessage(chatId, blockText, { parse_mode: "HTML", ...kb })
+			await ctx.telegram.sendMessage(chatId, blockText, { parse_mode: "HTML", ...kb, disable_web_page_preview: true })
 			if (postId) this.mgr.cache.setBlock(postId, { normalText: blockText, block, postById, reason })
 		}
 	}
 
 	async sendMorningDigests(botInstance) {
 		const users = getUsersForMorningDigest()
+		const yesterday = new Date()
+		yesterday.setDate(yesterday.getDate() - 1)
+		const yesterdayStr = yesterday.toISOString().slice(0, 10)
+
 		for (const u of users) {
 			try {
-				await this.ensureRankings(u.user_id, u.profile || "")
-				const payload = await this.buildDigestBlocks(u.user_id)
+				await this.ensureRankingsForDate(u.user_id, yesterdayStr, u.profile || "")
+				const payload = await this.buildDigestBlocksForDate(u.user_id, yesterdayStr)
 				if (!payload) continue
 
 				const teaserText = payload.teaser
-					? `☀️ <b>Главное утром:</b> ${UIFormatter.escapeHtml(payload.teaser)}\n\n<i>Открой дайджест — ниже полный разбор.</i>`
-					: "☀️ Дайджест готов. Открой ниже."
+					? `☀️ <b>Главное за вчера:</b> ${UIFormatter.escapeHtml(payload.teaser)}\n\n<i>Открой дайджест — ниже полный разбор.</i>`
+					: "☀️ Дайджест за вчера готов. Открой ниже."
 
 				await botInstance.telegram.sendMessage(u.user_id, teaserText, {
 					parse_mode: "HTML",
-					reply_markup: { inline_keyboard: [[{ text: "📰 Открыть дайджест", callback_data: "digest" }]] }
+					reply_markup: { inline_keyboard: [[{ text: "📰 Открыть дайджест", callback_data: "digest" }]] },
+					disable_web_page_preview: true
 				})
 
-				await botInstance.telegram.sendMessage(u.user_id, payload.header, { parse_mode: "HTML" })
-				await botInstance.telegram.sendMessage(u.user_id, "<b>Главное для тебя:</b>", { parse_mode: "HTML" })
+				await botInstance.telegram.sendMessage(u.user_id, payload.header, { parse_mode: "HTML", disable_web_page_preview: true })
+				await botInstance.telegram.sendMessage(u.user_id, "<b>Главное для тебя:</b>", { parse_mode: "HTML", disable_web_page_preview: true })
 
 				const compact = getDigestFormat(u.user_id) === "compact"
 				for (const block of payload.blocks) {
@@ -239,7 +317,7 @@ export class BotService {
 					const reason = postId ? payload.rankMap[postId]?.reason : null
 					const blockText = UIFormatter.formatBlockText(block, payload.postById, { compact })
 					const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false)
-					await botInstance.telegram.sendMessage(u.user_id, blockText, { parse_mode: "HTML", ...kb })
+					await botInstance.telegram.sendMessage(u.user_id, blockText, { parse_mode: "HTML", ...kb, disable_web_page_preview: true })
 					if (postId) this.mgr.cache.setBlock(postId, { normalText: blockText, block, postById: payload.postById, reason })
 				}
 			} catch (e) {
@@ -264,6 +342,28 @@ export class BotService {
 
 		return {
 			header: UIFormatter.formatDigestHeader("утро", result.teaser, result.blocks.length, { morning: true }),
+			teaser: result.teaser,
+			blocks: result.blocks,
+			postById: UIFormatter.buildPostById(posts),
+			rankMap: getRankingsMap(userId, date)
+		}
+	}
+
+	async buildDigestBlocksForDate(userId, date) {
+		const { postIds } = this.getDigestPostIds(userId, date, DIGEST_PAGE_SIZE, 0)
+		if (postIds.length === 0) return null
+
+		const posts = getPostsByIds(postIds)
+		const orderMap = Object.fromEntries(postIds.map((id, i) => [id, i]))
+		posts.sort((a, b) => orderMap[a.id] - orderMap[b.id])
+
+		const user = getOrCreateUser(userId)
+		const label = formatDateLabel(date)
+		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", user.digest_max_items)
+		if (!result.blocks?.length) return null
+
+		return {
+			header: UIFormatter.formatDigestHeader(label, result.teaser, result.blocks.length),
 			teaser: result.teaser,
 			blocks: result.blocks,
 			postById: UIFormatter.buildPostById(posts),

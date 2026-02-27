@@ -1,37 +1,75 @@
 import { Markup } from "telegraf"
+import {
+	BTN_DIGEST,
+	BTN_SUMMARY,
+	BTN_CHANNELS,
+	BTN_PROFILE,
+	BTN_ANALYZE_CHANNEL,
+	BTN_CHANNEL_AUDIT,
+	BTN_SETTINGS,
+	BTN_MINUS_WORDS,
+	BTN_DIGEST_MAX_ITEMS,
+	BTN_DIGEST_FORMAT,
+	BTN_EDIT_PROFILE,
+	BTN_ADD_CHANNEL,
+	BTN_REMOVE_CHANNEL,
+	BTN_BACK,
+	BTN_FETCH
+} from "./ButtonLabels.js"
 
 export class KeyboardProvider {
 	static mainReply() {
-		return Markup.keyboard([
-			["📰 Digest", "📋 Summary"],
-			["📢 Channels", "👤 Profile"],
-			["📱 Menu"]
-		]).resize()
+		return {
+			reply_markup: {
+				keyboard: [
+					[BTN_DIGEST, BTN_SUMMARY],
+					[BTN_CHANNELS, BTN_PROFILE],
+					[BTN_ANALYZE_CHANNEL, BTN_CHANNEL_AUDIT],
+					[BTN_SETTINGS, BTN_FETCH]
+				],
+				resize_keyboard: true
+			}
+		}
 	}
 
-	static mainMenu() {
-		return Markup.inlineKeyboard([
-			[
-				Markup.button.callback("📰 Digest", "digest"),
-				Markup.button.callback("📋 Summary", "summary"),
-				Markup.button.callback("📢 Channels", "channels")
-			],
-			[
-				Markup.button.callback("👤 Profile", "profile"),
-				Markup.button.callback("➕ Add channel", "add_channels"),
-				Markup.button.callback("➖ Remove channel", "remove_channel")
-			]
-		])
+	static settings() {
+		return {
+			reply_markup: {
+				keyboard: [
+					[BTN_MINUS_WORDS],
+					[BTN_DIGEST_MAX_ITEMS],
+					[BTN_DIGEST_FORMAT],
+					[BTN_EDIT_PROFILE],
+					[BTN_BACK]
+				],
+				resize_keyboard: true
+			}
+		}
 	}
 
 	static channels() {
-		return Markup.inlineKeyboard([
-			[
-				Markup.button.callback("➕ Add channel", "add_channels"),
-				Markup.button.callback("➖ Remove channel", "remove_channel")
-			],
-			[Markup.button.callback("⚙ Channel settings", "channel_settings")]
-		])
+		return {
+			reply_markup: {
+				keyboard: [
+					[BTN_ADD_CHANNEL, BTN_REMOVE_CHANNEL],
+					[BTN_BACK]
+				],
+				resize_keyboard: true
+			}
+		}
+	}
+
+	static profile() {
+		return {
+			reply_markup: {
+				keyboard: [
+					[BTN_EDIT_PROFILE],
+					[BTN_DIGEST_MAX_ITEMS, BTN_MINUS_WORDS, BTN_DIGEST_FORMAT],
+					[BTN_BACK]
+				],
+				resize_keyboard: true
+			}
+		}
 	}
 
 	static summaryDate() {
@@ -43,17 +81,16 @@ export class KeyboardProvider {
 			const str = d.toISOString().slice(0, 10)
 			dates.push([Markup.button.callback(str, `summary_day:${str}`)])
 		}
-		dates.push([Markup.button.callback("📅 Weekly Summary (last 7 days)", "summary_weekly")])
+		dates.push([Markup.button.callback(BTN_BACK, "menu")])
 		return Markup.inlineKeyboard(dates)
 	}
 
-	static profile() {
+	static fetchDays() {
 		return Markup.inlineKeyboard([
-			[Markup.button.callback("📝 Edit Profile (Interests)", "edit_profile")],
-			[Markup.button.callback("🔢 Digest items count", "edit_digest_max")],
-			[Markup.button.callback("🚫 Minus keywords", "edit_minus_keywords")],
-			[Markup.button.callback("📦 Digest format (Full/Compact)", "edit_digest_format")],
-			[Markup.button.callback("📱 Back to Menu", "menu")]
+			[Markup.button.callback("1 день", "fetch:1")],
+			[Markup.button.callback("3 дня", "fetch:3")],
+			[Markup.button.callback("7 дней", "fetch:7")],
+			[Markup.button.callback(BTN_BACK, "menu")]
 		])
 	}
 

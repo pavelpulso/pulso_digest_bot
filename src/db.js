@@ -177,6 +177,15 @@ export function getPostsLast24h() {
   ).all(since)
 }
 
+/** Посты за конкретный календарный день (date в формате YYYY-MM-DD). */
+export function getPostsForCalendarDay(dateStr) {
+  const since = `${dateStr}T00:00:00.000Z`
+  const until = new Date(new Date(since).getTime() + 24 * 60 * 60 * 1000).toISOString()
+  return db.prepare(
+    "SELECT id, channel, post_id, text, link, views, date FROM posts WHERE date >= ? AND date < ? ORDER BY date DESC"
+  ).all(since, until)
+}
+
 export function getPostById(id) {
   return db.prepare("SELECT id, channel, post_id, text, link, views, date FROM posts WHERE id = ?").get(id)
 }
