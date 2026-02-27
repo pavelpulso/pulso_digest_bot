@@ -69,19 +69,26 @@ export function buildAuditAllChannelsPrompt(userProfile, list) {
     posts: ch.posts.map(p => ({ text: p.text.slice(0, 300), views: p.views }))
   }))
 
-  return `Оцени каналы для читателя. Профиль: ${userProfile || "не указан"}
+  const profileContext = userProfile || "не указан"
+
+  return `Ты — старший продуктолог с 20-летним опытом. Оцени каналы для читателя.
+
+Профиль читателя: ${profileContext}
 
 Каналы: ${JSON.stringify(simplified)}
 
 Для каждого канала верни:
-- score (0-10): общая ценность для профиля читателя
+- score (0-10): общая ценность для ЭТОГО читателя
 - avg_views: среднее количество просмотров
 - verdict: keep (7-10), review (4-6), mute (0-3)
-- summary (20 слов): краткое описание контента
-- reason (15 слов): почему такая оценка, конкретная причина
-- problem_type: одна из ["spam", "irrelevant", "low_quality", "promo", "none"]
+- summary (15 слов): краткое описание контента канала
+- reason (40-50 слов): объясни как продуктолог — почему такая оценка ИМЕННО для этого профиля. Что канал НЕ даёт читателю? Какую его проблему НЕ решает? Чего не хватает (контент, тон, фокус, частота)?
+- problem_type: одна из ["spam", "irrelevant", "low_quality", "promo", "outdated", "low_frequency", "duplicate", "noise", "too_basic", "none"]
+- score_breakdown: {quality: 0-1, relevance: 0-1, spam_free: 0-1} — веса оценки
+- recommendation: "remove" | "keep" | "keep_if" | "mute_temporarily"
+- keep_if_condition (если recommendation="keep_if"): условие когда оставить (15 слов)
 
-Верни JSON: {"channels":[{"channel":"name","score":8.5,"avg_views":1000,"verdict":"keep","summary":"текст","reason":"причина","problem_type":"none"}]}`
+Верни JSON: {"channels":[{"channel":"name","score":8.5,"avg_views":1000,"verdict":"keep","summary":"текст","reason":"причина","problem_type":"none","score_breakdown":{"quality":0.8,"relevance":0.9,"spam_free":1.0},"recommendation":"keep","keep_if_condition":"условие"}]}`
 }
 
 /**

@@ -264,8 +264,15 @@ export class BaseAI {
           avgViews: Number(item.avg_views) ?? Math.round(totalViews / postCount),
           verdict: ["keep", "review", "mute"].includes(item.verdict) ? item.verdict : "mute",
           summary: String(item.summary || "").trim().slice(0, 200),
-          reason: String(item.reason || "").trim().slice(0, 150),
-          problemType: ["spam", "irrelevant", "low_quality", "promo", "none"].includes(item.problem_type) ? item.problem_type : "none"
+          reason: String(item.reason || "").trim().slice(0, 400),
+          problemType: ["spam", "irrelevant", "low_quality", "promo", "outdated", "low_frequency", "duplicate", "noise", "too_basic", "none"].includes(item.problem_type) ? item.problem_type : "none",
+          scoreBreakdown: {
+            quality: Number(item.score_breakdown?.quality) || 0.5,
+            relevance: Number(item.score_breakdown?.relevance) || 0.5,
+            spamFree: Number(item.score_breakdown?.spam_free) || 1.0
+          },
+          recommendation: ["remove", "keep", "keep_if", "mute_temporarily"].includes(item.recommendation) ? item.recommendation : "remove",
+          keepIfCondition: String(item.keep_if_condition || "").trim().slice(0, 150)
         }
       })
       .sort((a, b) => b.score - a.score)

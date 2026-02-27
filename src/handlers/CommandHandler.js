@@ -205,7 +205,17 @@ export class CommandHandler extends BaseHandler {
 
 			const scored = new Set(scores.map((s) => s.channel))
 			for (const ch of channelsWithData.map((c) => c.channel)) {
-				if (!scored.has(ch)) scores.push({ channel: ch, score: 0, verdict: "mute", summary: "Нет данных", reason: "Не удалось получить посты", problemType: "none" })
+				if (!scored.has(ch)) scores.push({ 
+					channel: ch, 
+					score: 0, 
+					verdict: "mute", 
+					summary: "Нет данных", 
+					reason: "Не удалось получить посты", 
+					problemType: "none",
+					scoreBreakdown: { quality: 0, relevance: 0, spamFree: 1 },
+					recommendation: "remove",
+					keepIfCondition: ""
+				})
 			}
 			scores.sort((a, b) => b.score - a.score)
 
@@ -219,35 +229,56 @@ export class CommandHandler extends BaseHandler {
 				const postCount = channelsData.find((cd) => cd.channel === s.channel)?.postCount || 0
 				const postsLabel = postCount === 1 ? "пост" : postCount < 5 ? "поста" : "постов"
 				const avgViews = s.avgViews && isFinite(s.avgViews) ? (s.avgViews >= 1000 ? `${(s.avgViews / 1000).toFixed(1)}K` : Math.round(s.avgViews)) : "—"
-				return `@${s.channel} — ${s.score.toFixed(1)} | 👁 ${avgViews} (${postCount} ${postsLabel})\n   ${s.summary}\n   ${s.reason ? `⚠️ ${s.reason}` : ""}`
+				const qualityPct = Math.round(s.scoreBreakdown.quality * 100)
+				const relevancePct = Math.round(s.scoreBreakdown.relevance * 100)
+				const spamFreePct = Math.round(s.scoreBreakdown.spamFree * 100)
+				return `@${s.channel} — ${s.score.toFixed(1)} | 👁 ${avgViews} (${postCount} ${postsLabel})\n   ${s.summary}\n   Оценка: Q:${qualityPct}% R:${relevancePct}% S:${spamFreePct}%`
 			}
 
-			// Топ-10 каналов (keep + review)
-			const topChannels = [...keepChannels, ...reviewChannels].slice(0, 10)
-			const topLines = topChannels.map((s) => {
-				const emoji = s.verdict === "keep" ? "🟢" : "🟡"
-				return `${emoji} ${formatChannel(s)}`
-			})
-
-			// Слабые каналы с причинами
-			const weakLines = muteChannels.map((s) => {
+			// Форматирование слабого канала с развёрнутым reason
+			const formatWeakChannel = (s) => {
 				const problemLabel = {
 					spam: "Спам",
 					irrelevant: "Не релевантно профилю",
 					low_quality: "Низкое качество",
 					promo: "Промо/реклама",
-					none: ""
+					outdated: "Устаревший контент",
+					low_frequency: "Слишком редко",
+					duplicate: "Дублирует другие каналы",
+					noise: "Много шума/флуда",
+					too_basic: "Слишком базовый уровень",
+					none: "Низкая ценность"
 				}[s.problemType] || "Низкая ценность"
-				return `@${s.channel} — ${s.score.toFixed(1)} | ${problemLabel}`
+				
+				const recLabel = {
+					remove: "🗑 Удалить",
+					keep: "✅ Оставить",
+					keep_if: s.keepIfCondition ? `⚠️ Оставить если: ${s.keepIfCondition}` : "",
+					mute_temporarily: "🔕 Скрыть временно"
+				}[s.recommendation] || ""
+
+				return `@${s.channel} — ${s.score.toFixed(1)}\n   Проблема: ${problemLabel}\n   ${s.reason}\n   ${recLabel}`
+			}
+
+			// Динамическое ограничение топ-N
+			const totalChannels = scores.length
+			const topLimit = totalChannels <= 10 ? 10 : (totalChannels <= 20 ? 8 : 5)
+			const topChannels = [...keepChannels, ...reviewChannels].slice(0, topLimit)
+			const topLines = topChannels.map((s) => {
+				const emoji = s.verdict === "keep" ? "🟢" : "🟡"
+				return `${emoji} ${formatChannel(s)}`
 			})
+
+			// Слабые каналы с развёрнутым reason
+			const weakLines = muteChannels.map((s) => formatWeakChannel(s))
 
 			// Сборка сообщения
 			const sections = []
 			if (topLines.length > 0) {
-				sections.push(`<b>Рекомендуемые (${topLines.length}):</b>\n${topLines.join("\n\n")}`)
+				sections.push(`<b>Рекомендуемые (${topLines.length}):</b>\n\n${topLines.join("\n\n")}`)
 			}
 			if (weakLines.length > 0) {
-				sections.push(`<b>Слабые каналы (${weakLines.length}):</b>\n${weakLines.join("\n")}`)
+				sections.push(`<b>Слабые каналы (${weakLines.length}):</b>\n\n${weakLines.join("\n\n")}`)
 			}
 
 			const noDataNote = noDataChannels.length > 0 ? `\n\n⚠️ Нет постов по: ${noDataChannels.map((c) => "@" + c).join(", ")}` : ""
@@ -259,8 +290,13 @@ export class CommandHandler extends BaseHandler {
 			if (muteChannels.length > 0) {
 				actionButtons.push([{ text: `🗑 Удалить слабые (${muteChannels.length})`, callback_data: "audit_remove_weak" }])
 			}
-			if (scores.length > 10) {
+			if (scores.length > topLimit) {
 				actionButtons.push([{ text: "📊 Полный отчёт", callback_data: "audit_full_report" }])
+			}
+			// Кнопка оптимизации (Stage 4)
+			if (muteChannels.length >= 3) {
+				const avgScoreAfter = (scores.filter(s => s.verdict !== "mute").reduce((sum, s) => sum + s.score, 0) / Math.max(1, scores.filter(s => s.verdict !== "mute").length)).toFixed(1)
+				actionButtons.push([{ text: `⚡ Оптимизировать (${muteChannels.length} → ${avgScoreAfter})`, callback_data: "audit_optimize" }])
 			}
 			const keyboard = actionButtons.length > 0 ? { reply_markup: { inline_keyboard: actionButtons } } : {}
 

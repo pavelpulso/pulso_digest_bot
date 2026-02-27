@@ -114,6 +114,9 @@ export class BotManager {
 		this.bot.action("audit_hide_all_weak", (ctx) => act.handleAuditHideAll(ctx))
 		this.bot.action("audit_remove_weak", (ctx) => act.handleRemoveWeakChannels(ctx))
 		this.bot.action("audit_full_report", (ctx) => act.handleFullReport(ctx))
+		this.bot.action("audit_optimize", (ctx) => act.handleOptimize(ctx))
+		this.bot.action("optimize_confirm", (ctx) => act.handleOptimizeConfirm(ctx))
+		this.bot.action("optimize_cancel", (ctx) => act.handleOptimizeCancel(ctx))
 		this.bot.action(/^fetch:(\d+)$/, (ctx) => act.handleFetchDays(ctx))
 	}
 

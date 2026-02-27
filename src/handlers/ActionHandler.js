@@ -277,11 +277,15 @@ export class ActionHandler extends BaseHandler {
 
 		await this.safeAnswerCbQuery(ctx)
 
-		// Формируем полный отчёт
+		// Формируем полный отчёт с score breakdown
 		const lines = scores.map((s, i) => {
 			const emoji = { keep: "🟢", review: "🟡", mute: "🔴" }[s.verdict] || "⚪"
 			const problemLabel = s.problemType && s.problemType !== "none" ? `| ${s.problemType}` : ""
-			return `${i + 1}. ${emoji} @${s.channel} — ${s.score.toFixed(1)} ${problemLabel}\n   ${s.summary}\n   ${s.reason || ""}`
+			const qualityPct = Math.round(s.scoreBreakdown.quality * 100)
+			const relevancePct = Math.round(s.scoreBreakdown.relevance * 100)
+			const spamFreePct = Math.round(s.scoreBreakdown.spamFree * 100)
+			const recText = s.recommendation === "keep_if" && s.keepIfCondition ? `\n   ⚠️ Оставить если: ${s.keepIfCondition}` : ""
+			return `${i + 1}. ${emoji} @${s.channel} — ${s.score.toFixed(1)} ${problemLabel}\n   ${s.summary}\n   Оценка: Q:${qualityPct}% R:${relevancePct}% S:${spamFreePct}%\n   ${s.reason || ""}${recText}`
 		})
 
 		const reportText = `📊 <b>Полный отчёт: ${scores.length} каналов</b>\n\n` + lines.join("\n\n")
@@ -293,5 +297,89 @@ export class ActionHandler extends BaseHandler {
 			// Если не влезает в одно сообщение — отправляем частями
 			await ctx.reply(safeText, { parse_mode: "HTML", disable_web_page_preview: true })
 		}
+	}
+
+	async handleOptimize(ctx) {
+		const userId = ctx.from?.id
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+
+		const scores = this.mgr.cache.getAuditScores(userId)
+		if (!scores || scores.length === 0) {
+			return this.safeAnswerCbQuery(ctx, "Нет данных аудита")
+		}
+
+		const muteChannels = scores.filter(s => s.verdict === "mute")
+		const keepChannels = scores.filter(s => s.verdict !== "mute")
+		
+		if (muteChannels.length === 0) {
+			return this.safeAnswerCbQuery(ctx, "Нет каналов для удаления")
+		}
+
+		await this.safeAnswerCbQuery(ctx)
+
+		// Превью оптимизации
+		const currentAvg = (scores.reduce((sum, s) => sum + s.score, 0) / scores.length).toFixed(1)
+		const newAvg = (keepChannels.reduce((sum, s) => sum + s.score, 0) / Math.max(1, keepChannels.length)).toFixed(1)
+		const timeSaved = muteChannels.length * 3 // ~3 мин на канал в день
+
+		const previewText = `⚡ <b>Оптимизация ленты</b>\n\n` +
+			`<b>Сейчас:</b> ${scores.length} каналов, средний score: ${currentAvg}\n` +
+			`<b>После:</b> ${keepChannels.length} каналов, средний score: ${newAvg}\n\n` +
+			`<b>Удалить (${muteChannels.length}):</b>\n` +
+			muteChannels.slice(0, 10).map(c => `@${c.channel}`).join("\n") +
+			(muteChannels.length > 10 ? `\n... и ещё ${muteChannels.length - 10}` : "") +
+			`\n\n<i>~${timeSaved} мин в день сэкономлено</i>`
+
+		const keyboard = {
+			reply_markup: {
+				inline_keyboard: [
+					[
+						{ text: "✅ Подтвердить удаление", callback_data: "optimize_confirm" },
+						{ text: "❌ Отмена", callback_data: "optimize_cancel" }
+					]
+				]
+			}
+		}
+
+		try {
+			await ctx.editMessageText(previewText, { parse_mode: "HTML", ...keyboard })
+		} catch (_) {
+			await ctx.reply(previewText, { parse_mode: "HTML", ...keyboard })
+		}
+	}
+
+	async handleOptimizeConfirm(ctx) {
+		const userId = ctx.from?.id
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+
+		const scores = this.mgr.cache.getAuditScores(userId)
+		if (!scores) return this.safeAnswerCbQuery(ctx, "Нет данных аудита")
+
+		const muteChannels = scores.filter(s => s.verdict === "mute").map(s => s.channel)
+		if (muteChannels.length === 0) {
+			return this.safeAnswerCbQuery(ctx, "Нет каналов для удаления")
+		}
+
+		await this.safeAnswerCbQuery(ctx, `🗑 Удаляю ${muteChannels.length} каналов...`)
+
+		const removed = removeChannelsByUsernames(muteChannels)
+		this.mgr.cache.deleteAuditScores(userId)
+		this.mgr.cache.deleteAuditWeak(userId)
+
+		const keepChannels = scores.filter(s => s.verdict !== "mute")
+		const newAvg = (keepChannels.reduce((sum, s) => sum + s.score, 0) / Math.max(1, keepChannels.length)).toFixed(1)
+
+		try {
+			await ctx.editMessageText(`✅ Оптимизация завершена!\n\nУдалено: ${removed} каналов\nОсталось: ${keepChannels.length} каналов\nСредний score: ${newAvg}`)
+		} catch (_) {
+			await ctx.reply(`✅ Оптимизация завершена!\n\nУдалено: ${removed} каналов\nОсталось: ${keepChannels.length} каналов\nСредний score: ${newAvg}`)
+		}
+	}
+
+	async handleOptimizeCancel(ctx) {
+		await this.safeAnswerCbQuery(ctx, "❌ Отменено")
+		try {
+			await ctx.editMessageText("❌ Оптимизация отменена")
+		} catch (_) { }
 	}
 }
