@@ -276,10 +276,13 @@ export class CommandHandler extends BaseHandler {
 
 			const noDataNote = noDataChannels.length > 0 ? `\n\n⚠️ Нет постов по: ${noDataChannels.map((c) => "@" + c).join(", ")}` : ""
 
+			// Summary-строка с распределением
+			const summaryLine = `🟢 ${keepChannels.length} | 🟡 ${reviewChannels.length} | 🔴 ${muteChannels.length}`
+
 			// Легенда метрик
 			const metricsLegend = "\n\n<i>Метрики: Q=Качество контента, R=Релевантность профилю, S=Чистота от спама</i>"
 
-			const fullText = `📋 Аудит каналов: ${scores.length} каналов\n\n` + sections.join("\n\n") + noDataNote + metricsLegend
+			const fullText = `📋 Аудит каналов: ${scores.length} каналов\n${summaryLine}\n\n` + sections.join("\n\n") + noDataNote + metricsLegend
 			const safeText = fullText.length > 4096 ? fullText.slice(0, 4093) + "…" : fullText
 
 			// Кнопки действий
