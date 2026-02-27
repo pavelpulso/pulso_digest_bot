@@ -20,12 +20,11 @@ export class StatusMessage {
 
 	/**
 	 * Показать стартовое сообщение
-	 * @param {string} text — текст сообщения
+	 * @param {string} text — текст сообщения (может содержать HTML)
 	 * @returns {Promise<void>}
 	 */
 	async start(text) {
-		const safeText = UIFormatter.escapeHtml(text)
-		const msg = await this.ctx.reply(safeText, { parse_mode: "HTML" })
+		const msg = await this.ctx.reply(text, { parse_mode: "HTML" })
 		this.messageId = msg.message_id
 		this.currentPercent = null
 	}
@@ -95,14 +94,13 @@ export class StatusMessage {
 
 	/**
 	 * Заменить статусное сообщение на результат
-	 * @param {string} text — текст результата
+	 * @param {string} text — текст результата (может содержать HTML)
 	 * @param {object} options — опции Telegram API (reply_markup, parse_mode и т.д.)
 	 * @returns {Promise<void>}
 	 */
 	async replace(text, options = {}) {
-		const safeText = UIFormatter.escapeHtml(text)
 		if (!this.messageId) {
-			await this.ctx.reply(safeText, { parse_mode: "HTML", ...options })
+			await this.ctx.reply(text, { parse_mode: "HTML", ...options })
 			return
 		}
 		try {
@@ -110,13 +108,13 @@ export class StatusMessage {
 				this.chatId,
 				this.messageId,
 				null,
-				safeText,
+				text,
 				{ parse_mode: "HTML", ...options }
 			)
 		} catch (e) {
 			// Если не удалось отредактировать — отправляем новое сообщение
 			console.warn("[StatusMessage.replace] edit failed, sending new:", e.message)
-			await this.ctx.reply(safeText, { parse_mode: "HTML", ...options })
+			await this.ctx.reply(text, { parse_mode: "HTML", ...options })
 		}
 	}
 
