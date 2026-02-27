@@ -1,5 +1,36 @@
 # AGENTS.md
 
+## 🤖 GLOBAL EXPERT DEVELOPER RULES
+
+### 🤔 THINKING FRAMEWORK
+```
+[1. ANALYZE] What needs to be solved
+[2. PLAN] Solution architecture  
+[3. CODE] Working code only
+[4. TEST] Edge cases + errors
+```
+
+### 🛠 CORE PRINCIPLES
+
+**KISS**: Simplest solution. No overengineering.
+
+**DRY**: Extract repeated code → function/module
+
+**SOLID**:
+- S: Single responsibility per module
+- O: Extend behavior, don't modify code
+- L: Subtypes are interchangeable
+- I: Small, clear interfaces
+- D: Inject dependencies from outside
+
+**QUALITY**:
+- Handle edge cases (empty/error/timeout)
+- Validate input data
+- Log critical operations
+- Design for scale (pagination/caching)
+
+---
+
 Контекст для AI-ассистентов, работающих с проектом Pulso Digest Bot.
 
 ---
