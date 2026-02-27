@@ -400,4 +400,17 @@ export class ActionHandler extends BaseHandler {
 			await ctx.editMessageText("<b>❌ Оптимизация отменена</b>", { parse_mode: "HTML" })
 		} catch (_) { }
 	}
+
+	async handleAnalyzeChannelClick(ctx) {
+		const channelName = ctx.match[1]
+		const userId = ctx.from?.id
+
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+
+		await this.safeAnswerCbQuery(ctx)
+		await ctx.editMessageText(`🔍 Анализирую @${channelName}...`)
+
+		// Вызываем команду анализа канала
+		return this.mgr.handlers.command.handleAnalyzeChannel(ctx, channelName)
+	}
 }

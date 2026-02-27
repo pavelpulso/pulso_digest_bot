@@ -94,6 +94,22 @@ export class KeyboardProvider {
 		])
 	}
 
+	static analyzeChannelList(channels) {
+		if (!channels || channels.length === 0) return undefined
+		
+		const buttons = channels.map((ch) => 
+			Markup.button.callback(`📊 @${ch.username}`, `analyze_ch:${ch.username}`)
+		)
+		
+		const rows = []
+		for (let i = 0; i < buttons.length; i += 2) {
+			rows.push(buttons.slice(i, i + 2))
+		}
+		rows.push([Markup.button.callback(BTN_BACK, "menu")])
+		
+		return Markup.inlineKeyboard(rows)
+	}
+
 	static blockKeyboard(postId, hasWhy = false, expanded = false) {
 		if (!postId) return undefined
 		const feedbackRow = [

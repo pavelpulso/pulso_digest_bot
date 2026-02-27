@@ -118,6 +118,7 @@ export class BotManager {
 		this.bot.action("optimize_confirm", (ctx) => act.handleOptimizeConfirm(ctx))
 		this.bot.action("optimize_cancel", (ctx) => act.handleOptimizeCancel(ctx))
 		this.bot.action(/^audit_remove_one:(.+)$/, (ctx) => act.handleRemoveOneChannel(ctx))
+		this.bot.action(/^analyze_ch:(.+)$/, (ctx) => act.handleAnalyzeChannelClick(ctx))
 		this.bot.action(/^fetch:(\d+)$/, (ctx) => act.handleFetchDays(ctx))
 	}
 

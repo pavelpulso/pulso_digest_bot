@@ -106,12 +106,17 @@ export class CommandHandler extends BaseHandler {
 		return this.mgr.service.digestReply(ctx, 0, DIGEST_PAGE_SIZE, status)
 	}
 
-	async handleAnalyzeChannel(ctx) {
+	async handleAnalyzeChannel(ctx, channelName) {
 		const userId = ctx.from?.id
 		if (!userId || isUserBanned(userId)) return
 
-		const arg = (ctx.message?.text || "").replace(/^\/analyze_channel\s*/i, "").trim()
-		const channelName = arg.replace(/^@/, "").toLowerCase()
+		// Если channelName не передан — берём из команды
+		if (!channelName) {
+			const arg = (ctx.message?.text || "").replace(/^\/analyze_channel\s*/i, "").trim()
+			channelName = arg.replace(/^@/, "").toLowerCase()
+		} else {
+			channelName = channelName.toLowerCase()
+		}
 
 		if (!channelName) {
 			return ctx.reply(
@@ -169,7 +174,22 @@ export class CommandHandler extends BaseHandler {
 	}
 
 	async handleCmdAnalyzeChannel(ctx) {
-		await ctx.reply("🔍 <b>Анализ канала:</b>\n\nОтправьте: <code>/analyze_channel @channel</code>\nНапример: <code>/analyze_channel durov</code>", { parse_mode: "HTML" })
+		const channels = getChannels()
+		if (channels.length === 0) {
+			return ctx.reply(
+				"🔍 <b>Анализ канала:</b>\n\n" +
+				"Нет каналов для анализа. Добавьте каналы через <code>/add @channel</code>",
+				{ parse_mode: "HTML" }
+			)
+		}
+
+		const channelList = channels.map((ch, i) => `${i + 1}. @${ch.username}`).join("\n")
+		await ctx.reply(
+			"🔍 <b>Анализ канала:</b>\n\n" +
+			`Выберите канал для анализа:\n\n${channelList}\n\n` +
+			"Или отправьте название канала:\n<code>@username</code>",
+			{ parse_mode: "HTML", reply_markup: KeyboardProvider.analyzeChannelList(channels).reply_markup }
+		)
 	}
 
 	async handleChannelAudit(ctx) {
