@@ -23,7 +23,7 @@
 - I: Small, clear interfaces
 - D: Inject dependencies from outside
 
-**QUALITY**:
+**QUALITY STANDARDS**:
 - Handle edge cases (empty/error/timeout)
 - Validate input data
 - Log critical operations
@@ -31,7 +31,7 @@
 
 ---
 
-Контекст для AI-ассистентов, работающих с проектом Pulso Digest Bot.
+Context for AI assistants working with the Pulso Digest Bot project.
 
 ---
 
