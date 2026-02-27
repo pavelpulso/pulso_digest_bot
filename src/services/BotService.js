@@ -182,7 +182,11 @@ export class BotService {
 			const blockText = UIFormatter.formatBlockText(block, postById, { compact })
 			const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false)
 
-			await ctx.telegram.sendMessage(ctx.chat.id, blockText, { parse_mode: "HTML", ...kb, disable_web_page_preview: true })
+			await ctx.telegram.sendMessage(ctx.chat.id, blockText, { 
+				parse_mode: "HTML", 
+				disable_web_page_preview: true,
+				...kb 
+			})
 			if (postId) this.mgr.cache.setBlock(postId, { normalText: blockText, block, postById, reason })
 		}
 	}
@@ -275,13 +279,21 @@ export class BotService {
 		if (hasMore) row.push({ text: `▶️ Ещё ${maxItems}`, callback_data: `summary_more:${dateStr}:${offset + maxItems}:${maxItems}` })
 		row.push({ text: "📋 Меню", callback_data: "menu" })
 
-		await ctx.telegram.sendMessage(chatId, header, { parse_mode: "HTML", reply_markup: { inline_keyboard: [row] }, disable_web_page_preview: true })
+		await ctx.telegram.sendMessage(chatId, header, { 
+			parse_mode: "HTML", 
+			disable_web_page_preview: true,
+			reply_markup: { inline_keyboard: [row] } 
+		})
 		for (const block of result.blocks) {
 			const postId = block.ids.length === 1 ? block.ids[0] : null
 			const reason = postId ? rankMap[postId]?.reason : null
 			const blockText = UIFormatter.formatBlockText(block, postById, { compact })
 			const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false)
-			await ctx.telegram.sendMessage(chatId, blockText, { parse_mode: "HTML", ...kb, disable_web_page_preview: true })
+			await ctx.telegram.sendMessage(chatId, blockText, { 
+				parse_mode: "HTML", 
+				disable_web_page_preview: true,
+				...kb 
+			})
 			if (postId) this.mgr.cache.setBlock(postId, { normalText: blockText, block, postById, reason })
 		}
 	}
@@ -317,7 +329,11 @@ export class BotService {
 					const reason = postId ? payload.rankMap[postId]?.reason : null
 					const blockText = UIFormatter.formatBlockText(block, payload.postById, { compact })
 					const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false)
-					await botInstance.telegram.sendMessage(u.user_id, blockText, { parse_mode: "HTML", ...kb, disable_web_page_preview: true })
+					await botInstance.telegram.sendMessage(u.user_id, blockText, { 
+						parse_mode: "HTML", 
+						disable_web_page_preview: true,
+						...kb 
+					})
 					if (postId) this.mgr.cache.setBlock(postId, { normalText: blockText, block, postById: payload.postById, reason })
 				}
 			} catch (e) {
