@@ -285,10 +285,11 @@ export class ActionHandler extends BaseHandler {
 			const relevancePct = Math.round(s.scoreBreakdown.relevance * 100)
 			const spamFreePct = Math.round(s.scoreBreakdown.spamFree * 100)
 			const recText = s.recommendation === "keep_if" && s.keepIfCondition ? `\n   ⚠️ Оставить если: ${s.keepIfCondition}` : ""
-			return `${i + 1}. ${emoji} @${s.channel} — ${s.score.toFixed(1)} ${problemLabel}\n   ${s.summary}\n   Оценка: Q:${qualityPct}% R:${relevancePct}% S:${spamFreePct}%\n   ${s.reason || ""}${recText}`
+			return `${i + 1}. ${emoji} @${s.channel} — ${s.score.toFixed(1)} ${problemLabel}\n   ${s.summary}\n   Оценка: Q:${qualityPct}% R:${relevancePct}% S:${spamFreePct}%\n   ${s.reason || "Нет обоснования"}${recText}`
 		})
 
-		const reportText = `📊 <b>Полный отчёт: ${scores.length} каналов</b>\n\n` + lines.join("\n\n")
+		const metricsLegend = "\n\n<i>Метрики: Q=Качество, R=Релевантность, S=Чистота от спама</i>"
+		const reportText = `📊 <b>Полный отчёт: ${scores.length} каналов</b>\n\n` + lines.join("\n\n") + metricsLegend
 		const safeText = reportText.length > 4096 ? reportText.slice(0, 4093) + "…" : reportText
 
 		try {

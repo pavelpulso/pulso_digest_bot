@@ -282,7 +282,11 @@ export class CommandHandler extends BaseHandler {
 			}
 
 			const noDataNote = noDataChannels.length > 0 ? `\n\n⚠️ Нет постов по: ${noDataChannels.map((c) => "@" + c).join(", ")}` : ""
-			const fullText = `📋 Аудит каналов: ${scores.length} каналов\n\n` + sections.join("\n\n") + noDataNote
+			
+			// Легенда метрик
+			const metricsLegend = "\n\n<i>Метрики: Q=Качество контента, R=Релевантность профилю, S=Чистота от спама</i>"
+			
+			const fullText = `📋 Аудит каналов: ${scores.length} каналов\n\n` + sections.join("\n\n") + noDataNote + metricsLegend
 			const safeText = fullText.length > 4096 ? fullText.slice(0, 4093) + "…" : fullText
 
 			// Кнопки действий
@@ -302,7 +306,7 @@ export class CommandHandler extends BaseHandler {
 
 			this.mgr.cache.setAuditWeak(userId, muteChannels.map((s) => s.channel))
 			this.mgr.cache.setAuditScores(userId, scores) // Для полного отчёта
-			await status.replace(safeText, { disable_web_page_preview: true, ...keyboard })
+			await status.replace(safeText, { parse_mode: "HTML", disable_web_page_preview: true, ...keyboard })
 		} catch (e) {
 			await status.replace("Ошибка анализа: " + this.formatErrorForChat(e))
 		}
