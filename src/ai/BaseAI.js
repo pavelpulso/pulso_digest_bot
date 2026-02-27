@@ -261,15 +261,14 @@ export class BaseAI {
         return {
           channel: channelKey,
           score: Number(item.score) || 0,
-          avgPostQuality: Number(item.avg_post_quality) || Number(item.score) || 0,
-          signalNoise: Number(item.signal_noise) ?? 0.5,
           avgViews: Number(item.avg_views) ?? Math.round(totalViews / postCount),
-          valuePerPost: Number(item.value_per_post) ?? (Number(item.score) || 0) / postCount,
-          verdict: VERDICTS.includes(item.verdict) ? item.verdict : "mute",
-          summary: String(item.summary || "").trim().slice(0, 200)
+          verdict: ["keep", "review", "mute"].includes(item.verdict) ? item.verdict : "mute",
+          summary: String(item.summary || "").trim().slice(0, 200),
+          reason: String(item.reason || "").trim().slice(0, 150),
+          problemType: ["spam", "irrelevant", "low_quality", "promo", "none"].includes(item.problem_type) ? item.problem_type : "none"
         }
       })
-      .sort((a, b) => b.valuePerPost - a.valuePerPost)
+      .sort((a, b) => b.score - a.score)
   }
 
   async recommendChannels(userProfile, channelUsernames) {

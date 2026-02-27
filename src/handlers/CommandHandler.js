@@ -205,45 +205,67 @@ export class CommandHandler extends BaseHandler {
 
 			const scored = new Set(scores.map((s) => s.channel))
 			for (const ch of channelsWithData.map((c) => c.channel)) {
-				if (!scored.has(ch)) scores.push({ channel: ch, score: 0, verdict: "mute", summary: "Нет данных" })
+				if (!scored.has(ch)) scores.push({ channel: ch, score: 0, verdict: "mute", summary: "Нет данных", reason: "Не удалось получить посты", problemType: "none" })
 			}
 			scores.sort((a, b) => b.score - a.score)
 
-			// Ограничиваем вывод топ-15 каналов
-			const topScores = scores.slice(0, 15)
-			const weakChannels = scores.filter((s) => s.score < 4)
-			
-			const lines = topScores.map((s) => {
-				const { emoji } = UIFormatter.verdictLabel(s.verdict)
+			// Группировка по verdict
+			const keepChannels = scores.filter((s) => s.verdict === "keep")
+			const reviewChannels = scores.filter((s) => s.verdict === "review")
+			const muteChannels = scores.filter((s) => s.verdict === "mute")
+
+			// Форматирование строки канала
+			const formatChannel = (s) => {
 				const postCount = channelsData.find((cd) => cd.channel === s.channel)?.postCount || 0
 				const postsLabel = postCount === 1 ? "пост" : postCount < 5 ? "поста" : "постов"
-				const vpp = s.valuePerPost && isFinite(s.valuePerPost) ? s.valuePerPost.toFixed(2) : "—"
-				const sn = Math.round(s.signalNoise * 100)
 				const avgViews = s.avgViews && isFinite(s.avgViews) ? (s.avgViews >= 1000 ? `${(s.avgViews / 1000).toFixed(1)}K` : Math.round(s.avgViews)) : "—"
-				return `${emoji} @${s.channel} — ${s.score.toFixed(1)} | VPP: ${vpp} | S/N: ${sn}% | 👁 ${avgViews} (${postCount} ${postsLabel}) — ${s.summary}`
+				return `@${s.channel} — ${s.score.toFixed(1)} | 👁 ${avgViews} (${postCount} ${postsLabel})\n   ${s.summary}\n   ${s.reason ? `⚠️ ${s.reason}` : ""}`
+			}
+
+			// Топ-10 каналов (keep + review)
+			const topChannels = [...keepChannels, ...reviewChannels].slice(0, 10)
+			const topLines = topChannels.map((s) => {
+				const emoji = s.verdict === "keep" ? "🟢" : "🟡"
+				return `${emoji} ${formatChannel(s)}`
 			})
 
+			// Слабые каналы с причинами
+			const weakLines = muteChannels.map((s) => {
+				const problemLabel = {
+					spam: "Спам",
+					irrelevant: "Не релевантно профилю",
+					low_quality: "Низкое качество",
+					promo: "Промо/реклама",
+					none: ""
+				}[s.problemType] || "Низкая ценность"
+				return `@${s.channel} — ${s.score.toFixed(1)} | ${problemLabel}`
+			})
+
+			// Сборка сообщения
+			const sections = []
+			if (topLines.length > 0) {
+				sections.push(`<b>Рекомендуемые (${topLines.length}):</b>\n${topLines.join("\n\n")}`)
+			}
+			if (weakLines.length > 0) {
+				sections.push(`<b>Слабые каналы (${weakLines.length}):</b>\n${weakLines.join("\n")}`)
+			}
+
 			const noDataNote = noDataChannels.length > 0 ? `\n\n⚠️ Нет постов по: ${noDataChannels.map((c) => "@" + c).join(", ")}` : ""
-			const weakNote = weakChannels.length > 0 ? `\n\n🔴 Слабые каналы (score < 4): ${weakChannels.map((s) => "@" + s.channel).join(", ")}` : ""
-
-			const header = `📋 Аудит каналов: топ-15 из ${channels.length}\n\n`
-			const body = lines.join("\n") + noDataNote + weakNote
-
-			const hideButtons = weakChannels.slice(0, 4).map((s) => ({
-				text: `🙈 @${s.channel}`,
-				callback_data: `audit_hide:${s.channel}`
-			}))
-			const hideAllBtn = weakChannels.length > 0 ? [{ text: `🔕 Скрыть все слабые (${weakChannels.length})`, callback_data: "audit_hide_all_weak" }] : []
-
-			const inlineRows = []
-			for (let i = 0; i < hideButtons.length; i += 2) inlineRows.push(hideButtons.slice(i, i + 2))
-			if (hideAllBtn.length > 0) inlineRows.push(hideAllBtn)
-
-			const keyboard = inlineRows.length > 0 ? { reply_markup: { inline_keyboard: inlineRows } } : {}
-			const fullText = header + body
+			const fullText = `📋 Аудит каналов: ${scores.length} каналов\n\n` + sections.join("\n\n") + noDataNote
 			const safeText = fullText.length > 4096 ? fullText.slice(0, 4093) + "…" : fullText
 
-			this.mgr.cache.setAuditWeak(userId, weakChannels.map((s) => s.channel))
+			// Кнопки действий
+			const actionButtons = []
+			if (muteChannels.length > 0) {
+				actionButtons.push([{ text: `🗑 Удалить слабые (${muteChannels.length})`, callback_data: "audit_remove_weak" }])
+			}
+			if (scores.length > 10) {
+				actionButtons.push([{ text: "📊 Полный отчёт", callback_data: "audit_full_report" }])
+			}
+			const keyboard = actionButtons.length > 0 ? { reply_markup: { inline_keyboard: actionButtons } } : {}
+
+			this.mgr.cache.setAuditWeak(userId, muteChannels.map((s) => s.channel))
+			this.mgr.cache.setAuditScores(userId, scores) // Для полного отчёта
 			await status.replace(safeText, { disable_web_page_preview: true, ...keyboard })
 		} catch (e) {
 			await status.replace("Ошибка анализа: " + this.formatErrorForChat(e))

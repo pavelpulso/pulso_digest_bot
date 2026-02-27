@@ -8,7 +8,8 @@ import {
 	getChannels,
 	upsertPostFeedback,
 	setUserChannelHidden,
-	getPostsForCalendarDay
+	getPostsForCalendarDay,
+	removeChannelsByUsernames
 } from "../db.js"
 import { formatDateLabel } from "../utils.js"
 import { collectChannelPosts } from "../gramjs.js"
@@ -244,5 +245,53 @@ export class ActionHandler extends BaseHandler {
 		}
 
 		await status.replace(resultText)
+	}
+
+	async handleRemoveWeakChannels(ctx) {
+		const userId = ctx.from?.id
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+
+		const weakChannels = this.mgr.cache.getAuditWeak(userId)
+		if (!weakChannels || weakChannels.length === 0) {
+			return this.safeAnswerCbQuery(ctx, "Нет слабых каналов для удаления")
+		}
+
+		await this.safeAnswerCbQuery(ctx, `🗑 Удаляю ${weakChannels.length} каналов...`)
+
+		const removed = removeChannelsByUsernames(weakChannels)
+		this.mgr.cache.deleteAuditWeak(userId)
+
+		try {
+			await ctx.editMessageText(`✅ Удалено ${removed} слабых каналов:\n${weakChannels.slice(0, 10).map(c => `@${c}`).join("\n")}${weakChannels.length > 10 ? `\n... и ещё ${weakChannels.length - 10}` : ""}`)
+		} catch (_) { }
+	}
+
+	async handleFullReport(ctx) {
+		const userId = ctx.from?.id
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+
+		const scores = this.mgr.cache.getAuditScores(userId)
+		if (!scores || scores.length === 0) {
+			return this.safeAnswerCbQuery(ctx, "Нет данных аудита")
+		}
+
+		await this.safeAnswerCbQuery(ctx)
+
+		// Формируем полный отчёт
+		const lines = scores.map((s, i) => {
+			const emoji = { keep: "🟢", review: "🟡", mute: "🔴" }[s.verdict] || "⚪"
+			const problemLabel = s.problemType && s.problemType !== "none" ? `| ${s.problemType}` : ""
+			return `${i + 1}. ${emoji} @${s.channel} — ${s.score.toFixed(1)} ${problemLabel}\n   ${s.summary}\n   ${s.reason || ""}`
+		})
+
+		const reportText = `📊 <b>Полный отчёт: ${scores.length} каналов</b>\n\n` + lines.join("\n\n")
+		const safeText = reportText.length > 4096 ? reportText.slice(0, 4093) + "…" : reportText
+
+		try {
+			await ctx.editMessageText(safeText, { parse_mode: "HTML", disable_web_page_preview: true })
+		} catch (e) {
+			// Если не влезает в одно сообщение — отправляем частями
+			await ctx.reply(safeText, { parse_mode: "HTML", disable_web_page_preview: true })
+		}
 	}
 }

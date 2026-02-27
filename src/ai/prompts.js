@@ -73,9 +73,15 @@ export function buildAuditAllChannelsPrompt(userProfile, list) {
 
 Каналы: ${JSON.stringify(simplified)}
 
-Для каждого: score (0-10), signal_noise (0-1), avg_views, value_per_post (score/postCount), verdict (keep/mute/unsubscribe), summary (10 слов).
+Для каждого канала верни:
+- score (0-10): общая ценность для профиля читателя
+- avg_views: среднее количество просмотров
+- verdict: keep (7-10), review (4-6), mute (0-3)
+- summary (20 слов): краткое описание контента
+- reason (15 слов): почему такая оценка, конкретная причина
+- problem_type: одна из ["spam", "irrelevant", "low_quality", "promo", "none"]
 
-Верни JSON: {"channels":[{"channel":"name","score":8,"signal_noise":0.7,"avg_views":1000,"value_per_post":0.8,"verdict":"keep","summary":"текст"}]}`
+Верни JSON: {"channels":[{"channel":"name","score":8.5,"avg_views":1000,"verdict":"keep","summary":"текст","reason":"причина","problem_type":"none"}]}`
 }
 
 /**

@@ -152,6 +152,13 @@ export function removeChannel(username) {
   return r.changes > 0
 }
 
+export function removeChannelsByUsernames(usernames) {
+  const normalized = usernames.map(u => u.replace(/^@/, "").toLowerCase())
+  const placeholders = normalized.map(() => '?').join(',')
+  const r = db.prepare(`DELETE FROM channels WHERE username IN (${placeholders})`).run(...normalized)
+  return r.changes
+}
+
 export function hasChannel(username) {
   const normalized = username.replace(/^@/, "").toLowerCase()
   return db.prepare("SELECT 1 FROM channels WHERE username = ?").get(normalized) != null

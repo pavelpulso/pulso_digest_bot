@@ -112,6 +112,8 @@ export class BotManager {
 		this.bot.action("audit_hide:(.+)$", (ctx) => act.handleAuditHide(ctx))
 		this.bot.action("audit_all", (ctx) => act.handleAuditAll(ctx))
 		this.bot.action("audit_hide_all_weak", (ctx) => act.handleAuditHideAll(ctx))
+		this.bot.action("audit_remove_weak", (ctx) => act.handleRemoveWeakChannels(ctx))
+		this.bot.action("audit_full_report", (ctx) => act.handleFullReport(ctx))
 		this.bot.action(/^fetch:(\d+)$/, (ctx) => act.handleFetchDays(ctx))
 	}
 
