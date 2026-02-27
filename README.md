@@ -8,7 +8,7 @@ Telegram bot that aggregates posts from tracked channels and delivers personaliz
 - **Telegram Bot:** Telegraf
 - **Telegram Client:** GramJS (`telegram` package) for MTProto channel reading
 - **Database:** SQLite via `better-sqlite3` (file: `data/db.sqlite`)
-- **AI:** Multi-provider (Gemini, Groq, OpenRouter) with auto-fallback
+- **AI:** Multi-provider (Gemini, Groq, OpenRouter, QwenWorker) with auto-fallback
 - **Scheduling:** `node-cron`
 - **Process Manager:** PM2
 
@@ -84,7 +84,7 @@ cd /path/to/pulso_digest_bot
 | `BOT_TOKEN` | Telegram bot token from @BotFather | Yes |
 | `TG_API_ID` | API ID from my.telegram.org | Yes |
 | `TG_API_HASH` | API Hash from my.telegram.org | Yes |
-| `AI_PROVIDER` | AI provider: `auto`, `gemini`, `groq`, `openrouter` (default: `auto`) | No |
+| `AI_PROVIDER` | AI provider: `auto`, `gemini`, `groq`, `openrouter`, `qwen-worker` (default: `auto`) | No |
 | `GEMINI_API_KEY` | Gemini API key (Google AI Studio) | Yes (if using Gemini) |
 | `GEMINI_PROXY_URL` | Proxy URL for Gemini (e.g., `http://127.0.0.1:10808`) | Yes (if using Gemini) |
 | `GEMINI_MODEL` | Gemini model (default: `gemini-2.0-flash`) | No |
@@ -92,6 +92,8 @@ cd /path/to/pulso_digest_bot
 | `GROQ_MODEL` | Groq model (default: `llama-3.3-70b-versatile`) | No |
 | `OPENROUTER_API_KEY` | OpenRouter API key | Yes (if using OpenRouter) |
 | `OPENROUTER_MODEL` | OpenRouter model (e.g., `meta-llama/llama-3.3-70b-instruct:free`) | No |
+| `QWEN_WORKER_URL` | Qwen Worker Proxy URL (OpenAI-compatible API) | Yes (if using Qwen Worker) |
+| `QWEN_WORKER_MODEL_PLUS` | Qwen model for all tasks: `qwen3-coder-plus` | No |
 | `ADMIN_ID` | Telegram user_id of admin (for /ban, /close, etc.) | Yes |
 | `CHANNELS` | Initial channels, comma-separated, without @ | No |
 | `DB_PATH` | SQLite file path (default: `./data/db.sqlite`) | No |

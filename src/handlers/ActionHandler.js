@@ -2,6 +2,7 @@ import { BaseHandler } from "./BaseHandler.js"
 import { KeyboardProvider } from "../ui/KeyboardProvider.js"
 import { UIFormatter } from "../ui/UIFormatter.js"
 import { StatusMessage } from "../services/StatusMessage.js"
+import { getUserSystemPrompt } from "../services/SystemPromptLoader.js"
 import {
 	getOrCreateUser,
 	isUserBanned,
@@ -15,7 +16,7 @@ import {
 	hasChannel
 } from "../db.js"
 import { formatDateLabel, formatChannelList } from "../utils.js"
-import { collectChannelPosts } from "../gramjs.js"
+import { collectChannelPosts, fetchRecentPostsFromChannel } from "../gramjs.js"
 
 export class ActionHandler extends BaseHandler {
 	async handleMore(ctx) {
@@ -335,15 +336,11 @@ export class ActionHandler extends BaseHandler {
 		const lines = scores.map((s, i) => {
 			const emoji = { keep: "🟢", review: "🟡", mute: "🔴" }[s.verdict] || "⚪"
 			const problemLabel = s.problemType && s.problemType !== "none" ? `| ${s.problemType}` : ""
-			const qualityPct = Math.round(s.scoreBreakdown.quality * 100)
-			const relevancePct = Math.round(s.scoreBreakdown.relevance * 100)
-			const spamFreePct = Math.round(s.scoreBreakdown.spamFree * 100)
 			const recText = s.recommendation === "keep_if" && s.keepIfCondition ? `\n   ⚠️ Keep if: ${s.keepIfCondition}` : ""
-			return `${i + 1}. ${emoji} @${s.channel} — ${s.score.toFixed(1)} ${problemLabel}\n   ${s.summary}\n   Score: Q:${qualityPct}% R:${relevancePct}% S:${spamFreePct}%\n   ${s.reason || "No explanation"}${recText}`
+			return `${i + 1}. ${emoji} @${s.channel} — ${s.score.toFixed(1)} ${problemLabel}\n   ${s.summary}\n   ${s.reason || "No explanation"}${recText}`
 		})
 
-		const metricsLegend = "\n\n<i>Metrics: Q=Quality, R=Relevance, S=Spam-free</i>"
-		const reportText = `📊 <b>Full Report: ${scores.length} channels</b>\n\n` + lines.join("\n\n") + metricsLegend
+		const reportText = `📊 <b>Full Report: ${scores.length} channels</b>\n\n` + lines.join("\n\n")
 		const safeText = reportText.length > 4096 ? reportText.slice(0, 4093) + "…" : reportText
 
 		try {
@@ -445,9 +442,8 @@ export class ActionHandler extends BaseHandler {
 		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
 
 		await this.safeAnswerCbQuery(ctx)
-		await ctx.editMessageText(`🔍 Analyzing @${channelName}...`)
 
-		// Call channel analysis command
+		// Call channel analysis command (it will show its own status)
 		return this.mgr.handlers.command.handleAnalyzeChannel(ctx, channelName)
 	}
 
@@ -483,7 +479,6 @@ export class ActionHandler extends BaseHandler {
 	}
 
 	async handleChannelSkip(ctx) {
-		const channelName = ctx.match[1]
 		const userId = ctx.from?.id
 
 		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
@@ -492,8 +487,7 @@ export class ActionHandler extends BaseHandler {
 
 		// Just hide buttons, keep message
 		try {
-			const newKeyboard = KeyboardProvider.analyzeChannelResult(channelName, true)
-			await ctx.editMessageReplyMarkup(newKeyboard.reply_markup)
+			await ctx.editMessageReplyMarkup({ inline_keyboard: [] })
 		} catch {
 			// Ignore error
 		}
@@ -521,5 +515,76 @@ export class ActionHandler extends BaseHandler {
 			"Or send channel name:\n<code>@username</code>",
 			{ parse_mode: "HTML", reply_markup: KeyboardProvider.analyzeChannelList(channels).reply_markup }
 		)
+	}
+
+	async handleAnalyzePost(ctx) {
+		const channelName = ctx.match[1]
+		const userId = ctx.from?.id
+
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+
+		await this.safeAnswerCbQuery(ctx)
+
+		const status = new StatusMessage(ctx)
+		await status.start(`🔍 <b>Analyzing @${channelName}...</b>`)
+
+		try {
+			const user = getOrCreateUser(userId)
+
+			// Fetch ~20 posts from the channel
+			await status.update(`⏳ <b>Fetching posts from @${channelName}...</b>`)
+			const posts = await fetchRecentPostsFromChannel(channelName, 20)
+
+			if (posts.length === 0) {
+				return status.replace(
+					`❌ Failed to get posts from channel <b>@${UIFormatter.escapeHtml(channelName)}</b>.\n\n` +
+					"Channel may be private or deleted."
+				)
+			}
+
+			const minWarning = posts.length < 5 ? `\n⚠️ <i>Limited data (${posts.length} posts) — approximate score.</i>` : ""
+
+			const systemPrompt = await getUserSystemPrompt(user)
+			const result = await this.mgr.ai.analyzeChannel(posts, channelName, user.profile || "", systemPrompt)
+
+			const { emoji, label: vLabel } = UIFormatter.verdictLabel(result.verdict)
+			const snPct = Math.round((result.signal_noise || 0) * 100)
+			const args = result.arguments.map((a) => `• ${UIFormatter.escapeHtml(a)}`).join("\n")
+
+			const isAdded = hasChannel(channelName)
+			const subscribeBtnText = isAdded ? "✅ Already subscribed" : "✅ Subscribe"
+			const subscribeDisabled = isAdded
+
+			const text =
+				`📊 <b>Channel analysis @${UIFormatter.escapeHtml(channelName)}</b> (${posts.length} posts)${minWarning}\n\n` +
+				`⭐ <b>Score:</b> ${result.score.toFixed(1)}/10\n` +
+				`📶 <b>Signal/Noise:</b> ${snPct}%\n` +
+				`${emoji} <b>Verdict:</b> ${vLabel}\n\n` +
+				`<i>${UIFormatter.escapeHtml(result.summary)}</i>\n\n` +
+				(args ? `<b>Arguments:</b>\n${args}` : "")
+
+			// Keyboard with Subscribe/Skip buttons
+			const keyboard = {
+				reply_markup: {
+					inline_keyboard: [
+						[
+							{
+								text: subscribeBtnText,
+								callback_data: `channel_add:${channelName}`,
+								disabled: subscribeDisabled
+							},
+							{
+								text: "❌ Skip",
+								callback_data: `channel_skip:${channelName}`
+							}
+						]
+					]
+				}
+			}
+
+			await status.replace(text, { disable_web_page_preview: true, ...keyboard })
+		} catch (e) {
+			await status.replace("❌ Failed to analyze channel: " + this.formatErrorForChat(e))
+		}
 	}
 }

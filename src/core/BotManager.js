@@ -9,8 +9,7 @@ import {
 	isBotOpen,
 	getOrCreateUser,
 	getUser,
-	isUserBanned,
-	addChannel,
+	isUserBanned
 } from "../db.js"
 import ai, { autoInit } from "../ai/index.js"
 import {
@@ -123,6 +122,7 @@ export class BotManager {
 		this.bot.action("optimize_cancel", (ctx) => act.handleOptimizeCancel(ctx))
 		this.bot.action(/^audit_remove_one:(.+)$/, (ctx) => act.handleRemoveOneChannel(ctx))
 		this.bot.action(/^analyze_ch:(.+)$/, (ctx) => act.handleAnalyzeChannelClick(ctx))
+		this.bot.action(/^analyze_post:(.+)$/, (ctx) => act.handleAnalyzePost(ctx))
 		this.bot.action(/^channel_add:(.+)$/, (ctx) => act.handleChannelAdd(ctx))
 		this.bot.action(/^channel_skip:(.+)$/, (ctx) => act.handleChannelSkip(ctx))
 		this.bot.action("analyze_channel_menu", (ctx) => act.handleAnalyzeChannelMenu(ctx))
@@ -132,7 +132,7 @@ export class BotManager {
 	_registerHandlers() {
 		const { command: cmd } = this.handlers
 
-		// Handle channel forwards — auto-add channel
+		// Handle channel forwards — offer analysis without auto-subscribe
 		this.bot.on("message", async (ctx, next) => {
 			const userId = ctx.from?.id
 			if (!userId || isUserBanned(userId)) return next()
@@ -140,25 +140,36 @@ export class BotManager {
 			if (ctx.message.forward_from_chat?.type === "channel") {
 				const chat = ctx.message.forward_from_chat
 				const username = chat.username || String(chat.id)
-				const res = addChannel(username, userId)
-				if (res.ok) {
-					await ctx.reply(`<b>✅ Channel @${res.username} added!</b>`, { parse_mode: "HTML" })
-				} else if (res.exists) {
-					await ctx.reply(`<b>ℹ️ Channel @${res.username}</b> already in list.`, { parse_mode: "HTML" })
-				}
+				
+				await ctx.reply(
+					`📬 <b>Post from @${UIFormatter.escapeHtml(username)}</b>\n\n` +
+					"Analyze this channel and decide whether to subscribe?",
+					{ parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "📊 Analyze Channel", callback_data: `analyze_post:${username}` }]] } }
+				)
 				return next()
 			}
 
 			return next()
 		})
 
-		// Handle text messages (including reply keyboard buttons)
+		// Handle text messages (including reply keyboard buttons and @username)
 		this.bot.on("text", async (ctx, next) => {
 			const userId = ctx.from?.id
 			if (!userId || isUserBanned(userId)) return
 
 			const text = ctx.message.text?.trim()
 			console.log("[BotManager text] userId:", userId, "text:", JSON.stringify(text))
+
+			// Handle @username — offer channel analysis
+			const usernameMatch = text.match(/^@([a-zA-Z0-9_]{3,32})$/)
+			if (usernameMatch) {
+				const channelName = usernameMatch[1].toLowerCase()
+				return ctx.reply(
+					`🔍 <b>Analyze @${UIFormatter.escapeHtml(channelName)}?</b>\n\n` +
+					"I'll fetch ~20 posts and give a recommendation.",
+					{ parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "📊 Analyze Channel", callback_data: `analyze_post:${channelName}` }]] } }
+				)
+			}
 
 			// Handle reply keyboard buttons
 			if (text === BTN_DIGEST) return cmd.handleDigest(ctx)

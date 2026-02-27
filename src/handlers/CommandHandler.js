@@ -23,8 +23,8 @@ import {
 	updateUserSystemPromptCached,
 	clearUserSystemPrompt
 } from "../db.js"
-import { DIGEST_PAGE_SIZE } from "../utils.js"
 import { collectChannelPosts, fetchRecentPostsFromChannel } from "../gramjs.js"
+import { DIGEST_PAGE_SIZE } from "../utils.js"
 
 export class CommandHandler extends BaseHandler {
 	async handleStart(ctx) {
@@ -205,25 +205,70 @@ export class CommandHandler extends BaseHandler {
 		const channels = getChannelUsernames()
 		if (channels.length === 0) return ctx.reply("No channels.")
 
-		const channelsData = channels.map((ch) => {
-			const posts = getRecentPostsByChannel(ch, 15)
-			return {
+		const status = new StatusMessage(ctx)
+		await status.start(`<b>📊 Channel Audit</b>\n\n⏳ Collecting posts from ${channels.length} channels...`)
+
+		// Collect recent posts for each channel (ensure at least 15 posts)
+		const channelsData = []
+		let collectedTotal = 0
+
+		for (const ch of channels) {
+			let posts = getRecentPostsByChannel(ch, 15)
+			
+			// If less than 15 posts, fetch from Telegram
+			if (posts.length < 15) {
+				try {
+					await status.update(`📥 Fetching posts from @${ch}... (${channelsData.length + 1}/${channels.length})`)
+					const fetched = await fetchRecentPostsFromChannel(ch, 15 - posts.length)
+					collectedTotal += fetched.length
+					// Append fetched posts to existing posts
+					posts = [...posts, ...fetched].slice(0, 15)
+				} catch (e) {
+					console.warn(`[audit] Failed to fetch from @${ch}:`, e.message)
+					// Reload from DB to get whatever we have
+					posts = getRecentPostsByChannel(ch, 15)
+				}
+			}
+			
+			// Calculate posting frequency
+			let frequency = "unknown"
+			if (posts.length >= 2) {
+				const dates = posts.map(p => new Date(p.date).getTime()).sort((a, b) => b - a)
+				const oldest = dates[dates.length - 1]
+				const newest = dates[0]
+				const daysSpan = Math.max(1, (newest - oldest) / (1000 * 60 * 60 * 24))
+				const postsPerWeek = (posts.length / daysSpan) * 7
+				
+				if (postsPerWeek >= 5) frequency = "daily"
+				else if (postsPerWeek >= 2) frequency = "several_times_week"
+				else if (postsPerWeek >= 0.5) frequency = "weekly"
+				else frequency = "rare"
+			}
+			
+			channelsData.push({
 				channel: ch.toLowerCase(),
 				posts,
-				postCount: posts.length
-			}
-		})
+				postCount: posts.length,
+				frequency
+			})
+		}
 
 		const channelsWithData = channelsData.filter((cd) => cd.posts.length > 0)
 		const noDataChannels = channelsData.filter((cd) => cd.posts.length === 0).map((cd) => cd.channel)
 
+		console.log(`[audit] Channels: ${channels.length}, With data: ${channelsWithData.length}, No data: ${noDataChannels.length}`)
+		channelsWithData.forEach(cd => console.log(`  @${cd.channel}: ${cd.posts.length} posts, ${cd.frequency}`))
+
 		if (channelsWithData.length === 0) {
-			return ctx.reply("❌ No data for any channel.")
+			return status.replace("❌ No data for any channel.")
 		}
 
-		const status = new StatusMessage(ctx)
-		const batchCount = Math.ceil(channelsWithData.length / 15)
-		await status.start(`<b>📊 Channel Audit</b>\n\n⏳ Analyzing ${channelsWithData.length} channels (${batchCount} batches of 15)...`)
+		const batchCount = Math.ceil(channelsWithData.length / 7)
+		await status.percent(
+			`<b>📊 Channel Audit</b>\n\n⏳ Analyzing ${channelsWithData.length} channels (${batchCount} batches of 7)...`,
+			0,
+			`Collected: ${collectedTotal} new posts`
+		)
 
 		const user = getOrCreateUser(userId)
 		const systemPrompt = await getUserSystemPrompt(user)
@@ -265,10 +310,7 @@ export class CommandHandler extends BaseHandler {
 				const postCount = channelsData.find((cd) => cd.channel === s.channel)?.postCount || 0
 				const postsLabel = postCount === 1 ? "post" : postCount < 5 ? "posts" : "posts"
 				const avgViews = s.avgViews && isFinite(s.avgViews) ? (s.avgViews >= 1000 ? `${(s.avgViews / 1000).toFixed(1)}K` : Math.round(s.avgViews)) : "—"
-				const qualityPct = Math.round(s.scoreBreakdown.quality * 100)
-				const relevancePct = Math.round(s.scoreBreakdown.relevance * 100)
-				const spamFreePct = Math.round(s.scoreBreakdown.spamFree * 100)
-				return `@${s.channel} — ${s.score.toFixed(1)} | 👁 ${avgViews} (${postCount} ${postsLabel})\n   ${s.summary}\n   Score: Q:${qualityPct}% R:${relevancePct}% S:${spamFreePct}%`
+				return `@${s.channel} — ${s.score.toFixed(1)} | 👁 ${avgViews} (${postCount} ${postsLabel})\n   ${s.summary}`
 			}
 
 			// Format weak channel with expanded reason
@@ -315,10 +357,7 @@ export class CommandHandler extends BaseHandler {
 			// Summary line with distribution
 			const summaryLine = `🟢 ${keepChannels.length} | 🟡 ${reviewChannels.length} | 🔴 ${muteChannels.length}`
 
-			// Metrics legend
-			const metricsLegend = "\n\n<i>Metrics: Q=Content quality, R=Profile relevance, S=Spam-free</i>"
-
-			const fullText = `📋 Channel Audit: ${scores.length} channels\n${summaryLine}\n\n` + sections.join("\n\n") + noDataNote + metricsLegend
+			const fullText = `📋 Channel Audit: ${scores.length} channels\n${summaryLine}\n\n` + sections.join("\n\n") + noDataNote
 			const safeText = fullText.length > 4096 ? fullText.slice(0, 4093) + "…" : fullText
 
 			// Action buttons

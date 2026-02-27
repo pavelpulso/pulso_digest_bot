@@ -1,12 +1,13 @@
 import { GeminiAI } from "./GeminiAI.js"
 import { GroqAI } from "./GroqAI.js"
 import { OpenRouterAI } from "./OpenRouterAI.js"
+import { QwenWorkerAI } from "./QwenWorkerAI.js"
 
 const AI_PROVIDER = (process.env.AI_PROVIDER || "auto").toLowerCase()
 
 /**
  * AI router with automatic fallback.
- * Provider order: Gemini → Groq → OpenRouter
+ * Provider order: Gemini → QwenWorker → Groq → OpenRouter
  */
 class AIRouter {
   constructor() {
@@ -16,11 +17,12 @@ class AIRouter {
   }
 
   #initProviders() {
-    const all = [new GeminiAI(), new GroqAI(), new OpenRouterAI()]
+    const all = [new GeminiAI(), new QwenWorkerAI(), new GroqAI(), new OpenRouterAI()]
     if (AI_PROVIDER === "auto") return all
     if (AI_PROVIDER === "gemini") return [new GeminiAI()]
     if (AI_PROVIDER === "groq") return [new GroqAI()]
     if (AI_PROVIDER === "openrouter") return [new OpenRouterAI()]
+    if (AI_PROVIDER === "qwen-worker") return [new QwenWorkerAI()]
     console.warn(`[AI] Unknown AI_PROVIDER="${AI_PROVIDER}", using auto fallback`)
     return all
   }
@@ -44,31 +46,37 @@ class AIRouter {
     throw new Error("No AI providers available. Set API keys in .env")
   }
 
-  async #executeWithFallback(methodName, args) {
+  async #executeWithFallback(methodName, args, taskType = null, startWithQwen = false) {
     if (!this.initialized) await this.init()
 
-    const providersToTry = this.#getProvidersOrder()
-    const lastError = null
+    const providersToTry = this.#getProvidersOrder(taskType, startWithQwen)
+    let lastError = null
     const tried = new Set()
 
     for (const provider of providersToTry) {
       if (tried.has(provider)) continue
       tried.add(provider)
 
-      const result = await this.#tryProvider(provider, methodName, args)
+      const result = await this.#tryProvider(provider, methodName, args, taskType)
       if (result !== null) return result
     }
 
     throw lastError || new Error("All AI providers failed")
   }
 
-  #getProvidersOrder() {
+  #getProvidersOrder(taskType, startWithQwen = false) {
+    // For audit, start with Qwen (more stable with JSON arrays)
+    if (startWithQwen) {
+      const qwen = this.providers.find(p => p.toString() === "QwenWorker")
+      const others = this.providers.filter(p => p.toString() !== "QwenWorker")
+      return qwen ? [qwen, ...others] : this.providers
+    }
     if (!this.currentProvider) return this.providers
     const others = this.providers.filter(p => p !== this.currentProvider)
     return [this.currentProvider, ...others]
   }
 
-  async #tryProvider(provider, methodName, args) {
+  async #tryProvider(provider, methodName, args, taskType) {
     try {
       if (!(await provider.isReady())) {
         console.warn(`[AI] Provider ${provider.toString()} not ready, skipping`)
@@ -95,23 +103,23 @@ class AIRouter {
   }
 
   rankPosts(posts, userProfile, options) {
-    return this.#executeWithFallback("rankPosts", [posts, userProfile, options || {}])
+    return this.#executeWithFallback("rankPosts", [posts, userProfile, options || {}], "rank")
   }
 
   generateSummaryBlocks(posts, dateLabel, userProfile, maxItems, options) {
-    return this.#executeWithFallback("generateSummaryBlocks", [posts, dateLabel, userProfile, maxItems, options || {}])
+    return this.#executeWithFallback("generateSummaryBlocks", [posts, dateLabel, userProfile, maxItems, options || {}], "summary")
   }
 
   analyzeChannel(posts, channelName, userProfile, systemPrompt) {
-    return this.#executeWithFallback("analyzeChannel", [posts, channelName, userProfile, systemPrompt])
+    return this.#executeWithFallback("analyzeChannel", [posts, channelName, userProfile, systemPrompt], "analyze")
   }
 
   auditAllChannels(channelsData, userProfile, options) {
-    return this.#executeWithFallback("auditAllChannels", [channelsData, userProfile, options || {}])
+    return this.#executeWithFallback("auditAllChannels", [channelsData, userProfile, options || {}], "audit")
   }
 
   recommendChannels(userProfile, channelUsernames, systemPrompt) {
-    return this.#executeWithFallback("recommendChannels", [userProfile, channelUsernames, systemPrompt])
+    return this.#executeWithFallback("recommendChannels", [userProfile, channelUsernames, systemPrompt], "recommend")
   }
 
   getCurrentProvider() {

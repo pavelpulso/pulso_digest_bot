@@ -1,70 +1,88 @@
 /**
- * Промпты для AI-провайдеров.
- * Вынесены в отдельный файл для соблюдения DRY и упрощения тестирования.
+ * Prompts for AI providers.
  */
 
 /**
- * Определяет контекст читателя: приоритет — systemPrompt, иначе — userProfile.
- * @param {string|null} systemPrompt - Загруженный системный промпт
- * @param {string} userProfile - Профиль пользователя (fallback)
- * @returns {string} Контекст для промпта
+ * Determines reader context: priority — systemPrompt, otherwise — userProfile.
+ * @param {string|null} systemPrompt - Loaded system prompt
+ * @param {string} userProfile - User profile (fallback)
+ * @returns {string} Context for the prompt
  */
 function getReaderContext(systemPrompt, userProfile) {
   if (systemPrompt && systemPrompt.trim().length > 0) {
     return systemPrompt.trim()
   }
-  return userProfile || "не указан"
+  return userProfile || "not specified"
 }
 
 /**
- * Промпт для ранжирования постов.
+ * Prompt for ranking posts.
  */
 export function buildRankPrompt(list, userProfile, importantChannels, liked, disliked, systemPrompt = null) {
-  const priorityHint = importantChannels ? `\nВажные каналы: ${importantChannels}.` : ""
+  const priorityHint = importantChannels ? `\nImportant channels: ${importantChannels}.` : ""
   const feedbackHint = (liked.length || disliked.length)
-    ? `\nОбратная связь: релевантные [${liked.join(", ")}], нерелевантные [${disliked.join(", ")}].`
+    ? `\nFeedback: relevant [${liked.join(", ")}], irrelevant [${disliked.join(", ")}].`
     : ""
 
   const readerContext = getReaderContext(systemPrompt, userProfile)
 
-  return `Ты — редактор дайджеста. Оцени каждый пост для читателя (0.0–1.0). Будь строг: только посты с явной личной пользой.
+  return `You are an experienced digest editor (10+ years). Your task is to select only what's truly useful for the reader.
 
-Правила:
-- Score >= 0.6 только для постов с очевидной пользой: действие, решение, навык, возможность.
-- «Просто интересные» — score 0.3–0.5.
+Priorities when evaluating:
+- Practice > theory: posts with concrete steps, examples, templates are more valuable than abstract reasoning.
+- Solutions > problems: posts that solve a problem are more valuable than those just describing difficulties.
+- Insights > news: personal discoveries, insights, non-obvious observations are more valuable than news recaps.
+- Skills & opportunities > just information: what can be applied now is more valuable than general information.
 
-Контекст читателя: ${readerContext}${priorityHint}${feedbackHint}
+Reader context: ${readerContext}${priorityHint}${feedbackHint}
 
-Посты:
+Posts:
 ${JSON.stringify(list, null, 2)}
 
-Верни JSON-массив: post_id (строка), score (число 0–1), reason (строка).`
+Evaluate strictly:
+- Score >= 0.7 — only posts with obvious personal benefit: concrete action, problem solution, new skill, real opportunity.
+- Score 0.4–0.6 — useful but without specifics: general advice, theory without examples.
+- Score < 0.4 — just interesting, news, announcements, ads, polls.
+
+Return JSON array: post_id (string), score (number 0–1), reason (string explaining why this score).`
 }
 
 /**
- * Промпт для генерации блоков дайджеста.
+ * Prompt for generating digest blocks.
  */
 export function buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt = null) {
   const readerContext = getReaderContext(systemPrompt, userProfile)
 
-  return `Ты — редактор дайджеста. Дайджест за ${dateLabel}. Включай только посты с явной пользой.
+  return `You are an experienced digest editor (10+ years). Your task is to create a digest for ${dateLabel} that the reader will actually apply in life.
 
-Контекст читателя: ${readerContext}
-Посты: ${JSON.stringify(list, null, 2)}
+Priorities when selecting:
+- Practice > theory: concrete steps, examples, templates instead of abstract reasoning.
+- Solutions > problems: posts with solutions are more valuable than those just describing problems.
+- Insights > news: personal discoveries and non-obvious observations are more valuable than event recaps.
+- Action > information: what can be applied now is more valuable than general information.
 
-Правила:
-- JSON с teaser и blocks (макс ${maxBlocks}).
-- teaser: до 12 слов.
-- blocks: только полезное, без рекламы/опросов/анонсов.
-- Объединяй посты об одном в один блок.
-- Каждый блок: ids, essence (15-20 слов), potential (10-12 слов), emoji, action (5-15 мин).
-- Без спецсимволов * _ \` [ ].
+Reader context: ${readerContext}
+Posts: ${JSON.stringify(list, null, 2)}
 
-Верни JSON.`
+Rules:
+- JSON with teaser and blocks (max ${maxBlocks}).
+- teaser: up to 12 words, catchy essence — what's the main point of this digest.
+- blocks: only useful content, no ads, polls, announcements, filler content.
+- Combine posts about the same topic into one block — if they complement each other, talk about the same event/trend/problem from different angles.
+- Each block:
+  • ids: array of post IDs
+  • essence: main idea (15-20 words) — what happened, what problem they solve, what discovery they made. Write complete sentences, don't cut thoughts short.
+  • potential: benefit for the reader (10-12 words) — how to apply this to themselves, what it will give them personally.
+  • emoji: 1-2 characters by topic (📊 for data, 💡 for insights, 🛠 for tools, 🔍 for analysis).
+  • action: concrete action (5-15 words) — what to do right now on this topic.
+- Don't cut thoughts short — give complete, clear formulations.
+- No special characters * _ \` [ ].
+
+Return JSON.`
 }
 
 /**
- * Промпт для анализа канала.
+ * Prompt for channel analysis.
  */
 export function buildAnalyzeChannelPrompt(channel, userProfile, list, systemPrompt = null) {
   const readerContext = getReaderContext(systemPrompt, userProfile)
@@ -79,93 +97,122 @@ ${readerContext}
 </reader_profile>
 
 <task>
-Ты — аналитик Telegram-каналов. Выполни два шага:
+You are a critical product manager evaluating if this channel is worth the reader's time. Be honest and strict.
 
-**ШАГ 1: Извлеки факты об АВТОРЕ канала только из <recent_posts>**
-- Локация: только если автор явно упомянул город/страну
-- Профессия: только если автор явно назвал себя
-- Опыт: только если автор явно указал стаж/опыт
-- Темы: основные темы канала
+**STEP 1: Extract facts about the AUTHOR from <recent_posts> only**
+- Location: only if author explicitly mentioned city/country
+- Profession: only if author explicitly named themselves
+- Experience: only if author explicitly stated years of experience
+- Topics: main channel topics
 
-**ШАГ 2: Оцени релевантность канала для читателя**
-- Сравни темы канала с интересами из <reader_profile>
-- Оцени пользу контента для этого конкретного читателя
+**STEP 2: Evaluate channel relevance for the reader — BE CRITICAL**
+- Compare channel topics with interests from <reader_profile>
+- Evaluate content benefit: is there REAL practical value or just noise/self-promo?
+- Priorities: practice > theory, solutions > problems, insights > news, depth > surface
+- Ask: What does this channel give THIS reader? What problem does it solve? Is it unique or just more noise?
+
+**STEP 3: Scoring**
+- score 8-10: High practical ROI, directly applicable to reader's work/life
+- score 5-7: Some value but mixed with noise, occasional useful content
+- score 0-4: Mostly noise, self-promo, news without application, or irrelevant
 </task>
 
 <examples>
-ПРИМЕР 1 (правильно):
-Пост: "Я разработчик с 13-летним опытом. Живу в Праге."
-Профиль читателя: "Senior JS, Barcelona"
-Вывод: "Автор — разработчик с 13-летним опытом из Праги" ✅
+EXAMPLE 1 (correct):
+Post: "I'm a developer with 13 years of experience. I live in Prague."
+Reader profile: "Senior JS, Barcelona"
+Conclusion: "Author is a developer with 13 years of experience from Prague" ✅
 
-ПРИМЕР 2 (НЕПРАВИЛЬНО):
-Пост: "Я разработчик с 13-летним опытом." (без локации)
-Профиль читателя: "Senior JS, Barcelona"
-Вывод: "Senior разработчик из Barcelona" ❌ ОШИБКА: локация и Senior взяты из профиля читателя!
+EXAMPLE 2 (INCORRECT):
+Post: "I'm a developer with 13 years of experience." (no location)
+Reader profile: "Senior JS, Barcelona"
+Conclusion: "Senior developer from Barcelona" ❌ ERROR: location and Senior taken from reader profile!
 
-ПРИМЕР 3 (правильно):
-Пост: "Переехал в Германию, ищу работу Junior."
-Профиль читателя: "CTO, Moscow"
-Вывод: "Junior разработчик из Германии" ✅
+EXAMPLE 3 (correct — critical):
+Post: "Buy my course! New crypto project! Check my affiliate link!"
+Reader profile: "Senior JS, Barcelona"
+Conclusion: "Mostly promo and affiliate content, low practical value for experienced dev" ✅
+
+EXAMPLE 4 (correct — critical):
+Post: "Telegram regulations in Spain... My philosophy... Less is more..."
+Reader profile: "Senior JS, Barcelona, interested in AI/agents"
+Conclusion: "Mostly philosophy and news, little practical value for JS/AI work. Score: 5/10" ✅
 </examples>
 
 <rules>
-- Факты об авторе берёшь ТОЛЬКО из <recent_posts>
-- <reader_profile> используешь ТОЛЬКО для оценки релевантности
-- Если факт не упомянут в постах явно — его нет
+- Facts about author are taken ONLY from <recent_posts>
+- <reader_profile> is used ONLY for relevance evaluation
+- If a fact is not explicitly mentioned in posts — it doesn't exist
+- Be honest: if channel is mostly noise/promo — say it
+- IMPORTANT: Respond in the SAME LANGUAGE as the posts (Russian, English, Spanish, etc.)
 </rules>
 
-Верни JSON: score (0-10), signal_noise (0-1), verdict (keep/mute/unsubscribe), summary (20 слов — портрет АВТОРА), arguments (3 строки).`.trim()
+Return JSON: score (0-10), signal_noise (0-1), verdict (keep/mute/unsubscribe), summary (20-25 words — author portrait in post language), arguments (3 lines with specific explanations in post language).`.trim()
 }
 
 /**
- * Промпт для аудита всех каналов.
+ * Prompt for auditing all channels.
  */
 export function buildAuditAllChannelsPrompt(userProfile, list, systemPrompt = null) {
-  // Упрощаем данные для каждого канала — только текст постов и views
+  // Simplify data for each channel — only post text, views, and frequency
   const simplified = list.map(ch => ({
     channel: ch.channel,
-    postCount: ch.postCount,
-    posts: ch.posts.map(p => ({ text: p.text.slice(0, 300), views: p.views }))
+    frequency: ch.frequency,
+    posts: ch.posts.map(p => ({ text: p.text.slice(0, 200), views: p.views }))
   }))
 
   const profileContext = getReaderContext(systemPrompt, userProfile)
 
-  return `Ты — старший продуктолог с 20-летним опытом. Оцени каналы для читателя.
+  return `You are a product manager evaluating Telegram channels for a reader.
 
-Профиль читателя: ${profileContext}
+Reader profile: ${profileContext}
 
-Каналы: ${JSON.stringify(simplified)}
+Channels: ${JSON.stringify(simplified)}
 
-Для каждого канала верни:
-- score (0-10): общая ценность для ЭТОГО читателя
-- avg_views: среднее количество просмотров
-- verdict: keep (7-10), review (4-6), mute (0-3)
-- summary (15 слов): краткое описание контента канала
-- reason (40-50 слов): объясни как продуктолог — почему такая оценка ИМЕННО для этого профиля. Что канал НЕ даёт читателю? Какую его проблему НЕ решает? Чего не хватает (контент, тон, фокус, частота)?
-- problem_type: одна из ["spam", "irrelevant", "low_quality", "promo", "outdated", "low_frequency", "duplicate", "noise", "too_basic", "none"]
-- score_breakdown: {quality: 0-1, relevance: 0-1, spam_free: 0-1} — веса оценки
-- recommendation: "remove" | "keep" | "keep_if" | "mute_temporarily"
-- keep_if_condition (если recommendation="keep_if"): условие когда оставить (15 слов)
+Evaluate based on:
+- Practice > theory
+- Solutions > problems
+- Insights > news
+- Depth > surface
+- Consistency: regular posting is better than rare bursts
 
-Верни JSON: {"channels":[{"channel":"name","score":8.5,"avg_views":1000,"verdict":"keep","summary":"текст","reason":"причина","problem_type":"none","score_breakdown":{"quality":0.8,"relevance":0.9,"spam_free":1.0},"recommendation":"keep","keep_if_condition":"условие"}]}`
+IMPORTANT: Respond in the SAME LANGUAGE as the posts (Russian, English, Spanish, etc.). If posts are in Russian, write summary and reason in Russian.
+
+For each channel return:
+- channel: name
+- score: 0-10
+- avg_views: average views
+- verdict: "keep" (7-10), "review" (4-6), or "mute" (0-3)
+- summary: 15 words max — what is this channel about
+- reason: 30-40 words — be specific and honest. What does this channel give THIS reader? What problem does it solve or ignore? What's missing (depth, frequency, relevance)? Is it unique or just noise? Mention frequency if relevant.
+- problem_type: "irrelevant", "low_quality", "too_basic", "promo", "low_frequency", or "none"
+- recommendation: "remove", "keep", "keep_if", or "mute"
+
+Return ONLY this JSON format (no other text):
+[{"channel":"name","score":8.5,"avg_views":1000,"verdict":"keep","summary":"text","reason":"text","problem_type":"none","recommendation":"keep"}]`
 }
 
 /**
- * Промпт для рекомендации каналов.
+ * Prompt for channel recommendations.
  */
 export function buildRecommendChannelsPrompt(userProfile, list, systemPrompt = null) {
   const profileContext = getReaderContext(systemPrompt, userProfile)
 
-  return `Подбери до 5 каналов для читателя.
+  return `Select up to 5 channels for the reader from the list.
 
-Профиль: ${profileContext}
-Каналы: ${list.join(", ")}
+Reader profile: ${profileContext}
+Channels to choose from: ${list.join(", ")}
 
-Верни ТОЛЬКО JSON без пояснений. Формат:
+Priorities when selecting:
+- Practice > theory: channels with cases, examples, templates.
+- Solutions > problems: channels that give solutions, not just describe problems.
+- Insights > news: authors with personal experience and non-obvious observations.
+- Depth > surface: analysis with details and context.
+
+Return ONLY JSON without explanations. Format:
 {
   "channels": [
-    {"username": "channel", "reason": "краткое описание (10 слов)"}
+    {"username": "channel", "reason": "brief description — why it fits this reader specifically (15-20 words)"}
   ]
 }`
 }

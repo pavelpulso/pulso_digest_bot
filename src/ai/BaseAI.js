@@ -64,26 +64,65 @@ export class BaseAI {
   #parseJSONObject(raw) {
     const cleaned = raw.replace(/```\w*\n?/g, "").trim()
 
-    console.log("[#parseJSONObject] Raw response preview:", raw.slice(0, 100))
-    console.log("[#parseJSONObject] Cleaned preview:", cleaned.slice(0, 100))
+    console.log("[#parseJSONObject] Raw response (first 200 chars):", raw.slice(0, 200))
+    console.log("[#parseJSONObject] Cleaned (first 200 chars):", cleaned.slice(0, 200))
 
-    // Find first { and last }
-    // Needed because AI may add text before/after JSON
-    const startIndex = cleaned.indexOf("{")
-    const endIndex = cleaned.lastIndexOf("}")
+    // Find first [ or { — whichever comes first
+    const arrayStart = cleaned.indexOf("[")
+    const objectStart = cleaned.indexOf("{")
+    
+    let startIndex = -1
+    let endIndex = -1
+    let isArray = false
+
+    // Determine which comes first
+    if (arrayStart >= 0 && (objectStart === -1 || arrayStart <= objectStart)) {
+      startIndex = arrayStart
+      // Find the matching closing ] by counting brackets
+      let depth = 0
+      endIndex = -1
+      for (let i = startIndex; i < cleaned.length; i++) {
+        if (cleaned[i] === "[") depth++
+        else if (cleaned[i] === "]") {
+          depth--
+          if (depth === 0) {
+            endIndex = i
+            break
+          }
+        }
+      }
+      isArray = true
+    } else if (objectStart >= 0) {
+      startIndex = objectStart
+      // Find the matching closing } by counting braces
+      let depth = 0
+      endIndex = -1
+      for (let i = startIndex; i < cleaned.length; i++) {
+        if (cleaned[i] === "{") depth++
+        else if (cleaned[i] === "}") {
+          depth--
+          if (depth === 0) {
+            endIndex = i
+            break
+          }
+        }
+      }
+      isArray = false
+    }
 
     let jsonStr = cleaned
     if (startIndex >= 0 && endIndex > startIndex) {
       jsonStr = cleaned.slice(startIndex, endIndex + 1)
     }
 
-    console.log("[#parseJSONObject] JSON string preview:", jsonStr.slice(0, 200))
+    console.log("[#parseJSONObject] Extracted JSON (first 200 chars):", jsonStr.slice(0, 200))
+    console.log("[#parseJSONObject] Is array:", isArray, "Start:", startIndex, "End:", endIndex)
 
     try {
       return JSON.parse(jsonStr)
     } catch (e) {
       console.error("[#parseJSONObject] Failed to parse JSON:")
-      console.error("Full JSON string:", jsonStr)
+      console.error("Full extracted string:", jsonStr)
       throw new Error(`${this.name}: invalid JSON - ${e.message}`, { cause: e })
     }
   }
@@ -199,10 +238,10 @@ export class BaseAI {
     if (channelsData.length === 0) return []
 
     const { onProgress, systemPrompt } = _options
-    const BATCH_SIZE = 15
+    const BATCH_SIZE = 7
     const batches = []
 
-    // Split into batches of 15 channels
+    // Split into batches of 7 channels (reduced to avoid JSON parsing errors)
     for (let i = 0; i < channelsData.length; i += BATCH_SIZE) {
       batches.push(channelsData.slice(i, i + BATCH_SIZE))
     }
@@ -224,7 +263,7 @@ export class BaseAI {
       try {
         const prompt = buildAuditAllChannelsPrompt(userProfile, list, systemPrompt || null)
         console.log(`[auditAllChannels] Processing batch: ${batch.length} channels, prompt length: ${prompt.length}`)
-        const raw = await this._callAPI(prompt, { type: "json_object", maxTokens: 2048 })
+        const raw = await this._callAPI(prompt, { type: "json_object", maxTokens: 3072 })
         console.log("[auditAllChannels] Raw response (first 300 chars):", raw.slice(0, 300))
         const parsed = this.#parseJSONObject(raw)
         console.log("[auditAllChannels] Parsed channels:", Array.isArray(parsed) ? parsed.length : (parsed.channels?.length || 0))
@@ -244,7 +283,8 @@ export class BaseAI {
             verdict: "mute",
             summary: "No data (AI unavailable)",
             reason: "Failed to get AI score",
-            problem_type: "none"
+            problem_type: "none",
+            recommendation: "remove"
           })
         }
       }
@@ -274,15 +314,11 @@ export class BaseAI {
           avgViews: Number(item.avg_views) || Math.round(totalViews / postCount),
           verdict: ["keep", "review", "mute"].includes(item.verdict) ? item.verdict : "mute",
           summary: item.summary ? String(item.summary).trim().slice(0, 200) : "No description",
-          reason: item.reason ? String(item.reason).trim().slice(0, 400) : "No explanation",
-          problemType: ["spam", "irrelevant", "low_quality", "promo", "outdated", "low_frequency", "duplicate", "noise", "too_basic", "none"].includes(item.problem_type) ? item.problem_type : "none",
-          scoreBreakdown: {
-            quality: Number(item.score_breakdown?.quality) || 0.5,
-            relevance: Number(item.score_breakdown?.relevance) || 0.5,
-            spamFree: Number(item.score_breakdown?.spam_free) || 1.0
-          },
-          recommendation: ["remove", "keep", "keep_if", "mute_temporarily"].includes(item.recommendation) ? item.recommendation : "remove",
-          keepIfCondition: item.keep_if_condition ? String(item.keep_if_condition).trim().slice(0, 150) : ""
+          reason: item.reason ? String(item.reason).trim().slice(0, 350) : "No explanation",
+          problemType: ["irrelevant", "low_quality", "too_basic", "promo", "low_frequency", "none"].includes(item.problem_type) ? item.problem_type : "none",
+          scoreBreakdown: { quality: 0.5, relevance: 0.5, spamFree: 1.0 },
+          recommendation: ["remove", "keep", "keep_if", "mute"].includes(item.recommendation) ? item.recommendation : "remove",
+          keepIfCondition: ""
         }
       })
       .sort((a, b) => b.score - a.score)
