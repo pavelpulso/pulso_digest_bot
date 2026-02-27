@@ -179,10 +179,6 @@ export class CommandHandler extends BaseHandler {
 		const channels = getChannelUsernames()
 		if (channels.length === 0) return ctx.reply("Нет каналов.")
 
-		const status = new StatusMessage(ctx)
-		const batchCount = Math.ceil(channelsWithData.length / 15)
-		await status.start(`<b>📊 Аудит каналов</b>\n\n⏳ Анализирую ${channelsWithData.length} каналов (${batchCount} батчей по 15)...`)
-
 		const channelsData = channels.map((ch) => {
 			const posts = getRecentPostsByChannel(ch, 15)
 			return {
@@ -196,9 +192,12 @@ export class CommandHandler extends BaseHandler {
 		const noDataChannels = channelsData.filter((cd) => cd.posts.length === 0).map((cd) => cd.channel)
 
 		if (channelsWithData.length === 0) {
-			await status.replace("❌ Нет данных ни по одному каналу.")
-			return
+			return ctx.reply("❌ Нет данных ни по одному каналу.")
 		}
+
+		const status = new StatusMessage(ctx)
+		const batchCount = Math.ceil(channelsWithData.length / 15)
+		await status.start(`<b>📊 Аудит каналов</b>\n\n⏳ Анализирую ${channelsWithData.length} каналов (${batchCount} батчей по 15)...`)
 
 		const user = getOrCreateUser(userId)
 		try {
