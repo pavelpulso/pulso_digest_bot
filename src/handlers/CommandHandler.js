@@ -250,7 +250,7 @@ export class CommandHandler extends BaseHandler {
 					none: "Низкая ценность"
 				}[s.problemType] || "Низкая ценность"
 
-				return `@${s.channel} — ${s.score.toFixed(1)}\n   Проблема: ${problemLabel}\n   ${s.reason}`
+				return `🔴 @${s.channel} — ${s.score.toFixed(1)}\n   Проблема: ${problemLabel}\n   ${s.reason}`
 			}
 
 			// Динамическое ограничение топ-N
