@@ -30,18 +30,16 @@ export class BaseAI {
   #parseJSONArray(raw) {
     const cleaned = raw.replace(/```\w*\n?/g, "").trim()
     
-    // Найти конец JSON массива (последняя ])
-    let bracketCount = 0
-    let endIndex = -1
-    for (let i = cleaned.length - 1; i >= 0; i--) {
-      if (cleaned[i] === ']') bracketCount++
-      if (cleaned[i] === '[' && bracketCount > 0) {
-        endIndex = i + 1
-        break
-      }
+    // Найти первую [ и последнюю ]
+    // Это нужно т.к. AI может добавлять текст до и после JSON
+    const startIndex = cleaned.indexOf('[')
+    const endIndex = cleaned.lastIndexOf(']')
+    
+    let jsonStr = cleaned
+    if (startIndex >= 0 && endIndex > startIndex) {
+      jsonStr = cleaned.slice(startIndex, endIndex + 1)
     }
     
-    const jsonStr = endIndex > 0 ? cleaned.slice(0, endIndex) : cleaned
     let parsed
     try {
       parsed = JSON.parse(jsonStr)
@@ -69,19 +67,16 @@ export class BaseAI {
     console.log("[#parseJSONObject] Raw response preview:", raw.slice(0, 100))
     console.log("[#parseJSONObject] Cleaned preview:", cleaned.slice(0, 100))
     
-    // Найти конец JSON объекта (последняя })
-    // Это нужно т.к. AI может добавлять текст после JSON
-    let braceCount = 0
-    let endIndex = -1
-    for (let i = cleaned.length - 1; i >= 0; i--) {
-      if (cleaned[i] === '}') braceCount++
-      if (cleaned[i] === '{' && braceCount > 0) {
-        endIndex = i + 1
-        break
-      }
+    // Найти первую { и последнюю }
+    // Это нужно т.к. AI может добавлять текст до и после JSON
+    const startIndex = cleaned.indexOf('{')
+    const endIndex = cleaned.lastIndexOf('}')
+    
+    let jsonStr = cleaned
+    if (startIndex >= 0 && endIndex > startIndex) {
+      jsonStr = cleaned.slice(startIndex, endIndex + 1)
     }
     
-    const jsonStr = endIndex > 0 ? cleaned.slice(0, endIndex) : cleaned
     console.log("[#parseJSONObject] JSON string preview:", jsonStr.slice(0, 200))
     
     try {
