@@ -49,11 +49,14 @@ export class BaseAI {
    * @protected
    */
   #parseJSONObject(raw) {
-    const cleaned = raw.replace(/```\w*\n?/g, "").trim()
+    const cleaned = raw.replace(/```\w*\n?|^\[|\]$/g, "").trim()
     try {
       return JSON.parse(cleaned)
     } catch (e) {
-      throw new Error(`${this.name}: invalid JSON`)
+      console.error("[#parseJSONObject] Failed to parse JSON:")
+      console.error("Raw response (first 500 chars):", raw.slice(0, 500))
+      console.error("Cleaned (first 500 chars):", cleaned.slice(0, 500))
+      throw new Error(`${this.name}: invalid JSON - ${e.message}`)
     }
   }
 
@@ -192,12 +195,16 @@ export class BaseAI {
 
       try {
         const prompt = buildAuditAllChannelsPrompt(userProfile, list)
+        console.log(`[auditAllChannels] Processing batch: ${batch.length} channels, prompt length: ${prompt.length}`)
         const raw = await this._callAPI(prompt, { type: "json_object", maxTokens: 2048 })
+        console.log(`[auditAllChannels] Raw response (first 300 chars):`, raw.slice(0, 300))
         const parsed = this.#parseJSONObject(raw)
+        console.log(`[auditAllChannels] Parsed channels:`, Array.isArray(parsed) ? parsed.length : (parsed.channels?.length || 0))
         const batchResults = Array.isArray(parsed) ? parsed : (parsed.channels || [])
         allResults.push(...batchResults)
       } catch (e) {
         console.warn(`[auditAllChannels] Batch failed for ${batch.length} channels:`, e.message)
+        console.error("Full error:", e)
         // Fallback для этого батча
         for (const cd of batch) {
           const postCount = cd.posts.length || 1
