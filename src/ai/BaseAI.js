@@ -179,8 +179,11 @@ export class BaseAI {
     let arr = []
     try {
       const prompt = buildAuditAllChannelsPrompt(userProfile, list)
+      console.log("[auditAllChannels] prompt length:", prompt.length, "channels:", list.length)
       const raw = await this._callAPI(prompt, { type: "json_object", maxTokens: 2048 })
+      console.log("[auditAllChannels] raw response (first 300 chars):", raw.slice(0, 300))
       const parsed = this.#parseJSONObject(raw)
+      console.log("[auditAllChannels] parsed channels count:", Array.isArray(parsed) ? parsed.length : (parsed.channels?.length || 0))
       arr = Array.isArray(parsed) ? parsed : (parsed.channels || [])
     } catch (e) {
       console.warn("[auditAllChannels] AI failed, using fallback:", e.message)
@@ -191,12 +194,14 @@ export class BaseAI {
         return {
           channel: cd.channel,
           score: 0,
-          avgPostQuality: 0,
-          signalNoise: 0.5,
           avgViews: Math.round(totalViews / postCount),
-          valuePerPost: 0,
           verdict: "mute",
-          summary: "Нет данных (AI недоступен)"
+          summary: "Нет данных (AI недоступен)",
+          reason: "Не удалось получить оценку AI",
+          problemType: "none",
+          scoreBreakdown: { quality: 0, relevance: 0, spamFree: 1 },
+          recommendation: "remove",
+          keepIfCondition: ""
         }
       }).sort((a, b) => b.avgViews - a.avgViews)
     }
@@ -217,8 +222,8 @@ export class BaseAI {
           score: Number(item.score) || 0,
           avgViews: Number(item.avg_views) || Math.round(totalViews / postCount),
           verdict: ["keep", "review", "mute"].includes(item.verdict) ? item.verdict : "mute",
-          summary: String(item.summary || "").trim().slice(0, 200),
-          reason: String(item.reason || "").trim().slice(0, 400),
+          summary: item.summary ? String(item.summary).trim().slice(0, 200) : "Нет описания",
+          reason: item.reason ? String(item.reason).trim().slice(0, 400) : "Нет обоснования",
           problemType: ["spam", "irrelevant", "low_quality", "promo", "outdated", "low_frequency", "duplicate", "noise", "too_basic", "none"].includes(item.problem_type) ? item.problem_type : "none",
           scoreBreakdown: {
             quality: Number(item.score_breakdown?.quality) || 0.5,
@@ -226,7 +231,7 @@ export class BaseAI {
             spamFree: Number(item.score_breakdown?.spam_free) || 1.0
           },
           recommendation: ["remove", "keep", "keep_if", "mute_temporarily"].includes(item.recommendation) ? item.recommendation : "remove",
-          keepIfCondition: String(item.keep_if_condition || "").trim().slice(0, 150)
+          keepIfCondition: item.keep_if_condition ? String(item.keep_if_condition).trim().slice(0, 150) : ""
         }
       })
       .sort((a, b) => b.score - a.score)
