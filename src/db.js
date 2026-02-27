@@ -154,7 +154,7 @@ export function removeChannel(username) {
 
 export function removeChannelsByUsernames(usernames) {
   const normalized = usernames.map(u => u.replace(/^@/, "").toLowerCase())
-  const placeholders = normalized.map(() => '?').join(',')
+  const placeholders = normalized.map(() => "?").join(",")
   const r = db.prepare(`DELETE FROM channels WHERE username IN (${placeholders})`).run(...normalized)
   return r.changes
 }
@@ -241,7 +241,7 @@ export function insertRankings(userId, date, items) {
 
 export function getRankedPostIds(userId, date, limit = 10, offset = 0) {
   const rows = db.prepare(
-    `SELECT post_id FROM rankings WHERE user_id = ? AND date = ? ORDER BY score DESC LIMIT ? OFFSET ?`
+    "SELECT post_id FROM rankings WHERE user_id = ? AND date = ? ORDER BY score DESC LIMIT ? OFFSET ?"
   ).all(userId, date, limit, offset)
   return rows.map((r) => r.post_id)
 }
@@ -249,7 +249,7 @@ export function getRankedPostIds(userId, date, limit = 10, offset = 0) {
 /** Посты с score >= minScore для дайджеста (только качественные). */
 export function getRankedPostIdsAboveScore(userId, date, minScore, limit = 10, offset = 0) {
   const rows = db.prepare(
-    `SELECT post_id FROM rankings WHERE user_id = ? AND date = ? AND score >= ? ORDER BY score DESC LIMIT ? OFFSET ?`
+    "SELECT post_id FROM rankings WHERE user_id = ? AND date = ? AND score >= ? ORDER BY score DESC LIMIT ? OFFSET ?"
   ).all(userId, date, minScore, limit, offset)
   return rows.map((r) => r.post_id)
 }
@@ -257,10 +257,10 @@ export function getRankedPostIdsAboveScore(userId, date, minScore, limit = 10, o
 /** Возвращает { postIds, total } для пагинации по rankings. */
 export function getRankedPostIdsWithTotal(userId, date, limit = 10, offset = 0, minScore = 0) {
   const rows = db.prepare(
-    `SELECT post_id FROM rankings WHERE user_id = ? AND date = ? AND score >= ? ORDER BY score DESC LIMIT ? OFFSET ?`
+    "SELECT post_id FROM rankings WHERE user_id = ? AND date = ? AND score >= ? ORDER BY score DESC LIMIT ? OFFSET ?"
   ).all(userId, date, minScore, limit, offset)
   const totalRow = db.prepare(
-    `SELECT COUNT(*) as total FROM rankings WHERE user_id = ? AND date = ? AND score >= ?`
+    "SELECT COUNT(*) as total FROM rankings WHERE user_id = ? AND date = ? AND score >= ?"
   ).get(userId, date, minScore)
   return { postIds: rows.map((r) => r.post_id), total: totalRow?.total || 0 }
 }

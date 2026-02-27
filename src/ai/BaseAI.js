@@ -24,52 +24,6 @@ export class BaseAI {
   }
 
   /**
-   * Запрос к API с retry при 429.
-   * @protected
-   */
-  async #chatWithRetry(url, apiKey, body, maxRetries = MAX_RETRIES) {
-    let lastError = null
-
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`
-          },
-          body: JSON.stringify(body)
-        })
-
-        if (res.status === 429) {
-          const waitMs = RETRY_DELAY_MS * attempt
-          console.log(`[${this.name}] 429 Too Many Requests. Retry ${attempt}/${maxRetries} after ${waitMs}ms`)
-          await new Promise(r => setTimeout(r, waitMs))
-          continue
-        }
-
-        if (!res.ok) {
-          const errText = await res.text()
-          throw new Error(`${this.name} API ${res.status}: ${errText}`)
-        }
-
-        const data = await res.json()
-        const text = data.choices?.[0]?.message?.content
-        if (text == null) throw new Error(`${this.name} API: empty response`)
-        return text
-      } catch (e) {
-        if (e.message.includes("429") && attempt < maxRetries) {
-          lastError = e
-          continue
-        }
-        throw e
-      }
-    }
-
-    throw lastError || new Error(`${this.name} API: max retries exceeded`)
-  }
-
-  /**
    * Парсинг JSON-массива из ответа.
    * @protected
    */
@@ -261,7 +215,7 @@ export class BaseAI {
         return {
           channel: channelKey,
           score: Number(item.score) || 0,
-          avgViews: Number(item.avg_views) ?? Math.round(totalViews / postCount),
+          avgViews: Number(item.avg_views) || Math.round(totalViews / postCount),
           verdict: ["keep", "review", "mute"].includes(item.verdict) ? item.verdict : "mute",
           summary: String(item.summary || "").trim().slice(0, 200),
           reason: String(item.reason || "").trim().slice(0, 400),

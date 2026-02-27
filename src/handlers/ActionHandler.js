@@ -11,7 +11,7 @@ import {
 	getPostsForCalendarDay,
 	removeChannelsByUsernames
 } from "../db.js"
-import { formatDateLabel } from "../utils.js"
+import { formatDateLabel, formatChannelList } from "../utils.js"
 import { collectChannelPosts } from "../gramjs.js"
 
 export class ActionHandler extends BaseHandler {
@@ -121,7 +121,7 @@ export class ActionHandler extends BaseHandler {
 					untilTs,
 					onProgress: async ({ channel, index, total, collected }) => {
 						const pct = Math.round(25 + (index / total) * 40)
-						const progressText = `⏳ <b>Выкачиваю посты...</b>\n\n` +
+						const progressText = "⏳ <b>Выкачиваю посты...</b>\n\n" +
 							`${pct}% (${index}/${total} каналов)\n` +
 							`📥 Собрано: ${collected} постов\n` +
 							`📌 Сейчас: @${channel}`
@@ -231,7 +231,7 @@ export class ActionHandler extends BaseHandler {
 		})
 
 		const elapsed = Math.round((Date.now() - startTime) / 1000)
-		let resultText = `✅ Сбор завершён\n\n` +
+		let resultText = "✅ Сбор завершён\n\n" +
 			`📥 Собрано: ${collected} постов\n` +
 			`⏱ Всего: ${elapsed}с`
 		if (errors.length > 0) {
@@ -240,7 +240,7 @@ export class ActionHandler extends BaseHandler {
 			if (errors.length > 5) resultText += `\n... и ещё ${errors.length - 5}`
 		}
 		if (perChannel.length > 0) {
-			resultText += `\n\nПо каналам:\n` +
+			resultText += "\n\nПо каналам:\n" +
 				perChannel.map(c => `• @${c.channel}: ${c.count}`).join("\n")
 		}
 
@@ -322,7 +322,7 @@ export class ActionHandler extends BaseHandler {
 		const newAvg = (keepChannels.reduce((sum, s) => sum + s.score, 0) / Math.max(1, keepChannels.length)).toFixed(1)
 		const timeSaved = muteChannels.length * 3 // ~3 мин на канал в день
 
-		const previewText = `⚡ <b>Оптимизация ленты</b>\n\n` +
+		const previewText = "⚡ <b>Оптимизация ленты</b>\n\n" +
 			`<b>Сейчас:</b> ${scores.length} каналов, средний score: ${currentAvg}\n` +
 			`<b>После:</b> ${keepChannels.length} каналов, средний score: ${newAvg}\n\n` +
 			`<b>Удалить (${muteChannels.length}):</b>\n` +

@@ -11,7 +11,9 @@
     "start": "node src/index.js",
     "auth": "node src/auth.js",
     "dev": "nodemon src/index.js",
-    "deploy": "./deploy-remote.sh"
+    "deploy": "./deploy-remote.sh",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix"
   },
   "dependencies": {
     "better-sqlite3": "^11.6.0",
@@ -22,6 +24,9 @@
     "uuid": "^10.0.0"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.0.2",
+    "globals": "^17.3.0",
     "nodemon": "^3.1.9"
   }
 }

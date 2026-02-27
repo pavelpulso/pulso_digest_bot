@@ -18,7 +18,7 @@ import {
 	isBotOpen,
 	getPostsForCalendarDay
 } from "../db.js"
-import { formatChannelList, DIGEST_PAGE_SIZE } from "../utils.js"
+import { DIGEST_PAGE_SIZE } from "../utils.js"
 import { collectChannelPosts } from "../gramjs.js"
 
 export class CommandHandler extends BaseHandler {
@@ -74,7 +74,7 @@ export class CommandHandler extends BaseHandler {
 				untilTs: nowTs,
 				onProgress: async ({ channel, index, total, collected }) => {
 					const pct = Math.round(15 + (index / total) * 50)
-					const progressText = `⏳ <b>Выкачиваю посты...</b>\n\n` +
+					const progressText = "⏳ <b>Выкачиваю посты...</b>\n\n" +
 						`${pct}% (${index}/${total} каналов)\n` +
 						`📥 Собрано: ${collected} постов\n` +
 						`📌 Сейчас: @${channel}`
@@ -126,7 +126,7 @@ export class CommandHandler extends BaseHandler {
 		if (posts.length === 0) {
 			return ctx.reply(
 				`❓ Нет данных по каналу <b>@${UIFormatter.escapeHtml(channelName)}</b>.\n\n` +
-				`Убедись что канал добавлен (/channels) и посты собраны (/fetch или автосбор утром).`,
+				"Убедись что канал добавлен (/channels) и посты собраны (/fetch или автосбор утром).",
 				{ parse_mode: "HTML" }
 			)
 		}
@@ -201,7 +201,7 @@ export class CommandHandler extends BaseHandler {
 
 		const user = getOrCreateUser(userId)
 		try {
-			let scores = await this.mgr.ai.auditAllChannels(channelsWithData, user.profile || "")
+			const scores = await this.mgr.ai.auditAllChannels(channelsWithData, user.profile || "")
 
 			const scored = new Set(scores.map((s) => s.channel))
 			for (const ch of channelsWithData.map((c) => c.channel)) {
@@ -330,7 +330,7 @@ export class CommandHandler extends BaseHandler {
 	async handleSettings(ctx) {
 		const userId = ctx.from?.id
 		const user = getOrCreateUser(userId)
-		const text = `⚙️ <b>Настройки:</b>\n\n` +
+		const text = "⚙️ <b>Настройки:</b>\n\n" +
 			`<b>Интересы:</b> ${user.profile || "Не установлены"}\n` +
 			`<b>Размер дайджеста:</b> ${user.digest_max_items || 7}\n` +
 			`<b>Формат:</b> ${user.digest_format || "full"}\n` +
@@ -383,7 +383,7 @@ export class CommandHandler extends BaseHandler {
 		})
 
 		const elapsed = Math.round((Date.now() - startTime) / 1000)
-		let resultText = `✅ Сбор завершён\n\n` +
+		let resultText = "✅ Сбор завершён\n\n" +
 			`📥 Собрано: ${collected} постов\n` +
 			`⏱ Всего: ${elapsed}с`
 		if (errors.length > 0) {
@@ -392,7 +392,7 @@ export class CommandHandler extends BaseHandler {
 			if (errors.length > 5) resultText += `\n... и ещё ${errors.length - 5}`
 		}
 		if (perChannel.length > 0) {
-			resultText += `\n\nПо каналам:\n` +
+			resultText += "\n\nПо каналам:\n" +
 				perChannel.map(c => `• @${c.channel}: ${c.count}`).join("\n")
 		}
 

@@ -220,12 +220,12 @@ export class BotService {
 		const maxItems = user.digest_max_items || 7
 		const format = user.digest_format || "full"
 		const keywords = user.minus_keywords || "None"
-		return `👤 <b>Your Profile</b>\n\n` +
+		return "👤 <b>Your Profile</b>\n\n" +
 			`<b>Interests:</b>\n${UIFormatter.escapeHtml(profile)}\n\n` +
 			`<b>Digest Size:</b> ${maxItems} items\n` +
 			`<b>Format:</b> ${format}\n` +
 			`<b>Minus keywords:</b> ${UIFormatter.escapeHtml(keywords)}\n\n` +
-			`Use buttons to edit settings.`
+			"Use buttons to edit settings."
 	}
 	async sendSummaryBlocks(ctx, dateStr, label, offset = 0, options = {}) {
 		const userId = ctx.from?.id

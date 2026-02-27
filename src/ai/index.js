@@ -48,7 +48,7 @@ class AIRouter {
     if (!this.initialized) await this.init()
 
     const providersToTry = this.#getProvidersOrder()
-    let lastError = null
+    const lastError = null
     const tried = new Set()
 
     for (const provider of providersToTry) {
