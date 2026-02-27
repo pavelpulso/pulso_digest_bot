@@ -62,27 +62,20 @@ export function buildAnalyzeChannelPrompt(channel, userProfile, list) {
  * Промпт для аудита всех каналов.
  */
 export function buildAuditAllChannelsPrompt(userProfile, list) {
-  return `Оцени каналы для читателя с метриками ROI.
+  // Упрощаем данные для каждого канала — только текст постов и views
+  const simplified = list.map(ch => ({
+    channel: ch.channel,
+    postCount: ch.postCount,
+    posts: ch.posts.map(p => ({ text: p.text.slice(0, 200), views: p.views }))
+  }))
 
-Профиль: ${userProfile || "не указан"}
-Каналы: ${JSON.stringify(list, null, 2)}
+  return `Оцени каналы для читателя. Профиль: ${userProfile || "не указан"}
 
-Для каждого канала оцени:
-- score (0-10): общая ценность для читателя
-- avg_post_quality (0-10): среднее качество одного поста
-- signal_noise (0-1): доля полезного контента (1 = весь контент полезен)
-- avg_views: среднее количество просмотров на пост
-- value_per_post: score / количество постов (плотность ценности)
-- verdict (keep/mute/unsubscribe)
-- summary (12 слов)
+Каналы: ${JSON.stringify(simplified)}
 
-Верни ТОЛЬКО JSON без пояснений. Формат:
-{
-  "channels": [
-    {"channel": "username", "score": 8.5, "avg_post_quality": 7.0, "signal_noise": 0.8, "avg_views": 15000, "value_per_post": 0.57, "verdict": "keep", "summary": "краткое описание"}
-  ]
-}
-Сортируй по value_per_post (убывание).`
+Для каждого: score (0-10), signal_noise (0-1), avg_views, verdict (keep/mute/unsubscribe), summary (10 слов).
+
+Верни JSON: {"channels":[{"channel":"name","score":8,"signal_noise":0.7,"avg_views":1000,"verdict":"keep","summary":"текст"}]}`
 }
 
 /**

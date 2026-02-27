@@ -31,7 +31,7 @@ export const LIMITS = {
   /** Макс. количество каналов для анализа */
   MAX_CHANNELS_ANALYZE: 100,
   /** Макс. количество постов для анализа канала */
-  MAX_POSTS_ANALYZE: 15
+  MAX_POSTS_ANALYZE: 8
 }
 
 /**
