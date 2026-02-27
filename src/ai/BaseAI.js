@@ -29,11 +29,26 @@ export class BaseAI {
    */
   #parseJSONArray(raw) {
     const cleaned = raw.replace(/```\w*\n?/g, "").trim()
+    
+    // Найти конец JSON массива (последняя ])
+    let bracketCount = 0
+    let endIndex = -1
+    for (let i = cleaned.length - 1; i >= 0; i--) {
+      if (cleaned[i] === ']') bracketCount++
+      if (cleaned[i] === '[' && bracketCount > 0) {
+        endIndex = i + 1
+        break
+      }
+    }
+    
+    const jsonStr = endIndex > 0 ? cleaned.slice(0, endIndex) : cleaned
     let parsed
     try {
-      parsed = JSON.parse(cleaned)
+      parsed = JSON.parse(jsonStr)
     } catch (e) {
-      throw new Error(`${this.name}: invalid JSON`)
+      console.error("[#parseJSONArray] Failed to parse JSON:")
+      console.error("JSON string (first 500 chars):", jsonStr.slice(0, 500))
+      throw new Error(`${this.name}: invalid JSON - ${e.message}`)
     }
     if (Array.isArray(parsed)) return parsed
     for (const key of JSON_ARRAY_KEYS) {
@@ -49,13 +64,27 @@ export class BaseAI {
    * @protected
    */
   #parseJSONObject(raw) {
-    const cleaned = raw.replace(/```\w*\n?|^\[|\]$/g, "").trim()
+    const cleaned = raw.replace(/```\w*\n?/g, "").trim()
+    
+    // Найти конец JSON объекта (последняя закрывающая })
+    // Это нужно т.к. AI может добавлять текст после JSON
+    let braceCount = 0
+    let endIndex = -1
+    for (let i = cleaned.length - 1; i >= 0; i--) {
+      if (cleaned[i] === '}') braceCount++
+      if (cleaned[i] === '{' && braceCount > 0) {
+        endIndex = i + 1
+        break
+      }
+    }
+    
+    const jsonStr = endIndex > 0 ? cleaned.slice(0, endIndex) : cleaned
     try {
-      return JSON.parse(cleaned)
+      return JSON.parse(jsonStr)
     } catch (e) {
       console.error("[#parseJSONObject] Failed to parse JSON:")
       console.error("Raw response (first 500 chars):", raw.slice(0, 500))
-      console.error("Cleaned (first 500 chars):", cleaned.slice(0, 500))
+      console.error("JSON string (first 500 chars):", jsonStr.slice(0, 500))
       throw new Error(`${this.name}: invalid JSON - ${e.message}`)
     }
   }
