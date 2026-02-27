@@ -225,11 +225,8 @@ export class BaseAI {
     let arr = []
     try {
       const prompt = buildAuditAllChannelsPrompt(userProfile, list)
-      console.log("[auditAllChannels] prompt length:", prompt.length, "channels:", list.length)
       const raw = await this._callAPI(prompt, { type: "json_object", maxTokens: 2048 })
-      console.log("[auditAllChannels] raw response:", raw.slice(0, 200))
       const parsed = this.#parseJSONObject(raw)
-      console.log("[auditAllChannels] parsed:", JSON.stringify(parsed).slice(0, 200))
       arr = Array.isArray(parsed) ? parsed : (parsed.channels || [])
     } catch (e) {
       console.warn("[auditAllChannels] AI failed, using fallback:", e.message)

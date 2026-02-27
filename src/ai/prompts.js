@@ -66,16 +66,16 @@ export function buildAuditAllChannelsPrompt(userProfile, list) {
   const simplified = list.map(ch => ({
     channel: ch.channel,
     postCount: ch.postCount,
-    posts: ch.posts.map(p => ({ text: p.text.slice(0, 200), views: p.views }))
+    posts: ch.posts.map(p => ({ text: p.text.slice(0, 300), views: p.views }))
   }))
 
   return `Оцени каналы для читателя. Профиль: ${userProfile || "не указан"}
 
 Каналы: ${JSON.stringify(simplified)}
 
-Для каждого: score (0-10), signal_noise (0-1), avg_views, verdict (keep/mute/unsubscribe), summary (10 слов).
+Для каждого: score (0-10), signal_noise (0-1), avg_views, value_per_post (score/postCount), verdict (keep/mute/unsubscribe), summary (10 слов).
 
-Верни JSON: {"channels":[{"channel":"name","score":8,"signal_noise":0.7,"avg_views":1000,"verdict":"keep","summary":"текст"}]}`
+Верни JSON: {"channels":[{"channel":"name","score":8,"signal_noise":0.7,"avg_views":1000,"value_per_post":0.8,"verdict":"keep","summary":"текст"}]}`
 }
 
 /**

@@ -209,21 +209,24 @@ export class CommandHandler extends BaseHandler {
 			}
 			scores.sort((a, b) => b.score - a.score)
 
+			// Ограничиваем вывод топ-15 каналов
+			const topScores = scores.slice(0, 15)
 			const weakChannels = scores.filter((s) => s.score < 4)
-			const lines = scores.map((s) => {
+			
+			const lines = topScores.map((s) => {
 				const { emoji } = UIFormatter.verdictLabel(s.verdict)
 				const postCount = channelsData.find((cd) => cd.channel === s.channel)?.postCount || 0
 				const postsLabel = postCount === 1 ? "пост" : postCount < 5 ? "поста" : "постов"
-				const vpp = s.valuePerPost.toFixed(2)
+				const vpp = s.valuePerPost && isFinite(s.valuePerPost) ? s.valuePerPost.toFixed(2) : "—"
 				const sn = Math.round(s.signalNoise * 100)
-				const avgViews = s.avgViews >= 1000 ? `${(s.avgViews / 1000).toFixed(1)}K` : Math.round(s.avgViews)
+				const avgViews = s.avgViews && isFinite(s.avgViews) ? (s.avgViews >= 1000 ? `${(s.avgViews / 1000).toFixed(1)}K` : Math.round(s.avgViews)) : "—"
 				return `${emoji} @${s.channel} — ${s.score.toFixed(1)} | VPP: ${vpp} | S/N: ${sn}% | 👁 ${avgViews} (${postCount} ${postsLabel}) — ${s.summary}`
 			})
 
 			const noDataNote = noDataChannels.length > 0 ? `\n\n⚠️ Нет постов по: ${noDataChannels.map((c) => "@" + c).join(", ")}` : ""
 			const weakNote = weakChannels.length > 0 ? `\n\n🔴 Слабые каналы (score < 4): ${weakChannels.map((s) => "@" + s.channel).join(", ")}` : ""
 
-			const header = `📋 Аудит каналов (${channels.length} каналов)\n\n`
+			const header = `📋 Аудит каналов: топ-15 из ${channels.length}\n\n`
 			const body = lines.join("\n") + noDataNote + weakNote
 
 			const hideButtons = weakChannels.slice(0, 4).map((s) => ({
