@@ -66,7 +66,10 @@ export class BaseAI {
   #parseJSONObject(raw) {
     const cleaned = raw.replace(/```\w*\n?/g, "").trim()
     
-    // Найти конец JSON объекта (последняя закрывающая })
+    console.log("[#parseJSONObject] Raw response preview:", raw.slice(0, 100))
+    console.log("[#parseJSONObject] Cleaned preview:", cleaned.slice(0, 100))
+    
+    // Найти конец JSON объекта (последняя })
     // Это нужно т.к. AI может добавлять текст после JSON
     let braceCount = 0
     let endIndex = -1
@@ -79,12 +82,13 @@ export class BaseAI {
     }
     
     const jsonStr = endIndex > 0 ? cleaned.slice(0, endIndex) : cleaned
+    console.log("[#parseJSONObject] JSON string preview:", jsonStr.slice(0, 200))
+    
     try {
       return JSON.parse(jsonStr)
     } catch (e) {
       console.error("[#parseJSONObject] Failed to parse JSON:")
-      console.error("Raw response (first 500 chars):", raw.slice(0, 500))
-      console.error("JSON string (first 500 chars):", jsonStr.slice(0, 500))
+      console.error("Full JSON string:", jsonStr)
       throw new Error(`${this.name}: invalid JSON - ${e.message}`)
     }
   }
