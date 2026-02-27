@@ -164,52 +164,68 @@ export class BaseAI {
     }
   }
 
-  async auditAllChannels(channelsData, userProfile = "") {
+  async auditAllChannels(channelsData, userProfile = "", options = {}) {
     if (channelsData.length === 0) return []
 
-    const list = channelsData.map((cd) => ({
-      channel: cd.channel,
-      postCount: cd.posts.length,
-      posts: cd.posts.slice(0, LIMITS.MAX_POSTS_ANALYZE).map((p) => ({
-        text: (p.text || "").slice(0, LIMITS.AUDIT_TEXT),
-        views: p.views || 0
-      }))
-    }))
+    const { onProgress } = options
+    const BATCH_SIZE = 15
+    const batches = []
+    
+    // Разбиваем на батчи по 15 каналов
+    for (let i = 0; i < channelsData.length; i += BATCH_SIZE) {
+      batches.push(channelsData.slice(i, i + BATCH_SIZE))
+    }
 
-    let arr = []
-    try {
-      const prompt = buildAuditAllChannelsPrompt(userProfile, list)
-      console.log("[auditAllChannels] prompt length:", prompt.length, "channels:", list.length)
-      const raw = await this._callAPI(prompt, { type: "json_object", maxTokens: 2048 })
-      console.log("[auditAllChannels] raw response (first 300 chars):", raw.slice(0, 300))
-      const parsed = this.#parseJSONObject(raw)
-      console.log("[auditAllChannels] parsed channels count:", Array.isArray(parsed) ? parsed.length : (parsed.channels?.length || 0))
-      arr = Array.isArray(parsed) ? parsed : (parsed.channels || [])
-    } catch (e) {
-      console.warn("[auditAllChannels] AI failed, using fallback:", e.message)
-      // Fallback: вернуть каналы без AI оценок
-      return channelsData.map((cd) => {
-        const postCount = cd.posts.length || 1
-        const totalViews = cd.posts.reduce((sum, p) => sum + (p.views || 0), 0) || 0
-        return {
-          channel: cd.channel,
-          score: 0,
-          avgViews: Math.round(totalViews / postCount),
-          verdict: "mute",
-          summary: "Нет данных (AI недоступен)",
-          reason: "Не удалось получить оценку AI",
-          problemType: "none",
-          scoreBreakdown: { quality: 0, relevance: 0, spamFree: 1 },
-          recommendation: "remove",
-          keepIfCondition: ""
+    const allResults = []
+    let completedBatches = 0
+
+    // Обрабатываем каждый батч
+    for (const batch of batches) {
+      const list = batch.map((cd) => ({
+        channel: cd.channel,
+        postCount: cd.posts.length,
+        posts: cd.posts.slice(0, LIMITS.MAX_POSTS_ANALYZE).map((p) => ({
+          text: (p.text || "").slice(0, LIMITS.AUDIT_TEXT),
+          views: p.views || 0
+        }))
+      }))
+
+      try {
+        const prompt = buildAuditAllChannelsPrompt(userProfile, list)
+        const raw = await this._callAPI(prompt, { type: "json_object", maxTokens: 2048 })
+        const parsed = this.#parseJSONObject(raw)
+        const batchResults = Array.isArray(parsed) ? parsed : (parsed.channels || [])
+        allResults.push(...batchResults)
+      } catch (e) {
+        console.warn(`[auditAllChannels] Batch failed for ${batch.length} channels:`, e.message)
+        // Fallback для этого батча
+        for (const cd of batch) {
+          const postCount = cd.posts.length || 1
+          const totalViews = cd.posts.reduce((sum, p) => sum + (p.views || 0), 0) || 0
+          allResults.push({
+            channel: cd.channel,
+            score: 0,
+            avg_views: Math.round(totalViews / postCount),
+            verdict: "mute",
+            summary: "Нет данных (AI недоступен)",
+            reason: "Не удалось получить оценку AI",
+            problem_type: "none"
+          })
         }
-      }).sort((a, b) => b.avgViews - a.avgViews)
+      }
+
+      completedBatches++
+      if (typeof onProgress === "function") {
+        const analyzedChannels = Math.min(completedBatches * BATCH_SIZE, channelsData.length)
+        const pct = Math.round((analyzedChannels / channelsData.length) * 100)
+        onProgress({ analyzedChannels, totalChannels: channelsData.length, percent: pct, completedBatches, totalBatches: batches.length })
+      }
     }
 
     const known = new Set(channelsData.map((cd) => cd.channel.toLowerCase()))
     const channelDataMap = new Map(channelsData.map((cd) => [cd.channel.toLowerCase(), cd]))
 
-    return arr
+    return allResults
       .filter((item) => known.has(String(item.channel || "").toLowerCase()))
       .map((item) => {
         const channelKey = String(item.channel).toLowerCase()

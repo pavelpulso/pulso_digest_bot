@@ -156,14 +156,14 @@ export class ActionHandler extends BaseHandler {
 	async handleChannels(ctx) {
 		await this.safeAnswerCbQuery(ctx, "⏳ Загружаю список каналов…")
 		const channels = getChannels()
-		await ctx.editMessageText(formatChannelList(channels), KeyboardProvider.channels())
+		await ctx.editMessageText(formatChannelList(channels), { ...KeyboardProvider.channels(), parse_mode: "HTML" })
 	}
 
 	async handleProfile(ctx) {
 		await this.safeAnswerCbQuery(ctx, "⏳ Загружаю профиль…")
 		const userId = ctx.from?.id
 		const user = getOrCreateUser(userId)
-		await ctx.editMessageText(this.mgr.service.renderProfileText(userId, user), KeyboardProvider.profile())
+		await ctx.editMessageText(this.mgr.service.renderProfileText(userId, user), { ...KeyboardProvider.profile(), parse_mode: "HTML" })
 	}
 
 	async handleAuditHide(ctx) {
@@ -207,7 +207,7 @@ export class ActionHandler extends BaseHandler {
 		}
 		const days = parseInt(ctx.match[1], 10)
 		await this.safeAnswerCbQuery(ctx)
-		await ctx.editMessageText(`🔄 Сбор постов за ${days} д...`)
+		await ctx.editMessageText(`<b>🔄 Сбор постов за ${days} д...</b>`, { parse_mode: "HTML" })
 
 		const nowTs = Math.floor(Date.now() / 1000)
 		const sinceTs = nowTs - (days * 24 * 60 * 60)
@@ -263,7 +263,7 @@ export class ActionHandler extends BaseHandler {
 		this.mgr.cache.deleteAuditWeak(userId)
 
 		try {
-			await ctx.editMessageText(`✅ Удалено ${removed} слабых каналов:\n${weakChannels.slice(0, 10).map(c => `@${c}`).join("\n")}${weakChannels.length > 10 ? `\n... и ещё ${weakChannels.length - 10}` : ""}`)
+			await ctx.editMessageText(`<b>✅ Удалено ${removed} слабых каналов</b>\n${weakChannels.slice(0, 10).map(c => `@${c}`).join("\n")}${weakChannels.length > 10 ? `\n... и ещё ${weakChannels.length - 10}` : ""}`, { parse_mode: "HTML" })
 		} catch (_) { }
 	}
 
@@ -279,7 +279,7 @@ export class ActionHandler extends BaseHandler {
 		this.mgr.cache.deleteAuditScores(userId)
 
 		try {
-			await ctx.editMessageText(removed ? `✅ Удалён @${channel}` : `❌ Не удалось удалить @${channel}`)
+			await ctx.editMessageText(removed ? `<b>✅ Удалён @${channel}</b>` : `<b>❌ Не удалось удалить @${channel}</b>`, { parse_mode: "HTML" })
 		} catch (_) { }
 	}
 
@@ -388,16 +388,16 @@ export class ActionHandler extends BaseHandler {
 		const newAvg = (keepChannels.reduce((sum, s) => sum + s.score, 0) / Math.max(1, keepChannels.length)).toFixed(1)
 
 		try {
-			await ctx.editMessageText(`✅ Оптимизация завершена!\n\nУдалено: ${removed} каналов\nОсталось: ${keepChannels.length} каналов\nСредний score: ${newAvg}`)
+			await ctx.editMessageText(`<b>✅ Оптимизация завершена!</b>\n\nУдалено: ${removed} каналов\nОсталось: ${keepChannels.length} каналов\nСредний score: ${newAvg}`, { parse_mode: "HTML" })
 		} catch (_) {
-			await ctx.reply(`✅ Оптимизация завершена!\n\nУдалено: ${removed} каналов\nОсталось: ${keepChannels.length} каналов\nСредний score: ${newAvg}`)
+			await ctx.reply(`<b>✅ Оптимизация завершена!</b>\n\nУдалено: ${removed} каналов\nОсталось: ${keepChannels.length} каналов\nСредний score: ${newAvg}`, { parse_mode: "HTML" })
 		}
 	}
 
 	async handleOptimizeCancel(ctx) {
 		await this.safeAnswerCbQuery(ctx, "❌ Отменено")
 		try {
-			await ctx.editMessageText("❌ Оптимизация отменена")
+			await ctx.editMessageText("<b>❌ Оптимизация отменена</b>", { parse_mode: "HTML" })
 		} catch (_) { }
 	}
 }

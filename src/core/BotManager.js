@@ -55,7 +55,7 @@ export class BotManager {
 
 		this.bot.catch((err, ctx) => {
 			console.error("[BotManager] Unhandled error:", err)
-			ctx.reply("Произошла ошибка. Попробуйте позже.").catch(() => { })
+			ctx.reply("<b>❌ Произошла ошибка</b>. Попробуйте позже.", { parse_mode: "HTML" }).catch(() => { })
 		})
 	}
 
@@ -134,9 +134,9 @@ export class BotManager {
 				const username = chat.username || String(chat.id)
 				const res = addChannel(username, userId)
 				if (res.ok) {
-					await ctx.reply(`✅ Канал @${res.username} добавлен!`)
+					await ctx.reply(`<b>✅ Канал @${res.username} добавлен!</b>`, { parse_mode: "HTML" })
 				} else if (res.exists) {
-					await ctx.reply(`ℹ️ Канал @${res.username} уже в списке.`)
+					await ctx.reply(`<b>ℹ️ Канал @${res.username}</b> уже в списке.`, { parse_mode: "HTML" })
 				}
 				return next()
 			}

@@ -180,7 +180,8 @@ export class CommandHandler extends BaseHandler {
 		if (channels.length === 0) return ctx.reply("Нет каналов.")
 
 		const status = new StatusMessage(ctx)
-		await status.start(`⏳ Анализирую ${channels.length} каналов...`)
+		const batchCount = Math.ceil(channelsWithData.length / 15)
+		await status.start(`<b>📊 Аудит каналов</b>\n\n⏳ Анализирую ${channelsWithData.length} каналов (${batchCount} батчей по 15)...`)
 
 		const channelsData = channels.map((ch) => {
 			const posts = getRecentPostsByChannel(ch, 15)
@@ -201,7 +202,15 @@ export class CommandHandler extends BaseHandler {
 
 		const user = getOrCreateUser(userId)
 		try {
-			const scores = await this.mgr.ai.auditAllChannels(channelsWithData, user.profile || "")
+			const scores = await this.mgr.ai.auditAllChannels(channelsWithData, user.profile || "", {
+				onProgress: ({ analyzedChannels, totalChannels, percent, completedBatches, totalBatches }) => {
+					status.percent(
+						`⏳ Анализирую каналы...`,
+						percent,
+						`${analyzedChannels}/${totalChannels} каналов — ${completedBatches}/${totalBatches} батчей`
+					)
+				}
+			})
 
 			const scored = new Set(scores.map((s) => s.channel))
 			for (const ch of channelsWithData.map((c) => c.channel)) {
@@ -317,7 +326,7 @@ export class CommandHandler extends BaseHandler {
 			this.mgr.cache.setAuditScores(userId, scores) // Для полного отчёта
 			await status.replace(safeText, { parse_mode: "HTML", disable_web_page_preview: true, ...keyboard })
 		} catch (e) {
-			await status.replace("Ошибка анализа: " + this.formatErrorForChat(e))
+			await status.replace(`<b>❌ Ошибка анализа</b>\n\n${this.formatErrorForChat(e)}`, { parse_mode: "HTML" })
 		}
 	}
 	async handleSummary(ctx) {

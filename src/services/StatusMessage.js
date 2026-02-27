@@ -70,12 +70,14 @@ export class StatusMessage {
 	 * Обновить прогресс в процентах
 	 * @param {string} text — базовый текст
 	 * @param {number} percent — текущий прогресс (0-100)
+	 * @param {string} [detail] — дополнительная информация (например "45/100 каналов — 3/7 батчей")
 	 * @returns {Promise<void>}
 	 */
-	async percent(text, percent) {
+	async percent(text, percent, detail = "") {
 		this.currentPercent = percent
 		const safeText = UIFormatter.escapeHtml(text)
-		const fullText = `${safeText} <b>${percent}%</b>`
+		const safeDetail = detail ? `\n<i>${UIFormatter.escapeHtml(detail)}</i>` : ""
+		const fullText = `${safeText}\n<b>${percent}%</b>${safeDetail}`
 		await this.update(fullText)
 	}
 

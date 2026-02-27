@@ -167,7 +167,7 @@ export class BotService {
 
 		// Заменяем статусное сообщение на заголовок дайджеста (100%)
 		if (status) {
-			await status.replace(header, { reply_markup: { inline_keyboard: [row] }, disable_web_page_preview: true })
+			await status.replace(header, { reply_markup: { inline_keyboard: [row] }, disable_web_page_preview: true, parse_mode: "HTML" })
 		} else {
 			await ctx.telegram.sendMessage(ctx.chat.id, header, {
 				parse_mode: "HTML",
@@ -245,7 +245,7 @@ export class BotService {
 
 		posts = this.filterPostsForUser(posts.filter(p => !isAdPost(p)), userId)
 
-		if (posts.length === 0) return ctx.telegram.sendMessage(chatId, "No posts for the selected day.")
+		if (posts.length === 0) return ctx.telegram.sendMessage(chatId, "<b>Нет постов за выбранный день</b>", { parse_mode: "HTML" })
 
 		// For summary we need ensureRankingsForUserAndPosts - I should check if it's available or move it
 		// For now assume it will be in mgr.service or similar
@@ -300,7 +300,7 @@ export class BotService {
 
 				const teaserText = payload.teaser
 					? `☀️ <b>Главное за вчера:</b> ${UIFormatter.escapeHtml(payload.teaser)}\n\n<i>Открой дайджест — ниже полный разбор.</i>`
-					: "☀️ Дайджест за вчера готов. Открой ниже."
+					: "☀️ <b>Дайджест за вчера готов</b>. Открой ниже."
 
 				await botInstance.telegram.sendMessage(u.user_id, teaserText, {
 					parse_mode: "HTML",
