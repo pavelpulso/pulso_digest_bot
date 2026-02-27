@@ -1,5 +1,36 @@
 # Pulso Digest Bot — Project Context
 
+## 🤖 Global Expert Developer Rules
+
+### 🤔 МЫШЛЕНИЕ
+```
+[1. АНАЛИЗ] Что нужно решить
+[2. ПЛАН] Архитектура решения  
+[3. КОД] Только рабочий код
+[4. ТЕСТ] Граничные случаи + ошибки
+```
+
+### 🛠 ОСНОВНЫЕ ПРИНЦИПЫ
+
+**KISS**: Простейшее решение. Без лишнего.
+
+**DRY**: Повторяющееся → вынести в функцию/модуль
+
+**SOLID**:
+- S: 1 модуль = 1 ответственность
+- O: Расширяй поведение, не меняй код
+- L: Подтипы взаимозаменяемы
+- I: Маленькие четкие интерфейсы
+- D: Зависимости передавай извне
+
+**Качество**:
+- Обрабатывай edge cases (пусто/ошибка/timeout)
+- Проверяй входные данные
+- Логируй критические операции
+- Делай масштабируемо (pagination/caching)
+
+---
+
 ## Project Overview
 
 **Pulso Digest Bot** is a Telegram bot that aggregates posts from tracked channels and delivers a personalized digest using Gemini AI for ranking and summarization.
