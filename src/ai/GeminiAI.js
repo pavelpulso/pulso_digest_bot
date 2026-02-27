@@ -29,7 +29,8 @@ export class GeminiAI extends BaseAI {
       stream: false
     }
     if (options.maxTokens) body.max_tokens = options.maxTokens
-    if (options.responseFormat) body.response_format = options.responseFormat
+    // response_format может не поддерживаться некоторыми прокси для Gemini
+    // Пропускаем его — Gemini и так возвращает JSON при соответствующем промпте
 
     return this.#chatWithRetry(url, GEMINI_API_KEY, body)
   }
