@@ -1,122 +1,228 @@
 # Pulso Digest Bot
 
-Telegram bot that aggregates posts from channels and delivers a personalized digest (Node.js, GramJS, Gemini API, SQLite).
+Telegram bot that aggregates posts from tracked channels and delivers personalized digests using AI for ranking and summarization.
 
 ## Stack
 
-- Node.js 20+
-- Telegraf, GramJS (telegram), better-sqlite3, node-cron
-- Gemini API via an OpenAI-compatible proxy (xray)
-- **SQLite** database (file `data/db.sqlite`)
+- **Runtime:** Node.js 20+ (ES Modules)
+- **Telegram Bot:** Telegraf
+- **Telegram Client:** GramJS (`telegram` package) for MTProto channel reading
+- **Database:** SQLite via `better-sqlite3` (file: `data/db.sqlite`)
+- **AI:** Multi-provider (Gemini, Groq, OpenRouter) with auto-fallback
+- **Scheduling:** `node-cron`
+- **Process Manager:** PM2
 
-## Setup and deploy
+## Quick Start
 
 ```bash
 npm install
 cp .env.example .env
-# Fill in .env (BOT_TOKEN, TG_API_ID, TG_API_HASH, GEMINI_*, ADMIN_ID, etc.)
+# Edit .env with your values (see Environment Variables below)
 
-# First run — obtain GramJS session
+# First run — obtain GramJS session (one-time)
 node src/auth.js
 
-# Run with PM2
+# Run with PM2 (production)
 pm2 start ecosystem.config.cjs
 pm2 save
 pm2 startup
+```
+
+## Development
+
+```bash
+# Hot reload with nodemon
+npm run dev
+
+# Production mode
+npm start
+
+# Lint code
+npm run lint
+npm run lint:fix
 ```
 
 ## Deploy to VPS
 
 Repository: **https://github.com/pavelpulso/pulso_digest_bot**
 
-### Simple way (no GitHub Actions)
+### One-time Setup
 
-1. **One-time on VPS**  
-   Clone the project and configure the environment:
+```bash
+# Clone and setup
+cd /home/your_user
+git clone https://github.com/pavelpulso/pulso_digest_bot.git
+cd pulso_digest_bot
+cp .env.example .env
+# Edit .env with your values
+node src/auth.js     # Obtain GramJS session
+npm ci
+pm2 start ecosystem.config.cjs
+pm2 save
+pm2 startup
+```
 
-   ```bash
-   cd /home/your_user   # or another directory
-   git clone https://github.com/pavelpulso/pulso_digest_bot.git
-   cd pulso_digest_bot
-   cp .env.example .env
-   # edit .env
-   node src/auth.js     # obtain GramJS session
-   npm ci
-   chmod +x deploy.sh
-   pm2 start ecosystem.config.cjs
-   pm2 save
-   pm2 startup
-   ```
+### Update Deployment
 
-2. **To deploy updates**  
-   Push from your machine: `git push origin main`.
+**Option A — From local machine (recommended):**
+```bash
+cp .deploy.env.example .deploy.env
+# Edit .deploy.env: DEPLOY_SSH=user@your-vps-ip, DEPLOY_PATH=/path/to/pulso_digest_bot
+npm run deploy
+```
 
-   **Option A — from your machine (one command):**  
-   Create `.deploy.env` (copy from `.deploy.env.example`) and set your SSH target and path:
-   ```bash
-   cp .deploy.env.example .deploy.env
-   # Edit .deploy.env: DEPLOY_SSH=user@your-vps-ip, DEPLOY_PATH=/home/user/pulso_digest_bot
-   npm run deploy
-   ```
-   This SSHs to the VPS and runs `./deploy.sh` there (pull + npm ci + pm2 restart). `.deploy.env` is gitignored.
+**Option B — On VPS:**
+```bash
+cd /path/to/pulso_digest_bot
+./deploy.sh
+```
 
-   **Option B — on the VPS:**  
-   SSH in and run:
-   ```bash
-   cd /path/to/pulso_digest_bot
-   ./deploy.sh
-   ```
-   No GitHub secrets or Actions — just SSH.
+## Environment Variables (.env)
 
----
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `BOT_TOKEN` | Telegram bot token from @BotFather | Yes |
+| `TG_API_ID` | API ID from my.telegram.org | Yes |
+| `TG_API_HASH` | API Hash from my.telegram.org | Yes |
+| `AI_PROVIDER` | AI provider: `auto`, `gemini`, `groq`, `openrouter` (default: `auto`) | No |
+| `GEMINI_API_KEY` | Gemini API key (Google AI Studio) | Yes (if using Gemini) |
+| `GEMINI_PROXY_URL` | Proxy URL for Gemini (e.g., `http://127.0.0.1:10808`) | Yes (if using Gemini) |
+| `GEMINI_MODEL` | Gemini model (default: `gemini-2.0-flash`) | No |
+| `GROQ_API_KEY` | Groq API key | Yes (if using Groq) |
+| `GROQ_MODEL` | Groq model (default: `llama-3.3-70b-versatile`) | No |
+| `OPENROUTER_API_KEY` | OpenRouter API key | Yes (if using OpenRouter) |
+| `OPENROUTER_MODEL` | OpenRouter model (e.g., `meta-llama/llama-3.3-70b-instruct:free`) | No |
+| `ADMIN_ID` | Telegram user_id of admin (for /ban, /close, etc.) | Yes |
+| `CHANNELS` | Initial channels, comma-separated, without @ | No |
+| `DB_PATH` | SQLite file path (default: `./data/db.sqlite`) | No |
+| `DEBUG_AI` | Set to `1` or `true` to enable AI debug logging | No |
 
-### Optional: auto-deploy on every push (GitHub Actions)
+**Note:** GramJS session is stored in the database (`settings.gramjs_session`), not in `.env`.
 
-If you want the VPS to update automatically when you push to `main`:
+## Bot Commands
 
-1. One-time VPS setup as above. Remember the project path.
-2. In the repo: **Settings → Secrets and variables → Actions** → add secrets: `VPS_HOST`, `VPS_USER`, `SSH_PRIVATE_KEY`, `DEPLOY_PATH` (see workflow file).
-3. Each `git push origin main` will trigger the deploy workflow.
+### User Commands
 
-## Environment variables (.env)
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome message and help |
+| `/digest` | Get top posts for today |
+| `/profile` | View or set profile (interests) |
+| `/minus_words` | Exclude posts containing specified words |
+| `/summary` | Pick a date or get weekly summary (last 7 days) |
+| `/channels` | List tracked channels and manage settings |
+| `/add @channel` | Add a channel to tracking |
+| `/remove @channel` | Remove a channel from tracking |
+| `/menu` | Show main menu |
+| `/digest_max` | Set max items per digest page (3-20) |
+| `/digest_format` | Set digest format (full/compact) |
 
-| Variable | Description |
-|----------|-------------|
-| BOT_TOKEN | Bot token from @BotFather |
-| TG_API_ID, TG_API_HASH | From my.telegram.org |
-| TG_SESSION | GramJS session string (set after `node src/auth.js`) |
-| CHANNELS | Initial channels, comma-separated, without @ |
-| GEMINI_API_KEY, GEMINI_PROXY_URL, GEMINI_MODEL | Gemini via proxy |
-| ADMIN_ID | Telegram user_id of the admin |
-| DB_PATH | SQLite file path (default: ./data/db.sqlite) |
+### Admin Commands (ADMIN_ID only)
 
-## Bot commands
+| Command | Description |
+|---------|-------------|
+| `/ban` | Ban a user |
+| `/unban` | Unban a user |
+| `/close` | Close bot (stop accepting new users) |
+| `/open` | Open bot |
+| `/stats` | Show statistics |
 
-- `/start` — Welcome and short help
-- `/digest` — Top 10 posts for today
-- `/profile` — View or set your profile (interests)
-- `/minus_words word1, word2` — Exclude posts containing these words from your digest (comma-separated)
-- `/summary` — Pick a date or **Weekly (last 7 days)** for a summary digest
-- `/channels` — List tracked channels; **Channel settings** — hide a channel from digest or mark as important
-- `/add @channel`, `/remove @channel` — Add or remove a channel
+## Product Features
 
-**Morning digest:** every day at **07:00** (Europe/Moscow) the bot sends a **teaser** (main hook) with a button "Open digest", then the first page of the digest. Posts are collected at 06:00.
+### Morning Digest
+- **06:00 MSK:** Posts collected from channels
+- **07:00 MSK:** Teaser sent with "Open digest" button, followed by full digest
+- Posts filtered by relevance score (≥ 0.5), limited by `digest_max_items`
 
-**Feedback:** under each post in the digest you can tap **👍 Релевантно** / **👎 Не релевантно**; the bot uses this to improve future ranking for you.
+### Personalization
+- User profile (interests) influences AI ranking
+- Channel priorities (normal/important)
+- Hidden channels per user
+- Minus-words filter
+- Feedback (like/dislike) improves future rankings
 
-**Channel recommendations:** in **Profile** → **Рекомендация каналов** the bot suggests channels that match your interests (from the current channel list); you can mark them as **Important** in one tap.
+### Digest Formats
+- **Full:** Emoji + summary + action + potential + links
+- **Compact:** Emoji + summary + links only
+- "Why in digest" available via "📌 Подробнее" button
 
-Forwarding a post from a channel to the bot adds that channel to the list.
+### Feedback
+- 👍 Like / 👎 Dislike buttons under each post
+- Feedback stored in `post_feedback` table and used for ranking
 
-Admin (ADMIN_ID): `/ban`, `/unban`, `/close`, `/open`, `/stats`.
+### Channel Recommendations
+- AI recommends channels matching user interests
+- One-tap "Important" marking for recommended channels
 
-## Project structure
+### Auto-Tracking
+- Forwarding a post from a channel to the bot adds that channel to tracking
 
-- `src/index.js` — Entry point, starts bot and cron
-- `src/bot.js` — Telegraf commands and handlers
-- `src/cron.js` — Daily post collection (06:00)
-- `src/gramjs.js` — Reading channels via GramJS
-- `src/gemini.js` — Ranking and summary via Gemini
-- `src/db.js` — SQLite (settings, channels, posts, rankings, users)
-- `src/utils.js` — Formatting, pagination
-- `src/auth.js` — GramJS session setup (run manually)
+## Project Structure
+
+```
+src/
+├── index.js        # Entry point: starts bot and cron
+├── bot.js          # Telegraf commands, handlers, inline keyboards
+├── cron.js         # Daily post collection (06:00) and morning digest (07:00)
+├── gramjs.js       # Channel reading via MTProto (GramJS)
+├── gemini.js       # Post ranking and digest generation via AI
+├── db.js           # SQLite CRUD: users, channels, posts, rankings, feedback
+├── utils.js        # Formatting, pagination, constants
+└── auth.js         # GramJS session setup (run manually once)
+
+data/
+└── db.sqlite       # SQLite database file
+```
+
+## Database Schema
+
+### Tables
+
+- **`settings`** — Global settings (`gramjs_session`, `is_open`)
+- **`channels`** — Tracked channels (username, added_by, added_at)
+- **`posts`** — Collected posts (id, channel, post_id, text, link, views, date)
+- **`rankings`** — Post rankings per user (user_id, post_id, score, reason, date)
+- **`users`** — User profiles (user_id, username, profile, is_banned, digest_max_items, minus_keywords, digest_format)
+- **`user_channel_settings`** — Per-user channel preferences (hidden, priority)
+- **`post_feedback`** — User feedback on posts (user_id, post_id, rating: 1=like, -1=dislike)
+
+### Key Constants (utils.js)
+
+- `DIGEST_PAGE_SIZE = 10`
+- `MIN_DIGEST_SCORE = 0.5` — Minimum score for digest inclusion
+
+## Architecture Flow
+
+1. **Collection (cron 06:00 MSK):** `cron.js` → `gramjs.js` fetches posts from last 24h → saves to `posts` table
+2. **Ranking (on-demand):** `bot.js` → `gemini.js rankPosts()` → stores in `rankings` table
+3. **Digest Generation:** `bot.js` → `gemini.js generateSummaryBlocks()` → sends to user
+4. **Morning Delivery (cron 07:00 MSK):** `sendMorningDigests()` → teaser with button → full digest
+
+## Development Conventions
+
+- **Modules:** ES Modules (`import`/`export`), `"type": "module"` in package.json
+- **Async:** `async`/`await` throughout
+- **Naming:** camelCase for variables/functions, UPPER_CASE for constants
+- **Database:** Synchronous `better-sqlite3` with WAL mode
+- **Formatting:** HTML for Telegram messages (`parse_mode: "HTML"`)
+- **Error Handling:** Console logging + user-friendly messages via `formatErrorForChat()`
+- **Testing:** Manual testing via `npm run dev` (no automated tests)
+- **Code Language:** All string literals and comments in English
+
+## Related Files
+
+| File | Purpose |
+|------|---------|
+| `ecosystem.config.cjs` | PM2 configuration |
+| `deploy.sh` | VPS deployment script (pull + install + restart) |
+| `deploy-remote.sh` | SSH wrapper for remote deployment |
+| `.deploy.env.example` | Template for deployment config (SSH target, path) |
+| `nodemon.json` | Nodemon configuration for development |
+
+## Important Notes
+
+- **GramJS session** is obtained once via `node src/auth.js` and stored in DB
+- **Timezone:** All cron jobs use Europe/Moscow timezone
+- **Post filtering:** Ads (ИНН, erid), hidden channels, minus-words are excluded
+- **Ranking is personalized:** Based on profile, channel priorities, and feedback history
+- **Forwarding:** Forwarding a post from a channel to the bot adds that channel to tracking

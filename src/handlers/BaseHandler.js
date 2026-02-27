@@ -3,34 +3,36 @@ export class BaseHandler {
 		this.mgr = botManager
 	}
 
-	/** Ответ на callback_query без падения при "query is too old". */
+	/** Answer callback_query without errors on "query is too old". */
 	async safeAnswerCbQuery(ctx, text) {
 		try {
 			await ctx.answerCbQuery(text)
-		} catch (_) { }
+		} catch {
+			// Ignore error
+		}
 	}
 
-	/** Короткое описание ошибки для чата. */
+	/** Short error description for chat. */
 	formatErrorForChat(e) {
 		const raw = (e && (e.message || e.reason)) || String(e)
-		
-		// Специальная обработка ошибок Gemini API
+
+		// Special handling for Gemini API errors
 		if (raw.includes("Gemini API")) {
 			if (raw.includes("429")) {
-				return "Сервис перегружен (лимит запросов). Подождите минуту и попробуйте снова."
+				return "Service overloaded (rate limit). Wait a minute and try again."
 			}
 			if (raw.includes("500") || raw.includes("405")) {
-				return "Сервис временно недоступен. Попробуйте позже."
+				return "Service temporarily unavailable. Try later."
 			}
-			return "Ошибка сервиса суммаризации. Попробуйте позже."
+			return "Summarization service error. Try later."
 		}
-		
-		// Обработка ошибок GramJS/Telegram
+
+		// Handle GramJS/Telegram errors
 		if (raw.includes("TIMEOUT") || raw.includes("ECONNRESET")) {
-			return "Проблема соединения с Telegram. Попробуйте позже."
+			return "Telegram connection issue. Try later."
 		}
-		
-		// Общая ошибка
+
+		// Generic error
 		const oneLine = raw.replace(/\s+/g, " ").trim()
 		return oneLine.length > 250 ? oneLine.slice(0, 247) + "…" : oneLine
 	}

@@ -1,9 +1,6 @@
 import Database from "better-sqlite3"
 import { mkdirSync, existsSync } from "fs"
 import { dirname } from "path"
-import { fileURLToPath } from "url"
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const dbPath = process.env.DB_PATH || "./data/db.sqlite"
 
@@ -79,6 +76,17 @@ if (!userCols.includes("minus_keywords")) {
 }
 if (!userCols.includes("digest_format")) {
   db.prepare("ALTER TABLE users ADD COLUMN digest_format TEXT DEFAULT 'full'").run()
+}
+
+// Migration: system_prompt_url, system_prompt_cached, system_prompt_cached_at
+if (!userCols.includes("system_prompt_url")) {
+  db.prepare("ALTER TABLE users ADD COLUMN system_prompt_url TEXT").run()
+}
+if (!userCols.includes("system_prompt_cached")) {
+  db.prepare("ALTER TABLE users ADD COLUMN system_prompt_cached TEXT").run()
+}
+if (!userCols.includes("system_prompt_cached_at")) {
+  db.prepare("ALTER TABLE users ADD COLUMN system_prompt_cached_at TEXT").run()
 }
 
 // user_channel_settings: per-user hide-in-digest and priority (1=normal, 2=important)
@@ -184,7 +192,7 @@ export function getPostsLast24h() {
   ).all(since)
 }
 
-/** Посты за конкретный календарный день (date в формате YYYY-MM-DD). */
+/** Posts for a specific calendar day (date in YYYY-MM-DD format). */
 export function getPostsForCalendarDay(dateStr) {
   const since = `${dateStr}T00:00:00.000Z`
   const until = new Date(new Date(since).getTime() + 24 * 60 * 60 * 1000).toISOString()
@@ -241,27 +249,54 @@ export function insertRankings(userId, date, items) {
 
 export function getRankedPostIds(userId, date, limit = 10, offset = 0) {
   const rows = db.prepare(
-    "SELECT post_id FROM rankings WHERE user_id = ? AND date = ? ORDER BY score DESC LIMIT ? OFFSET ?"
-  ).all(userId, date, limit, offset)
+    `SELECT r.post_id FROM rankings r
+     JOIN posts p ON r.post_id = p.id
+     WHERE r.user_id = ? AND r.date = ?
+       AND NOT EXISTS (
+         SELECT 1 FROM user_channel_settings ucs
+         WHERE ucs.user_id = ? AND ucs.channel = p.channel AND ucs.hidden = 1
+       )
+     ORDER BY r.score DESC LIMIT ? OFFSET ?`
+  ).all(userId, date, userId, limit, offset)
   return rows.map((r) => r.post_id)
 }
 
-/** Посты с score >= minScore для дайджеста (только качественные). */
+/** Posts with score >= minScore for digest (high quality only, excludes hidden channels). */
 export function getRankedPostIdsAboveScore(userId, date, minScore, limit = 10, offset = 0) {
   const rows = db.prepare(
-    "SELECT post_id FROM rankings WHERE user_id = ? AND date = ? AND score >= ? ORDER BY score DESC LIMIT ? OFFSET ?"
-  ).all(userId, date, minScore, limit, offset)
+    `SELECT r.post_id FROM rankings r
+     JOIN posts p ON r.post_id = p.id
+     WHERE r.user_id = ? AND r.date = ? AND r.score >= ?
+       AND NOT EXISTS (
+         SELECT 1 FROM user_channel_settings ucs
+         WHERE ucs.user_id = ? AND ucs.channel = p.channel AND ucs.hidden = 1
+       )
+     ORDER BY r.score DESC LIMIT ? OFFSET ?`
+  ).all(userId, date, minScore, userId, limit, offset)
   return rows.map((r) => r.post_id)
 }
 
-/** Возвращает { postIds, total } для пагинации по rankings. */
+/** Returns { postIds, total } for pagination over rankings (excludes hidden channels). */
 export function getRankedPostIdsWithTotal(userId, date, limit = 10, offset = 0, minScore = 0) {
   const rows = db.prepare(
-    "SELECT post_id FROM rankings WHERE user_id = ? AND date = ? AND score >= ? ORDER BY score DESC LIMIT ? OFFSET ?"
-  ).all(userId, date, minScore, limit, offset)
+    `SELECT r.post_id FROM rankings r
+     JOIN posts p ON r.post_id = p.id
+     WHERE r.user_id = ? AND r.date = ? AND r.score >= ?
+       AND NOT EXISTS (
+         SELECT 1 FROM user_channel_settings ucs
+         WHERE ucs.user_id = ? AND ucs.channel = p.channel AND ucs.hidden = 1
+       )
+     ORDER BY r.score DESC LIMIT ? OFFSET ?`
+  ).all(userId, date, minScore, userId, limit, offset)
   const totalRow = db.prepare(
-    "SELECT COUNT(*) as total FROM rankings WHERE user_id = ? AND date = ? AND score >= ?"
-  ).get(userId, date, minScore)
+    `SELECT COUNT(*) as total FROM rankings r
+     JOIN posts p ON r.post_id = p.id
+     WHERE r.user_id = ? AND r.date = ? AND r.score >= ?
+       AND NOT EXISTS (
+         SELECT 1 FROM user_channel_settings ucs
+         WHERE ucs.user_id = ? AND ucs.channel = p.channel AND ucs.hidden = 1
+       )`
+  ).get(userId, date, minScore, userId)
   return { postIds: rows.map((r) => r.post_id), total: totalRow?.total || 0 }
 }
 
@@ -314,7 +349,7 @@ export function getRatedPostIds(userId) {
 
 // Users
 const USER_SELECT =
-  "SELECT user_id, username, profile, is_banned, updated_at, COALESCE(digest_max_items, 7) AS digest_max_items, minus_keywords, COALESCE(digest_format, 'full') AS digest_format FROM users WHERE user_id = ?"
+  "SELECT user_id, username, profile, is_banned, updated_at, COALESCE(digest_max_items, 7) AS digest_max_items, minus_keywords, COALESCE(digest_format, 'full') AS digest_format, system_prompt_url, system_prompt_cached, system_prompt_cached_at FROM users WHERE user_id = ?"
 
 export function getUser(userId) {
   return db.prepare(USER_SELECT).get(userId)
@@ -488,6 +523,22 @@ export function getStats() {
 /** Users that should receive morning digest (not banned). */
 export function getUsersForMorningDigest() {
   return db.prepare("SELECT user_id, profile FROM users WHERE is_banned = 0").all()
+}
+
+// System Prompt Management
+export function updateUserSystemPromptUrl(userId, url) {
+  const value = url == null || String(url).trim() === "" ? null : String(url).trim()
+  db.prepare("UPDATE users SET system_prompt_url = ?, system_prompt_cached = NULL, system_prompt_cached_at = NULL, updated_at = datetime('now') WHERE user_id = ?").run(value, userId)
+  return value
+}
+
+export function updateUserSystemPromptCached(userId, prompt, url) {
+  const now = new Date().toISOString()
+  db.prepare("UPDATE users SET system_prompt_cached = ?, system_prompt_cached_at = ?, system_prompt_url = ?, updated_at = datetime('now') WHERE user_id = ?").run(prompt, now, url, userId)
+}
+
+export function clearUserSystemPrompt(userId) {
+  db.prepare("UPDATE users SET system_prompt_url = NULL, system_prompt_cached = NULL, system_prompt_cached_at = NULL, updated_at = datetime('now') WHERE user_id = ?").run(userId)
 }
 
 export function getPostsForDateRange(since, until) {

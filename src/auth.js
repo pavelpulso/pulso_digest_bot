@@ -24,16 +24,16 @@ const client = new TelegramClient(session, apiId, apiHash, {
 
 async function main() {
   await client.start({
-    phoneNumber: async () => await question("Номер телефона (с кодом страны): "),
-    password: async () => await question("Пароль 2FA (если есть, иначе Enter): "),
-    phoneCode: async () => await question("Код из Telegram: "),
+    phoneNumber: async () => await question("Phone number (with country code): "),
+    password: async () => await question("2FA password (if any, else Enter): "),
+    phoneCode: async () => await question("Code from Telegram: "),
     onError: (err) => console.error(err)
   })
 
   const sessionString = client.session.save()
   setSetting("gramjs_session", sessionString)
-  console.log("\nСессия сохранена в БД (settings.gramjs_session).")
-  console.log("Можно запускать бота: npm start")
+  console.log("\nSession saved to DB (settings.gramjs_session).")
+  console.log("You can now start the bot: npm start")
   rl.close()
   process.exit(0)
 }

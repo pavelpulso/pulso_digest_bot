@@ -4,6 +4,7 @@ import { BotCache } from "../services/BotCache.js"
 import { CommandHandler } from "../handlers/CommandHandler.js"
 import { ActionHandler } from "../handlers/ActionHandler.js"
 import { AdminHandler } from "../handlers/AdminHandler.js"
+import { UIFormatter } from "../ui/UIFormatter.js"
 import {
 	isBotOpen,
 	getOrCreateUser,
@@ -24,6 +25,7 @@ import {
 	BTN_DIGEST_MAX_ITEMS,
 	BTN_DIGEST_FORMAT,
 	BTN_EDIT_PROFILE,
+	BTN_SYSTEM_PROMPT,
 	BTN_ADD_CHANNEL,
 	BTN_REMOVE_CHANNEL,
 	BTN_BACK,
@@ -50,12 +52,12 @@ export class BotManager {
 		this._registerActions()
 		this._registerHandlers()
 
-		// Инициализация AI роутера
+		// Initialize AI router
 		autoInit().catch(e => console.warn("[BotManager] AI init failed:", e.message))
 
 		this.bot.catch((err, ctx) => {
 			console.error("[BotManager] Unhandled error:", err)
-			ctx.reply("<b>❌ Произошла ошибка</b>. Попробуйте позже.", { parse_mode: "HTML" }).catch(() => { })
+			ctx.reply("<b>❌ An error occurred</b>. Try later.", { parse_mode: "HTML" }).catch(() => { })
 		})
 	}
 
@@ -88,6 +90,7 @@ export class BotManager {
 		this.bot.command("menu", (ctx) => cmd.handleStart(ctx))
 		this.bot.command("add", (ctx) => cmd.handleAdd(ctx))
 		this.bot.command("remove", (ctx) => cmd.handleRemove(ctx))
+		this.bot.command("sysprompt", (ctx) => cmd.handleSysPrompt(ctx))
 
 		// Admin commands
 		this.bot.command("stats", (ctx) => admin.handleStats(ctx))
@@ -104,6 +107,7 @@ export class BotManager {
 		this.bot.action(/^why:(.+)$/, (ctx) => act.handleWhy(ctx))
 		this.bot.action(/^why_collapse:(.+)$/, (ctx) => act.handleWhyCollapse(ctx))
 		this.bot.action(/^fb:(.+):(-?1)$/, (ctx) => act.handleFeedback(ctx))
+		this.bot.action(/^toggle_hidden:(.+)$/, (ctx) => act.handleToggleHidden(ctx))
 
 		this.bot.action("digest", (ctx) => act.handleDigest(ctx))
 		this.bot.action("summary", (ctx) => act.handleSummary(ctx))
@@ -119,13 +123,16 @@ export class BotManager {
 		this.bot.action("optimize_cancel", (ctx) => act.handleOptimizeCancel(ctx))
 		this.bot.action(/^audit_remove_one:(.+)$/, (ctx) => act.handleRemoveOneChannel(ctx))
 		this.bot.action(/^analyze_ch:(.+)$/, (ctx) => act.handleAnalyzeChannelClick(ctx))
+		this.bot.action(/^channel_add:(.+)$/, (ctx) => act.handleChannelAdd(ctx))
+		this.bot.action(/^channel_skip:(.+)$/, (ctx) => act.handleChannelSkip(ctx))
+		this.bot.action("analyze_channel_menu", (ctx) => act.handleAnalyzeChannelMenu(ctx))
 		this.bot.action(/^fetch:(\d+)$/, (ctx) => act.handleFetchDays(ctx))
 	}
 
 	_registerHandlers() {
 		const { command: cmd } = this.handlers
 
-		// Обработчик репостов из каналов — добавляет канал автоматически
+		// Handle channel forwards — auto-add channel
 		this.bot.on("message", async (ctx, next) => {
 			const userId = ctx.from?.id
 			if (!userId || isUserBanned(userId)) return next()
@@ -135,9 +142,9 @@ export class BotManager {
 				const username = chat.username || String(chat.id)
 				const res = addChannel(username, userId)
 				if (res.ok) {
-					await ctx.reply(`<b>✅ Канал @${res.username} добавлен!</b>`, { parse_mode: "HTML" })
+					await ctx.reply(`<b>✅ Channel @${res.username} added!</b>`, { parse_mode: "HTML" })
 				} else if (res.exists) {
-					await ctx.reply(`<b>ℹ️ Канал @${res.username}</b> уже в списке.`, { parse_mode: "HTML" })
+					await ctx.reply(`<b>ℹ️ Channel @${res.username}</b> already in list.`, { parse_mode: "HTML" })
 				}
 				return next()
 			}
@@ -145,7 +152,7 @@ export class BotManager {
 			return next()
 		})
 
-		// Обработчик текста (включая кнопки reply-клавиатуры)
+		// Handle text messages (including reply keyboard buttons)
 		this.bot.on("text", async (ctx, next) => {
 			const userId = ctx.from?.id
 			if (!userId || isUserBanned(userId)) return
@@ -153,7 +160,7 @@ export class BotManager {
 			const text = ctx.message.text?.trim()
 			console.log("[BotManager text] userId:", userId, "text:", JSON.stringify(text))
 
-			// Обработка кнопок reply-клавиатуры
+			// Handle reply keyboard buttons
 			if (text === BTN_DIGEST) return cmd.handleDigest(ctx)
 			if (text === BTN_SUMMARY) return cmd.handleSummary(ctx)
 			if (text === BTN_CHANNELS) return cmd.handleChannels(ctx)
@@ -164,30 +171,46 @@ export class BotManager {
 			if (text === BTN_BACK) return cmd.handleBack(ctx)
 			if (text === BTN_FETCH) return cmd.handleFetchMenu(ctx)
 
-			// Обработка команд из настроек
+			// Handle settings commands
 			if (text === BTN_MINUS_WORDS) {
 				console.log("[BotManager] Minus words button clicked, userId:", userId)
 				const user = getOrCreateUser(userId)
-				return ctx.reply(`Текущие минус-слова: ${user.minus_keywords || "Нет"}\n\nОтправьте: <code>minus word1, word2</code>`, { parse_mode: "HTML" })
+				return ctx.reply(`Current minus keywords: ${user.minus_keywords || "None"}\n\nSend: <code>minus word1, word2</code>`, { parse_mode: "HTML" })
 			}
 			if (text === BTN_DIGEST_MAX_ITEMS) {
 				console.log("[BotManager] Digest max items button clicked, userId:", userId)
 				const user = getOrCreateUser(userId)
-				return ctx.reply(`Текущий размер дайджеста: ${user.digest_max_items || 7}\n\nОтправьте: <code>max 10</code>`, { parse_mode: "HTML" })
+				return ctx.reply(`Current digest size: ${user.digest_max_items || 7}\n\nSend: <code>max 10</code>`, { parse_mode: "HTML" })
 			}
 			if (text === BTN_DIGEST_FORMAT) {
 				const user = getOrCreateUser(userId)
-				return ctx.reply(`Текущий формат: ${user.digest_format || "full"}\n\nОтправьте: <code>format full</code> или <code>format compact</code>`, { parse_mode: "HTML" })
+				return ctx.reply(`Current format: ${user.digest_format || "full"}\n\nSend: <code>format full</code> or <code>format compact</code>`, { parse_mode: "HTML" })
 			}
 			if (text === BTN_EDIT_PROFILE) {
 				const user = getOrCreateUser(userId)
-				return ctx.reply(`Текущие интересы: ${user.profile || "Не установлены"}\n\nОтправьте: <code>context ваши интересы</code>`, { parse_mode: "HTML" })
+				const safeProfile = user.profile ? UIFormatter.escapeHtml(user.profile) : "Not set"
+				return ctx.reply(`Current interests: ${safeProfile}\n\nSend: <code>context your interests</code>`, { parse_mode: "HTML" })
+			}
+			if (text === BTN_SYSTEM_PROMPT) {
+				const user = getOrCreateUser(userId)
+				const url = user.system_prompt_url || "Not set"
+				const cached = user.system_prompt_cached ? "✅ Loaded" : "❌ Not loaded"
+				const cachedAt = user.system_prompt_cached_at ? new Date(user.system_prompt_cached_at).toLocaleString() : "—"
+				return ctx.reply("📜 <b>System Prompt:</b>\n\n" +
+					`URL: ${UIFormatter.escapeHtml(url)}\n` +
+					`Status: ${cached}\n` +
+					`Loaded: ${cachedAt}\n\n` +
+					"Commands:\n" +
+					"<code>/sysprompt [URL]</code> — set URL\n" +
+					"<code>/sysprompt reload</code> — reload\n" +
+					"<code>/sysprompt clear</code> — clear\n" +
+					"<code>/sysprompt show</code> — show text", { parse_mode: "HTML" })
 			}
 			if (text === BTN_ADD_CHANNEL) {
-				return ctx.reply("➕ <b>Добавить канал:</b>\n\nОтправьте: <code>/add @channel</code>\nНапример: <code>/add @durov</code>", { parse_mode: "HTML" })
+				return ctx.reply("➕ <b>Add channel:</b>\n\nSend: <code>/add @channel</code>\nExample: <code>/add @durov</code>", { parse_mode: "HTML" })
 			}
 			if (text === BTN_REMOVE_CHANNEL) {
-				return ctx.reply("➖ <b>Удалить канал:</b>\n\nОтправьте: <code>/remove @channel</code>\nНапример: <code>/remove @durov</code>", { parse_mode: "HTML" })
+				return ctx.reply("➖ <b>Remove channel:</b>\n\nSend: <code>/remove @channel</code>\nExample: <code>/remove @durov</code>", { parse_mode: "HTML" })
 			}
 
 			const handled = await cmd.handleText(ctx)

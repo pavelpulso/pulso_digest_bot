@@ -2,6 +2,7 @@ import { BaseHandler } from "./BaseHandler.js"
 import { KeyboardProvider } from "../ui/KeyboardProvider.js"
 import { UIFormatter } from "../ui/UIFormatter.js"
 import { StatusMessage } from "../services/StatusMessage.js"
+import { getUserSystemPrompt } from "../services/SystemPromptLoader.js"
 import {
 	getOrCreateUser,
 	getUser,
@@ -16,10 +17,14 @@ import {
 	setDigestFormat,
 	isUserBanned,
 	isBotOpen,
-	getPostsForCalendarDay
+	getPostsForCalendarDay,
+	hasChannel,
+	updateUserSystemPromptUrl,
+	updateUserSystemPromptCached,
+	clearUserSystemPrompt
 } from "../db.js"
 import { DIGEST_PAGE_SIZE } from "../utils.js"
-import { collectChannelPosts } from "../gramjs.js"
+import { collectChannelPosts, fetchRecentPostsFromChannel } from "../gramjs.js"
 
 export class CommandHandler extends BaseHandler {
 	async handleStart(ctx) {
@@ -54,19 +59,19 @@ export class CommandHandler extends BaseHandler {
 		if (!userId || isUserBanned(userId)) return
 
 		const status = new StatusMessage(ctx)
-		await status.startProgress("⏳ <b>Начинаю подготовку дайджеста...</b>", 0)
+		await status.startProgress("⏳ <b>Starting digest preparation...</b>", 0)
 
 		const user = getOrCreateUser(userId)
 		const date = this.mgr.service.todayDate()
 
-		// Этап 1: Подготовка данных (0-20%)
-		await status.percent("⏳ <b>Подготовка данных...</b>", 10)
-		
-		// Проверяем наличие постов за сегодня
+		// Stage 1: Data preparation (0-20%)
+		await status.percent("⏳ <b>Preparing data...</b>", 10)
+
+		// Check for posts today
 		const posts = getPostsForCalendarDay(date)
 		if (posts.length === 0) {
-			// Выкачиваем посты за последние 24 часа
-			await status.percent("⏳ <b>Постов нет — выкачиваю из каналов...</b>", 15)
+			// Fetch posts from last 24 hours
+			await status.percent("⏳ <b>No posts — fetching from channels...</b>", 15)
 			const nowTs = Math.floor(Date.now() / 1000)
 			const sinceTs = nowTs - 24 * 60 * 60
 			await collectChannelPosts({
@@ -74,35 +79,35 @@ export class CommandHandler extends BaseHandler {
 				untilTs: nowTs,
 				onProgress: async ({ channel, index, total, collected }) => {
 					const pct = Math.round(15 + (index / total) * 50)
-					const progressText = "⏳ <b>Выкачиваю посты...</b>\n\n" +
-						`${pct}% (${index}/${total} каналов)\n` +
-						`📥 Собрано: ${collected} постов\n` +
-						`📌 Сейчас: @${channel}`
+					const progressText = "⏳ <b>Fetching posts...</b>\n\n" +
+						`${pct}% (${index}/${total} channels)\n` +
+						`📥 Collected: ${collected} posts\n` +
+						`📌 Now: @${channel}`
 					await status.update(progressText)
 				}
 			})
-			await status.percent("⏳ <b>Посты выкачаны...</b>", 65)
+			await status.percent("⏳ <b>Posts fetched...</b>", 65)
 		}
-		
+
 		const hasRankings = this.mgr.service.hasRankings(userId, date)
 
 		if (!hasRankings) {
-			// Этап 2: Ранжирование постов (20-80%)
-			await status.percent("⏳ <b>Ранжирую посты...</b>", 70)
+			// Stage 2: Post ranking (20-80%)
+			await status.percent("⏳ <b>Ranking posts...</b>", 70)
 			try {
 				await this.mgr.service.ensureRankings(userId, user.profile || "")
-				await status.percent("⏳ <b>Ранжирую посты...</b>", 80)
+				await status.percent("⏳ <b>Ranking posts...</b>", 80)
 			} catch (e) {
 				const userMsg = this.formatErrorForChat(e)
-				await status.replace("❌ <b>Не удалось получить рейтинг</b>\n\n" + userMsg)
+				await status.replace("❌ <b>Failed to get rankings</b>\n\n" + userMsg)
 				return
 			}
 		} else {
-			await status.percent("⏳ <b>Ранжирую посты...</b>", 80)
+			await status.percent("⏳ <b>Ranking posts...</b>", 80)
 		}
 
-		// Этап 3: Генерация блоков (80-100%)
-		await status.percent("⏳ <b>Генерирую блоки дайджеста...</b>", 90)
+		// Stage 3: Block generation (80-100%)
+		await status.percent("⏳ <b>Generating digest blocks...</b>", 90)
 		return this.mgr.service.digestReply(ctx, 0, DIGEST_PAGE_SIZE, status)
 	}
 
@@ -110,7 +115,7 @@ export class CommandHandler extends BaseHandler {
 		const userId = ctx.from?.id
 		if (!userId || isUserBanned(userId)) return
 
-		// Если channelName не передан — берём из команды
+		// If channelName not provided — get from command
 		if (!channelName) {
 			const arg = (ctx.message?.text || "").replace(/^\/analyze_channel\s*/i, "").trim()
 			channelName = arg.replace(/^@/, "").toLowerCase()
@@ -120,56 +125,57 @@ export class CommandHandler extends BaseHandler {
 
 		if (!channelName) {
 			return ctx.reply(
-				"Укажи канал: <code>/analyze_channel @channel</code>\n" +
-				"Например: <code>/analyze_channel durov</code>",
-				{ parse_mode: "HTML" }
-			)
-		}
-
-		const posts = getRecentPostsByChannel(channelName, 15)
-
-		if (posts.length === 0) {
-			return ctx.reply(
-				`❓ Нет данных по каналу <b>@${UIFormatter.escapeHtml(channelName)}</b>.\n\n` +
-				"Убедись что канал добавлен (/channels) и посты собраны (/fetch или автосбор утром).",
+				"Specify channel: <code>/analyze_channel @channel</code>\n" +
+				"Example: <code>/analyze_channel durov</code>",
 				{ parse_mode: "HTML" }
 			)
 		}
 
 		const status = new StatusMessage(ctx)
-		await status.start(`🔍 Анализирую @${channelName}...`)
+		await status.start(`🔍 Analyzing @${channelName}...`)
 
-		const minWarning = posts.length < 5 ? `\n⚠️ <i>Мало данных (${posts.length} постов) — оценка приблизительная.</i>` : ""
 		const user = getOrCreateUser(userId)
+		const isAdded = hasChannel(channelName)
+
 		try {
-			const result = await this.mgr.ai.analyzeChannel(posts, channelName, user.profile || "")
+			// Try to get posts from DB
+			let posts = getRecentPostsByChannel(channelName, 20)
+
+			// If no posts — fetch via GramJS
+			if (posts.length === 0) {
+				await status.update(`⏳ <b>Fetching posts from @${channelName}...</b>`)
+				posts = await fetchRecentPostsFromChannel(channelName, 20)
+			}
+
+			if (posts.length === 0) {
+				return status.replace(
+					`❌ Failed to get posts from channel <b>@${UIFormatter.escapeHtml(channelName)}</b>.\n\n` +
+					"Channel may be private or deleted."
+				)
+			}
+
+			const minWarning = posts.length < 5 ? `\n⚠️ <i>Limited data (${posts.length} posts) — approximate score.</i>` : ""
+
+			const systemPrompt = await getUserSystemPrompt(user)
+			const result = await this.mgr.ai.analyzeChannel(posts, channelName, user.profile || "", systemPrompt)
 
 			const { emoji, label: vLabel } = UIFormatter.verdictLabel(result.verdict)
 			const snPct = Math.round((result.signal_noise || 0) * 100)
 			const args = result.arguments.map((a) => `• ${UIFormatter.escapeHtml(a)}`).join("\n")
 
 			const text =
-				`📊 <b>Анализ канала @${UIFormatter.escapeHtml(channelName)}</b> (${posts.length} постов)${minWarning}\n\n` +
-				`⭐ <b>Скор:</b> ${result.score.toFixed(1)}/10\n` +
-				`📶 <b>Сигнал/шум:</b> ${snPct}%\n` +
-				`${emoji} <b>Вердикт:</b> ${vLabel}\n\n` +
+				`📊 <b>Channel analysis @${UIFormatter.escapeHtml(channelName)}</b> (${posts.length} posts)${minWarning}\n\n` +
+				`⭐ <b>Score:</b> ${result.score.toFixed(1)}/10\n` +
+				`📶 <b>Signal/Noise:</b> ${snPct}%\n` +
+				`${emoji} <b>Verdict:</b> ${vLabel}\n\n` +
 				`<i>${UIFormatter.escapeHtml(result.summary)}</i>\n\n` +
-				(args ? `<b>Аргументы:</b>\n${args}` : "")
+				(args ? `<b>Arguments:</b>\n${args}` : "")
 
-			const keyboard = {
-				reply_markup: {
-					inline_keyboard: [
-						[
-							{ text: "🙈 Скрыть из дайджеста", callback_data: `audit_hide:${channelName}` },
-							{ text: "📋 Аудит всех каналов", callback_data: "audit_all" }
-						]
-					]
-				}
-			}
+			const keyboard = KeyboardProvider.analyzeChannelResult(channelName, isAdded)
 
 			await status.replace(text, { disable_web_page_preview: true, ...keyboard })
 		} catch (e) {
-			await status.replace("Не удалось проанализировать канал: " + this.formatErrorForChat(e))
+			await status.replace("❌ Failed to analyze channel: " + this.formatErrorForChat(e))
 		}
 	}
 
@@ -177,17 +183,17 @@ export class CommandHandler extends BaseHandler {
 		const channels = getChannels()
 		if (channels.length === 0) {
 			return ctx.reply(
-				"🔍 <b>Анализ канала:</b>\n\n" +
-				"Нет каналов для анализа. Добавьте каналы через <code>/add @channel</code>",
+				"🔍 <b>Channel Analysis:</b>\n\n" +
+				"No channels to analyze. Add channels via <code>/add @channel</code>",
 				{ parse_mode: "HTML" }
 			)
 		}
 
 		const channelList = channels.map((ch, i) => `${i + 1}. @${ch.username}`).join("\n")
 		await ctx.reply(
-			"🔍 <b>Анализ канала:</b>\n\n" +
-			`Выберите канал для анализа:\n\n${channelList}\n\n` +
-			"Или отправьте название канала:\n<code>@username</code>",
+			"🔍 <b>Channel Analysis:</b>\n\n" +
+			`Select a channel to analyze:\n\n${channelList}\n\n` +
+			"Or send channel name:\n<code>@username</code>",
 			{ parse_mode: "HTML", reply_markup: KeyboardProvider.analyzeChannelList(channels).reply_markup }
 		)
 	}
@@ -197,7 +203,7 @@ export class CommandHandler extends BaseHandler {
 		if (!userId || isUserBanned(userId)) return
 
 		const channels = getChannelUsernames()
-		if (channels.length === 0) return ctx.reply("Нет каналов.")
+		if (channels.length === 0) return ctx.reply("No channels.")
 
 		const channelsData = channels.map((ch) => {
 			const posts = getRecentPostsByChannel(ch, 15)
@@ -212,33 +218,35 @@ export class CommandHandler extends BaseHandler {
 		const noDataChannels = channelsData.filter((cd) => cd.posts.length === 0).map((cd) => cd.channel)
 
 		if (channelsWithData.length === 0) {
-			return ctx.reply("❌ Нет данных ни по одному каналу.")
+			return ctx.reply("❌ No data for any channel.")
 		}
 
 		const status = new StatusMessage(ctx)
 		const batchCount = Math.ceil(channelsWithData.length / 15)
-		await status.start(`<b>📊 Аудит каналов</b>\n\n⏳ Анализирую ${channelsWithData.length} каналов (${batchCount} батчей по 15)...`)
+		await status.start(`<b>📊 Channel Audit</b>\n\n⏳ Analyzing ${channelsWithData.length} channels (${batchCount} batches of 15)...`)
 
 		const user = getOrCreateUser(userId)
+		const systemPrompt = await getUserSystemPrompt(user)
 		try {
 			const scores = await this.mgr.ai.auditAllChannels(channelsWithData, user.profile || "", {
 				onProgress: ({ analyzedChannels, totalChannels, percent, completedBatches, totalBatches }) => {
 					status.percent(
-						`⏳ Анализирую каналы...`,
+						"⏳ Analyzing channels...",
 						percent,
-						`${analyzedChannels}/${totalChannels} каналов — ${completedBatches}/${totalBatches} батчей`
+						`${analyzedChannels}/${totalChannels} channels — ${completedBatches}/${totalBatches} batches`
 					)
-				}
+				},
+				systemPrompt
 			})
 
 			const scored = new Set(scores.map((s) => s.channel))
 			for (const ch of channelsWithData.map((c) => c.channel)) {
-				if (!scored.has(ch)) scores.push({ 
-					channel: ch, 
-					score: 0, 
-					verdict: "mute", 
-					summary: "Нет данных", 
-					reason: "Не удалось получить посты", 
+				if (!scored.has(ch)) scores.push({
+					channel: ch,
+					score: 0,
+					verdict: "mute",
+					summary: "No data",
+					reason: "Failed to get posts",
 					problemType: "none",
 					scoreBreakdown: { quality: 0, relevance: 0, spamFree: 1 },
 					recommendation: "remove",
@@ -247,41 +255,41 @@ export class CommandHandler extends BaseHandler {
 			}
 			scores.sort((a, b) => b.score - a.score)
 
-			// Группировка по verdict
+			// Group by verdict
 			const keepChannels = scores.filter((s) => s.verdict === "keep")
 			const reviewChannels = scores.filter((s) => s.verdict === "review")
 			const muteChannels = scores.filter((s) => s.verdict === "mute")
 
-			// Форматирование строки канала
+			// Format channel line
 			const formatChannel = (s) => {
 				const postCount = channelsData.find((cd) => cd.channel === s.channel)?.postCount || 0
-				const postsLabel = postCount === 1 ? "пост" : postCount < 5 ? "поста" : "постов"
+				const postsLabel = postCount === 1 ? "post" : postCount < 5 ? "posts" : "posts"
 				const avgViews = s.avgViews && isFinite(s.avgViews) ? (s.avgViews >= 1000 ? `${(s.avgViews / 1000).toFixed(1)}K` : Math.round(s.avgViews)) : "—"
 				const qualityPct = Math.round(s.scoreBreakdown.quality * 100)
 				const relevancePct = Math.round(s.scoreBreakdown.relevance * 100)
 				const spamFreePct = Math.round(s.scoreBreakdown.spamFree * 100)
-				return `@${s.channel} — ${s.score.toFixed(1)} | 👁 ${avgViews} (${postCount} ${postsLabel})\n   ${s.summary}\n   Оценка: Q:${qualityPct}% R:${relevancePct}% S:${spamFreePct}%`
+				return `@${s.channel} — ${s.score.toFixed(1)} | 👁 ${avgViews} (${postCount} ${postsLabel})\n   ${s.summary}\n   Score: Q:${qualityPct}% R:${relevancePct}% S:${spamFreePct}%`
 			}
 
-			// Форматирование слабого канала с развёрнутым reason
+			// Format weak channel with expanded reason
 			const formatWeakChannel = (s) => {
 				const problemLabel = {
-					spam: "Спам",
-					irrelevant: "Не релевантно профилю",
-					low_quality: "Низкое качество",
-					promo: "Промо/реклама",
-					outdated: "Устаревший контент",
-					low_frequency: "Слишком редко",
-					duplicate: "Дублирует другие каналы",
-					noise: "Много шума/флуда",
-					too_basic: "Слишком базовый уровень",
-					none: "Низкая ценность"
-				}[s.problemType] || "Низкая ценность"
+					spam: "Spam",
+					irrelevant: "Irrelevant to profile",
+					low_quality: "Low quality",
+					promo: "Promo/ads",
+					outdated: "Outdated content",
+					low_frequency: "Too infrequent",
+					duplicate: "Duplicates other channels",
+					noise: "Too much noise/flood",
+					too_basic: "Too basic level",
+					none: "Low value"
+				}[s.problemType] || "Low value"
 
-				return `🔴 @${s.channel} — ${s.score.toFixed(1)}\n   Проблема: ${problemLabel}\n   ${s.reason}`
+				return `🔴 @${s.channel} — ${s.score.toFixed(1)}\n   Problem: ${problemLabel}\n   ${s.reason}`
 			}
 
-			// Динамическое ограничение топ-N
+			// Dynamic top-N limit
 			const totalChannels = scores.length
 			const topLimit = totalChannels <= 10 ? 10 : (totalChannels <= 20 ? 8 : 5)
 			const topChannels = [...keepChannels, ...reviewChannels].slice(0, topLimit)
@@ -290,97 +298,117 @@ export class CommandHandler extends BaseHandler {
 				return `${emoji} ${formatChannel(s)}`
 			})
 
-			// Слабые каналы с развёрнутым reason
+			// Weak channels with expanded reason
 			const weakLines = muteChannels.map((s) => formatWeakChannel(s))
 
-			// Сборка сообщения
+			// Build message sections
 			const sections = []
 			if (topLines.length > 0) {
-				sections.push(`<b>Рекомендуемые (${topLines.length}):</b>\n\n${topLines.join("\n\n")}`)
+				sections.push(`<b>Recommended (${topLines.length}):</b>\n\n${topLines.join("\n\n")}`)
 			}
 			if (weakLines.length > 0) {
-				sections.push(`<b>Слабые каналы (${weakLines.length}):</b>\n\n${weakLines.join("\n\n")}`)
+				sections.push(`<b>Weak channels (${weakLines.length}):</b>\n\n${weakLines.join("\n\n")}`)
 			}
 
-			const noDataNote = noDataChannels.length > 0 ? `\n\n⚠️ Нет постов по: ${noDataChannels.map((c) => "@" + c).join(", ")}` : ""
+			const noDataNote = noDataChannels.length > 0 ? `\n\n⚠️ No posts for: ${noDataChannels.map((c) => "@" + c).join(", ")}` : ""
 
-			// Summary-строка с распределением
+			// Summary line with distribution
 			const summaryLine = `🟢 ${keepChannels.length} | 🟡 ${reviewChannels.length} | 🔴 ${muteChannels.length}`
 
-			// Легенда метрик
-			const metricsLegend = "\n\n<i>Метрики: Q=Качество контента, R=Релевантность профилю, S=Чистота от спама</i>"
+			// Metrics legend
+			const metricsLegend = "\n\n<i>Metrics: Q=Content quality, R=Profile relevance, S=Spam-free</i>"
 
-			const fullText = `📋 Аудит каналов: ${scores.length} каналов\n${summaryLine}\n\n` + sections.join("\n\n") + noDataNote + metricsLegend
+			const fullText = `📋 Channel Audit: ${scores.length} channels\n${summaryLine}\n\n` + sections.join("\n\n") + noDataNote + metricsLegend
 			const safeText = fullText.length > 4096 ? fullText.slice(0, 4093) + "…" : fullText
 
-			// Кнопки действий
+			// Action buttons
 			const actionButtons = []
 
-			// Индивидуальные кнопки для слабых каналов (до 10)
+			// Individual buttons for weak channels (up to 10)
 			const weakChannelButtons = muteChannels.slice(0, 10).map((s) => ({
 				text: `🗑 @${s.channel}`,
 				callback_data: `audit_remove_one:${s.channel}`
 			}))
 
-			// Группируем по 2 в ряд
+			// Group 2 per row
 			for (let i = 0; i < weakChannelButtons.length; i += 2) {
 				actionButtons.push(weakChannelButtons.slice(i, i + 2))
 			}
 
-			// Общая кнопка удаления всех слабых
+			// General remove all weak button
 			if (muteChannels.length > 0) {
-				actionButtons.push([{ text: `🗑 Удалить все слабые (${muteChannels.length})`, callback_data: "audit_remove_weak" }])
+				actionButtons.push([{ text: `🗑 Remove all weak (${muteChannels.length})`, callback_data: "audit_remove_weak" }])
 			}
 			if (scores.length > topLimit) {
-				actionButtons.push([{ text: "📊 Полный отчёт", callback_data: "audit_full_report" }])
+				actionButtons.push([{ text: "📊 Full report", callback_data: "audit_full_report" }])
 			}
-			// Кнопка оптимизации (Stage 4)
+			// Optimization button (Stage 4)
 			if (muteChannels.length >= 3) {
 				const avgScoreAfter = (scores.filter(s => s.verdict !== "mute").reduce((sum, s) => sum + s.score, 0) / Math.max(1, scores.filter(s => s.verdict !== "mute").length)).toFixed(1)
-				actionButtons.push([{ text: `⚡ Оптимизировать (${muteChannels.length} → ${avgScoreAfter})`, callback_data: "audit_optimize" }])
+				actionButtons.push([{ text: `⚡ Optimize (${muteChannels.length} → ${avgScoreAfter})`, callback_data: "audit_optimize" }])
 			}
 			const keyboard = actionButtons.length > 0 ? { reply_markup: { inline_keyboard: actionButtons } } : {}
 
 			this.mgr.cache.setAuditWeak(userId, muteChannels.map((s) => s.channel))
-			this.mgr.cache.setAuditScores(userId, scores) // Для полного отчёта
+			this.mgr.cache.setAuditScores(userId, scores) // For full report
 			await status.replace(safeText, { parse_mode: "HTML", disable_web_page_preview: true, ...keyboard })
 		} catch (e) {
-			await status.replace(`<b>❌ Ошибка анализа</b>\n\n${this.formatErrorForChat(e)}`, { parse_mode: "HTML" })
+			await status.replace(`<b>❌ Analysis error</b>\n\n${this.formatErrorForChat(e)}`, { parse_mode: "HTML" })
 		}
 	}
 	async handleSummary(ctx) {
-		await ctx.reply("📅 <b>Выберите дату для дайджеста:</b>", { parse_mode: "HTML", reply_markup: KeyboardProvider.summaryDate().reply_markup })
+		await ctx.reply("📅 <b>Select date for digest:</b>", { parse_mode: "HTML", reply_markup: KeyboardProvider.summaryDate().reply_markup })
 	}
 
 	async handleChannels(ctx) {
 		const channels = getChannels()
 		if (channels.length === 0) {
-			return ctx.reply("📢 <b>Каналы:</b>\n\nСписок пуст. Добавьте каналы через <code>/add @channel</code>", { parse_mode: "HTML", reply_markup: KeyboardProvider.channels().reply_markup })
+			return ctx.reply("📢 <b>Channels:</b>\n\nList is empty. Add channels via <code>/add @channel</code>", { parse_mode: "HTML", reply_markup: KeyboardProvider.channels().reply_markup })
 		}
 		const channelList = channels.map((ch, i) => `${i + 1}. @${ch.username}`).join("\n")
-		await ctx.reply(`📢 <b>Каналы (${channels.length}):</b>\n\n${channelList}`, { parse_mode: "HTML", reply_markup: KeyboardProvider.channels().reply_markup })
+		await ctx.reply(`📢 <b>Channels (${channels.length}):</b>\n\n${channelList}`, { parse_mode: "HTML", reply_markup: KeyboardProvider.channels().reply_markup })
 	}
 
 	async handleProfile(ctx) {
 		const userId = ctx.from?.id
 		const user = getOrCreateUser(userId)
-		const profile = user.profile || "Не установлен"
-		await ctx.reply(`👤 <b>Ваш профиль:</b>\n\n${profile}`, { parse_mode: "HTML", reply_markup: KeyboardProvider.profile().reply_markup })
+		const profile = user.profile || "Not set"
+		const sysPromptUrl = user.system_prompt_url || "Not set"
+		const sysPromptCached = user.system_prompt_cached ? "✅ Loaded" : "❌ Not loaded"
+		const cachedAt = user.system_prompt_cached_at ? new Date(user.system_prompt_cached_at).toLocaleString() : "—"
+
+		const text = `👤 <b>Your Profile:</b>
+
+<b>Interests:</b>
+${UIFormatter.escapeHtml(profile)}
+
+<b>System Prompt:</b>
+URL: ${UIFormatter.escapeHtml(sysPromptUrl)}
+Status: ${sysPromptCached}
+Loaded: ${cachedAt}
+
+Use:
+/sysprompt [URL] — set URL
+/sysprompt reload — reload
+/sysprompt clear — clear
+/sysprompt show — show text`
+
+		await ctx.reply(text, { parse_mode: "HTML", reply_markup: KeyboardProvider.profile().reply_markup })
 	}
 
 	async handleSettings(ctx) {
 		const userId = ctx.from?.id
 		const user = getOrCreateUser(userId)
-		const text = "⚙️ <b>Настройки:</b>\n\n" +
-			`<b>Интересы:</b> ${user.profile || "Не установлены"}\n` +
-			`<b>Размер дайджеста:</b> ${user.digest_max_items || 7}\n` +
-			`<b>Формат:</b> ${user.digest_format || "full"}\n` +
-			`<b>Минус-слова:</b> ${user.minus_keywords || "Нет"}`
+		const text = "⚙️ <b>Settings:</b>\n\n" +
+			`<b>Interests:</b> ${user.profile || "Not set"}\n` +
+			`<b>Digest size:</b> ${user.digest_max_items || 7}\n` +
+			`<b>Format:</b> ${user.digest_format || "full"}\n` +
+			`<b>Minus keywords:</b> ${user.minus_keywords || "None"}`
 		await ctx.reply(text, { parse_mode: "HTML", reply_markup: KeyboardProvider.settings().reply_markup })
 	}
 
 	async handleBack(ctx) {
-		await ctx.reply("🏠 Главное меню:", { parse_mode: "HTML", reply_markup: KeyboardProvider.mainReply().reply_markup })
+		await ctx.reply("🏠 Main menu:", { parse_mode: "HTML", reply_markup: KeyboardProvider.mainReply().reply_markup })
 	}
 
 	async handleFetchMenu(ctx) {
@@ -388,9 +416,9 @@ export class CommandHandler extends BaseHandler {
 		if (!userId) return
 		console.log("[handleFetchMenu] userId:", userId, "isAdmin:", this.mgr.handlers.admin.isAdmin(userId))
 		if (!this.mgr.handlers.admin.isAdmin(userId)) {
-			return ctx.reply("Только администратор может собирать посты.")
+			return ctx.reply("Only administrator can fetch posts.")
 		}
-		await ctx.reply("🔄 Выберите период для сбора постов:", {
+		await ctx.reply("🔄 Select period for post collection:", {
 			reply_markup: KeyboardProvider.fetchDays().reply_markup
 		})
 	}
@@ -403,7 +431,7 @@ export class CommandHandler extends BaseHandler {
 		const days = daysArg && daysArg > 0 ? daysArg : 1
 
 		const status = new StatusMessage(ctx)
-		await status.start(`🔄 Сбор постов за ${days} д...\n\n0% (0/0 каналов)`)
+		await status.start(`🔄 Fetching posts for ${days} days...\n\n0% (0/0 channels)`)
 
 		const nowTs = Math.floor(Date.now() / 1000)
 		const sinceTs = nowTs - (days * 24 * 60 * 60)
@@ -414,26 +442,26 @@ export class CommandHandler extends BaseHandler {
 			onProgress: async ({ channel, index, total, collected: currentCollected }) => {
 				const pct = Math.round((index / total) * 100)
 				const elapsed = Math.round((Date.now() - startTime) / 1000)
-				const progressText = `🔄 Сбор постов за ${days} д...\n\n` +
-					`${pct}% (${index}/${total} каналов)\n` +
-					`📥 Собрано: ${currentCollected} постов\n` +
-					`⏱ Прошло: ${elapsed}с\n` +
-					`📌 Сейчас: @${channel}`
+				const progressText = `🔄 Fetching posts for ${days} days...\n\n` +
+					`${pct}% (${index}/${total} channels)\n` +
+					`📥 Collected: ${currentCollected} posts\n` +
+					`⏱ Elapsed: ${elapsed}s\n` +
+					`📌 Now: @${channel}`
 				await status.update(progressText)
 			}
 		})
 
 		const elapsed = Math.round((Date.now() - startTime) / 1000)
-		let resultText = "✅ Сбор завершён\n\n" +
-			`📥 Собрано: ${collected} постов\n` +
-			`⏱ Всего: ${elapsed}с`
+		let resultText = "✅ Fetch complete\n\n" +
+			`📥 Collected: ${collected} posts\n` +
+			`⏱ Total: ${elapsed}s`
 		if (errors.length > 0) {
-			resultText += `\n⚠️ Ошибки: ${errors.length}`
+			resultText += `\n⚠️ Errors: ${errors.length}`
 			resultText += `\n${errors.slice(0, 5).map(e => `• ${e}`).join("\n")}`
-			if (errors.length > 5) resultText += `\n... и ещё ${errors.length - 5}`
+			if (errors.length > 5) resultText += `\n... and ${errors.length - 5} more`
 		}
 		if (perChannel.length > 0) {
-			resultText += "\n\nПо каналам:\n" +
+			resultText += "\n\nBy channel:\n" +
 				perChannel.map(c => `• @${c.channel}: ${c.count}`).join("\n")
 		}
 
@@ -477,6 +505,76 @@ export class CommandHandler extends BaseHandler {
 		if (!arg) return ctx.reply("Usage: /remove @channel")
 		const ok = removeChannel(arg)
 		await ctx.reply(ok ? "Removed." : "Not found.")
+	}
+
+	async handleSysPrompt(ctx) {
+		const userId = ctx.from?.id
+		if (!userId) return
+
+		const args = ctx.message?.text?.split(/\s+/) || []
+		const subcommand = args[1]?.toLowerCase()
+
+		if (!subcommand) {
+			return ctx.reply("Usage:\n/sysprompt [URL] — set URL\n/sysprompt reload — reload\n/sysprompt clear — clear\n/sysprompt show — show text")
+		}
+
+		const user = getOrCreateUser(userId)
+
+		if (subcommand === "clear") {
+			clearUserSystemPrompt(userId)
+			return ctx.reply("✅ System prompt cleared.")
+		}
+
+		if (subcommand === "reload") {
+			if (!user.system_prompt_url) {
+				return ctx.reply("❌ System prompt URL not set.")
+			}
+			const status = new StatusMessage(ctx)
+			await status.start("⏳ Loading prompt from URL...")
+			const { refreshUserSystemPrompt } = await import("../services/SystemPromptLoader.js")
+			const result = await refreshUserSystemPrompt(user, updateUserSystemPromptCached)
+			if (result.success) {
+				await status.replace(`✅ Prompt updated!\n\nLength: ${result.prompt.length} chars.`)
+			} else {
+				await status.replace(`❌ Load error: ${result.error}`)
+			}
+			return
+		}
+
+		if (subcommand === "show") {
+			if (!user.system_prompt_cached) {
+				return ctx.reply("❌ Prompt not loaded.")
+			}
+			const preview = user.system_prompt_cached.slice(0, 1000)
+			const more = user.system_prompt_cached.length > 1000 ? `\n\n... ${user.system_prompt_cached.length - 1000} more chars` : ""
+			return ctx.reply(`<b>System Prompt:</b>\n\n${UIFormatter.escapeHtml(preview)}${more}`, { parse_mode: "HTML" })
+		}
+
+		// Set URL
+		const url = args.slice(1).join(" ").trim()
+		if (!url) {
+			return ctx.reply("❌ Specify URL.")
+		}
+
+		const { validateSystemPromptUrl } = await import("../services/SystemPromptLoader.js")
+		const validation = validateSystemPromptUrl(url)
+		if (!validation.valid) {
+			return ctx.reply(`❌ Error: ${validation.error}`)
+		}
+
+		updateUserSystemPromptUrl(userId, url)
+
+		// Auto-load
+		const status = new StatusMessage(ctx)
+		await status.start("⏳ Loading prompt from URL...")
+		const { refreshUserSystemPrompt } = await import("../services/SystemPromptLoader.js")
+		const updatedUser = getOrCreateUser(userId)
+		const result = await refreshUserSystemPrompt(updatedUser, updateUserSystemPromptCached)
+		if (result.success) {
+			await status.replace(`✅ URL set and prompt loaded!\n\nLength: ${result.prompt.length} chars.`)
+		} else {
+			await status.replace(`✅ URL set.\n⚠️ Load error: ${result.error}. Try /sysprompt reload later.`)
+		}
 	}
 
 	async handleText(ctx) {

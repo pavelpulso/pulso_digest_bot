@@ -11,6 +11,7 @@ import {
 	BTN_DIGEST_MAX_ITEMS,
 	BTN_DIGEST_FORMAT,
 	BTN_EDIT_PROFILE,
+	BTN_SYSTEM_PROMPT,
 	BTN_ADD_CHANNEL,
 	BTN_REMOVE_CHANNEL,
 	BTN_BACK,
@@ -64,6 +65,7 @@ export class KeyboardProvider {
 			reply_markup: {
 				keyboard: [
 					[BTN_EDIT_PROFILE],
+					[BTN_SYSTEM_PROMPT],
 					[BTN_DIGEST_MAX_ITEMS, BTN_MINUS_WORDS, BTN_DIGEST_FORMAT],
 					[BTN_BACK]
 				],
@@ -87,49 +89,97 @@ export class KeyboardProvider {
 
 	static fetchDays() {
 		return Markup.inlineKeyboard([
-			[Markup.button.callback("1 день", "fetch:1")],
-			[Markup.button.callback("3 дня", "fetch:3")],
-			[Markup.button.callback("7 дней", "fetch:7")],
+			[Markup.button.callback("1 day", "fetch:1")],
+			[Markup.button.callback("3 days", "fetch:3")],
+			[Markup.button.callback("7 days", "fetch:7")],
 			[Markup.button.callback(BTN_BACK, "menu")]
 		])
 	}
 
 	static analyzeChannelList(channels) {
 		if (!channels || channels.length === 0) return undefined
-		
-		const buttons = channels.map((ch) => 
+
+		const buttons = channels.map((ch) =>
 			Markup.button.callback(`📊 @${ch.username}`, `analyze_ch:${ch.username}`)
 		)
-		
+
 		const rows = []
 		for (let i = 0; i < buttons.length; i += 2) {
 			rows.push(buttons.slice(i, i + 2))
 		}
 		rows.push([Markup.button.callback(BTN_BACK, "menu")])
-		
+
 		return Markup.inlineKeyboard(rows)
 	}
 
-	static blockKeyboard(postId, hasWhy = false, expanded = false) {
+	/**
+	 * Inline keyboard for channel analysis result.
+	 * @param {string} channelName - channel username (without @)
+	 * @param {boolean} isAdded - Whether channel is already added
+	 */
+	static analyzeChannelResult(channelName, isAdded = false) {
+		const cleanName = channelName.replace(/^@/, "")
+		const buttons = []
+
+		if (!isAdded) {
+			buttons.push([
+				Markup.button.callback("✅ Add channel", `channel_add:${cleanName}`),
+				Markup.button.callback("❌ Skip", `channel_skip:${cleanName}`)
+			])
+		} else {
+			buttons.push([
+				Markup.button.callback("✓ Channel added", `channel_skip:${cleanName}`)
+			])
+		}
+
+		buttons.push([Markup.button.callback("🔍 Analyze another", "analyze_channel_menu")])
+
+		return Markup.inlineKeyboard(buttons)
+	}
+
+	/**
+	 * Keyboard for post block.
+	 * @param {string|null} postId - Post ID
+	 * @param {boolean} hasWhy - Has AI explanation
+	 * @param {boolean} expanded - Is expanded mode (reason shown)
+	 * @param {string|null} channel - Channel username (for hide button)
+	 * @param {boolean} isHidden - Is channel already hidden
+	 */
+	static blockKeyboard(postId, hasWhy = false, expanded = false, channel = null, isHidden = false) {
 		if (!postId) return undefined
 		const feedbackRow = [
-			{ text: "👍 Релевантно", callback_data: `fb:${postId}:1` },
-			{ text: "👎 Не релевантно", callback_data: `fb:${postId}:-1` }
+			{ text: "👍 Relevant", callback_data: `fb:${postId}:1` },
+			{ text: "👎 Irrelevant", callback_data: `fb:${postId}:-1` }
 		]
+		const actionRow = []
+
+		// Channel action buttons
+		if (channel) {
+			actionRow.push({
+				text: isHidden ? "👁 Show channel" : "🙈 Hide channel",
+				callback_data: `toggle_hidden:${channel}`
+			})
+		}
+
 		if (expanded) {
 			return {
 				reply_markup: {
 					inline_keyboard: [
 						feedbackRow,
-						[{ text: "↩ Свернуть", callback_data: `why_collapse:${postId}` }]
+						actionRow,
+						[{ text: "↩ Collapse", callback_data: `why_collapse:${postId}` }]
 					]
 				}
 			}
 		}
-		if (hasWhy) feedbackRow.push({ text: "📌 Подробнее", callback_data: `why:${postId}` })
+		if (hasWhy) feedbackRow.push({ text: "📌 Details", callback_data: `why:${postId}` })
+		
+		const keyboard = [feedbackRow]
+		if (actionRow.length > 0) keyboard.push(actionRow)
+		
 		return {
 			reply_markup: {
-				inline_keyboard: [feedbackRow]
+				inline_keyboard: keyboard
 			}
 		}
 	}

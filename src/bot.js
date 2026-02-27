@@ -6,9 +6,9 @@ manager.init()
 
 export const bot = manager.bot
 
-/** Для совместимости с cron.js и утренней рассылкой */
+/** For compatibility with cron.js and morning digest delivery */
 export async function sendMorningDigests(botInstance) {
-  // botInstance передается для гибкости, но мы используем сервис менеджера
+  // botInstance is passed for flexibility, but we use the manager service
   return manager.service.sendMorningDigests(botInstance || manager.bot)
 }
 

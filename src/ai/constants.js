@@ -1,41 +1,41 @@
 /**
- * Константы для AI-модуля.
+ * Constants for AI module.
  */
 
 /**
- * Лимиты на размер текста для разных задач.
+ * Text length limits for different tasks.
  */
 export const LIMITS = {
-  /** Макс. длина текста поста для ранжирования */
+  /** Max post text length for ranking */
   RANK_TEXT: 2000,
-  /** Макс. длина текста поста для саммари */
+  /** Max post text length for summary */
   SUMMARY_TEXT: 1500,
-  /** Макс. длина текста для анализа канала */
+  /** Max text length for channel analysis */
   ANALYZE_TEXT: 1000,
-  /** Макс. длина текста для аудита */
+  /** Max text length for audit */
   AUDIT_TEXT: 500,
-  /** Макс. количество блоков в дайджесте */
+  /** Max blocks in digest */
   MAX_BLOCKS: 20,
-  /** Мин. количество блоков в дайджесте */
+  /** Min blocks in digest */
   MIN_BLOCKS: 3,
-  /** Макс. длина teaser (слов) */
+  /** Max teaser length (words) */
   TEASER_WORDS: 12,
-  /** Макс. длина summary (слов) */
+  /** Max summary length (words) */
   SUMMARY_WORDS: 20,
-  /** Макс. длина аргумента (слов) */
+  /** Max argument length (words) */
   ARGUMENT_WORDS: 15,
-  /** Макс. длина reason для канала (слов) */
+  /** Max reason length for channel (words) */
   CHANNEL_REASON_WORDS: 10,
-  /** Макс. количество каналов для рекомендации */
+  /** Max channels for recommendation */
   MAX_RECOMMENDATIONS: 5,
-  /** Макс. количество каналов для анализа */
+  /** Max channels for analysis */
   MAX_CHANNELS_ANALYZE: 100,
-  /** Макс. количество постов для анализа канала */
+  /** Max posts for channel analysis */
   MAX_POSTS_ANALYZE: 15
 }
 
 /**
- * Ключи JSON, которые могут содержать массив результатов.
+ * JSON keys that may contain result array.
  */
 export const JSON_ARRAY_KEYS = [
   "ranking",
@@ -47,16 +47,16 @@ export const JSON_ARRAY_KEYS = [
 ]
 
 /**
- * Допустимые вердикты для анализа канала.
+ * Valid verdicts for channel analysis.
  */
 export const VERDICTS = ["keep", "mute", "unsubscribe"]
 
 /**
- * Макс. количество повторных попыток при 429 ошибке.
+ * Max retries for 429 error.
  */
 export const MAX_RETRIES = 3
 
 /**
- * Задержка между попытками (мс) — будет умножена на номер попытки.
+ * Delay between retries (ms) — multiplied by attempt number.
  */
 export const RETRY_DELAY_MS = 1000

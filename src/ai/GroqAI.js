@@ -4,8 +4,8 @@ const GROQ_API_KEY = process.env.GROQ_API_KEY || ""
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile"
 
 /**
- * Groq AI провайдер — сверхбыстрый инференс на LPU.
- * Лимиты free tier: ~500K токенов/день.
+ * Groq AI provider — ultra-fast inference on LPU.
+ * Free tier limits: ~500K tokens/day.
  */
 export class GroqAI extends BaseAI {
   constructor() {

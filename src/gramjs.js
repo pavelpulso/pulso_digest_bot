@@ -15,7 +15,7 @@ function createClient() {
 }
 
 /**
- * Собирает посты из всех каналов за указанный период.
+ * Collects posts from all channels within a specified time period.
  * @param {{ onProgress?: (opts: { channel: string, index: number, total: number, collected: number }) => void|Promise<void>, sinceTs?: number, untilTs?: number }} [options]
  * @returns {{ collected: number, errors: string[], perChannel: Array<{ channel: string, count: number, error?: string }> }}
  */
@@ -62,7 +62,9 @@ export async function collectChannelPosts(options = {}) {
 
   try {
     await client.disconnect()
-  } catch (_) {}
+  } catch (e) {
+    console.warn("GramJS disconnect error:", e.message)
+  }
 
   return { collected, errors, perChannel }
 }
@@ -91,4 +93,47 @@ async function collectFromChannel(client, channelName, sinceTs, untilTs) {
   return count
 }
 
-export default { collectChannelPosts, createClient }
+/**
+ * Fetches last N posts from a channel (regardless of time).
+ * @param {string} channelName - @username or username
+ * @param {number} limit - number of posts (default 20)
+ * @returns {Promise<Array<{ id: string, channel: string, post_id: number, text: string, link: string, views: number, date: string }>>}
+ */
+export async function fetchRecentPostsFromChannel(channelName, limit = 20) {
+  const client = createClient()
+  const posts = []
+
+  try {
+    await client.connect()
+  } catch (e) {
+    throw new Error(`GramJS connect: ${e.message}`, { cause: e })
+  }
+
+  try {
+    for await (const message of client.iterMessages(channelName, { limit })) {
+      if (!message.id || (!message.text && !message.message)) continue
+
+      const text = message.text || message.message || ""
+      const views = message.views || 0
+      const date = new Date(message.date * 1000).toISOString()
+      const channel = channelName.replace(/^@/, "").toLowerCase()
+      const link = `https://t.me/${channel}/${message.id}`
+      const id = uuidv4()
+
+      // Save to DB
+      upsertPost(id, channel, message.id, text, link, views, date)
+
+      posts.push({ id, channel, post_id: message.id, text, link, views, date })
+    }
+  } finally {
+    try {
+      await client.disconnect()
+    } catch (e) {
+      console.warn("GramJS disconnect error:", e.message)
+    }
+  }
+
+  return posts
+}
+
+export default { collectChannelPosts, createClient, fetchRecentPostsFromChannel }

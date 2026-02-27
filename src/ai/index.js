@@ -5,8 +5,8 @@ import { OpenRouterAI } from "./OpenRouterAI.js"
 const AI_PROVIDER = (process.env.AI_PROVIDER || "auto").toLowerCase()
 
 /**
- * AI роутер с автоматическим fallback.
- * Порядок переключения: Gemini → Groq → OpenRouter
+ * AI router with automatic fallback.
+ * Provider order: Gemini → Groq → OpenRouter
  */
 class AIRouter {
   constructor() {
@@ -95,23 +95,23 @@ class AIRouter {
   }
 
   rankPosts(posts, userProfile, options) {
-    return this.#executeWithFallback("rankPosts", [posts, userProfile, options])
+    return this.#executeWithFallback("rankPosts", [posts, userProfile, options || {}])
   }
 
   generateSummaryBlocks(posts, dateLabel, userProfile, maxItems, options) {
-    return this.#executeWithFallback("generateSummaryBlocks", [posts, dateLabel, userProfile, maxItems, options])
+    return this.#executeWithFallback("generateSummaryBlocks", [posts, dateLabel, userProfile, maxItems, options || {}])
   }
 
-  analyzeChannel(posts, channelName, userProfile) {
-    return this.#executeWithFallback("analyzeChannel", [posts, channelName, userProfile])
+  analyzeChannel(posts, channelName, userProfile, systemPrompt) {
+    return this.#executeWithFallback("analyzeChannel", [posts, channelName, userProfile, systemPrompt])
   }
 
-  auditAllChannels(channelsData, userProfile) {
-    return this.#executeWithFallback("auditAllChannels", [channelsData, userProfile])
+  auditAllChannels(channelsData, userProfile, options) {
+    return this.#executeWithFallback("auditAllChannels", [channelsData, userProfile, options || {}])
   }
 
-  recommendChannels(userProfile, channelUsernames) {
-    return this.#executeWithFallback("recommendChannels", [userProfile, channelUsernames])
+  recommendChannels(userProfile, channelUsernames, systemPrompt) {
+    return this.#executeWithFallback("recommendChannels", [userProfile, channelUsernames, systemPrompt])
   }
 
   getCurrentProvider() {

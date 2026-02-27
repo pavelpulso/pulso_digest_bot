@@ -6,8 +6,8 @@ const OPENROUTER_SITE_URL = process.env.OPENROUTER_SITE_URL || ""
 const OPENROUTER_SITE_NAME = process.env.OPENROUTER_SITE_NAME || ""
 
 /**
- * OpenRouter провайдер — 29+ бесплатных моделей.
- * Лимиты free tier: 200 запросов/день, 20 RPM на модель.
+ * OpenRouter provider — 29+ free models.
+ * Free tier limits: 200 requests/day, 20 RPM per model.
  */
 export class OpenRouterAI extends BaseAI {
   constructor() {

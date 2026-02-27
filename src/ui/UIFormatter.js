@@ -1,30 +1,30 @@
 import { MAX_MESSAGE_LEN } from "../utils.js"
 
 export class UIFormatter {
-	/** Экранирует символы Markdown в тексте. */
+	/** Escapes Markdown characters in text. */
 	static escapeMarkdown(text) {
 		if (!text || typeof text !== "string") return ""
-		return text.replace(/([*_`\[\]])/g, "\\$1")
+		return text.replace(/([*_`[\]])/g, "\\$1")
 	}
 
-	/** Экранирует HTML. */
+	/** Escapes HTML. */
 	static escapeHtml(text) {
 		if (!text || typeof text !== "string") return ""
 		return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 	}
 
-	/** Заголовок дайджеста. */
+	/** Digest header. */
 	static formatDigestHeader(label, teaser, count, opts = {}) {
-		const suffix = opts.morning ? "\n\n<i>/digest — ещё постов</i>" : ""
+		const suffix = opts.morning ? "\n\n<i>/digest — more posts</i>" : ""
 		const safeLabel = this.escapeHtml(label)
 		const safeTeaser = teaser ? this.escapeHtml(teaser) : ""
 		if (safeTeaser) {
-			return `📰 <b>Дайджест за ${safeLabel}</b>\n\n<b>Главное:</b> ${safeTeaser}\n\n(${count} пунктов)${suffix}`.trim()
+			return `📰 <b>Digest for ${safeLabel}</b>\n\n<b>Highlights:</b> ${safeTeaser}\n\n(${count} items)${suffix}`.trim()
 		}
-		return `📰 <b>Дайджест за ${safeLabel}</b> (${count} пунктов)${suffix}`.trim()
+		return `📰 <b>Digest for ${safeLabel}</b> (${count} items)${suffix}`.trim()
 	}
 
-	/** Карта id -> {channel, postUrl} */
+	/** Map id -> {channel, postUrl} */
 	static buildPostById(posts) {
 		return Object.fromEntries(
 			posts.map((p) => {
@@ -35,7 +35,7 @@ export class UIFormatter {
 		)
 	}
 
-	/** Формат блока: суть → действие → потенциал → ссылки. */
+	/** Block format: essence → action → potential → links. */
 	static formatBlockText(block, postById, options = {}) {
 		const { compact = false } = options
 		const e = this.escapeHtml.bind(this)
@@ -73,10 +73,10 @@ export class UIFormatter {
 		return text.length > MAX_MESSAGE_LEN ? text.slice(0, MAX_MESSAGE_LEN - 1) + "…" : text
 	}
 
-	/** Вердикт аналитики -> эмодзи и заголовок */
+	/** Verdict -> emoji and label */
 	static verdictLabel(verdict) {
-		if (verdict === "keep") return { emoji: "🟢", label: "ДЕРЖИ" }
-		if (verdict === "unsubscribe") return { emoji: "🔴", label: "ОТПИШИСЬ" }
-		return { emoji: "🟡", label: "НАБЛЮДАЙ" }
+		if (verdict === "keep") return { emoji: "🟢", label: "KEEP" }
+		if (verdict === "unsubscribe") return { emoji: "🔴", label: "UNSUBSCRIBE" }
+		return { emoji: "🟡", label: "WATCH" }
 	}
 }

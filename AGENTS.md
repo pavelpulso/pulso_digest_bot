@@ -1,16 +1,17 @@
 # AGENTS.md
 
-## 🤖 GLOBAL EXPERT DEVELOPER RULES
+Context for AI assistants working with the Pulso Digest Bot project.
 
-### 🤔 THINKING FRAMEWORK
+## 🤔 THINKING FRAMEWORK
+
 ```
 [1. ANALYZE] What needs to be solved
-[2. PLAN] Solution architecture  
+[2. PLAN] Solution architecture
 [3. CODE] Working code only
 [4. TEST] Edge cases + errors
 ```
 
-### 🛠 CORE PRINCIPLES
+## 🛠 CORE PRINCIPLES
 
 **KISS**: Simplest solution. No overengineering.
 
@@ -31,164 +32,201 @@
 
 ---
 
-Context for AI assistants working with the Pulso Digest Bot project.
+## Project Overview
+
+**Pulso Digest Bot** is a Telegram bot that aggregates posts from tracked channels and delivers personalized digests using AI for ranking and summarization.
+
+### Core Technologies
+
+- **Runtime:** Node.js 20+ (ES Modules)
+- **Telegram Bot:** Telegraf
+- **Telegram Client:** GramJS (`telegram` package) for MTProto channel reading
+- **Database:** SQLite via `better-sqlite3` (file: `data/db.sqlite`)
+- **AI:** Multi-provider (Gemini, Groq, OpenRouter) with auto-fallback
+- **Scheduling:** `node-cron`
+- **Process Manager:** PM2
 
 ---
 
-## Обзор проекта
-
-**Pulso Digest Bot** — Telegram-бот, который собирает посты из отслеживаемых каналов и формирует персонализированный дайджест с помощью Gemini API.
-
-### Ключевые технологии
-
-- **Node.js 20+** (ES Modules)
-- **Telegraf** — Telegram Bot API
-- **GramJS (telegram)** — MTProto клиент для чтения каналов
-- **better-sqlite3** — SQLite база данных
-- **node-cron** — планировщик задач
-- **Gemini API** — через OpenAI-совместимый прокси (xray)
-
----
-
-## Структура проекта
+## Project Structure
 
 ```
 src/
-├── index.js    # Точка входа: запуск бота и cron
-├── bot.js      # Telegraf: команды, обработчики, клавиатуры
-├── cron.js     # Сбор постов (06:00) и утренняя рассылка (07:00)
-├── gramjs.js   # Чтение каналов через MTProto (GramJS)
-├── gemini.js   # Ранжирование и генерация дайджеста через Gemini API
-├── db.js       # SQLite: пользователи, каналы, посты, рейтинги
-├── utils.js    # Форматирование, пагинация, константы
-└── auth.js     # Получение GramJS-сессии (запускается вручную)
+├── index.js    # Entry point: starts bot and cron
+├── bot.js      # Telegraf: commands, handlers, inline keyboards
+├── cron.js     # Post collection (06:00) and morning digest (07:00)
+├── gramjs.js   # Channel reading via MTProto (GramJS)
+├── gemini.js   # Post ranking and digest generation via AI
+├── db.js       # SQLite: users, channels, posts, rankings, feedback
+├── utils.js    # Formatting, pagination, constants
+└── auth.js     # GramJS session setup (run manually once)
 ```
 
 ---
 
-## Основные команды
-
-### Разработка
-
-```bash
-npm install                  # Установка зависимостей
-cp .env.example .env         # Создать .env и заполнить переменные
-node src/auth.js             # Получить GramJS-сессию (один раз)
-npm run dev                  # Запуск с nodemon (hot reload)
-npm start                    # Продакшн запуск
-```
-
-### Деплой
-
-```bash
-npm run deploy               # SSH на VPS + deploy.sh (требуется .deploy.env)
-pm2 start ecosystem.config.cjs
-pm2 save
-pm2 startup
-```
-
----
-
-## Архитектура
-
-### Поток данных
-
-1. **Сбор (cron 06:00)**: `cron.js` → `gramjs.js` собирает посты за 24ч → сохраняет в `posts` таблицу через `db.js`
-2. **Ранжирование (по запросу)**: `bot.js` → `gemini.js rankPosts()` → таблица `rankings`
-3. **Дайджест**: `bot.js` → `gemini.js generateSummaryBlocks()` → отправка пользователю
-4. **Утренняя рассылка (cron 07:00)**: `sendMorningDigests()` → тизер + кнопка → полный дайджест
-
-### База данных (SQLite)
-
-**Таблицы:**
-- `settings` — глобальные настройки (gramjs_session, is_open)
-- `channels` — отслеживаемые каналы
-- `posts` — собранные посты (channel, post_id, text, link, views, date)
-- `rankings` — ранжирование постов для пользователя (user_id, post_id, score, reason)
-- `users` — пользователи (profile, digest_max_items, minus_keywords)
-- `user_channel_settings` — настройки каналов для пользователя (hidden, priority)
-- `post_feedback` — лайки/дизлайки для персонализации
-
----
-
-## Ключевые модули
+## Key Modules
 
 ### `src/bot.js`
 
-- Команды: `/start`, `/digest`, `/profile`, `/summary`, `/channels`, `/add`, `/remove`, `/menu`, `/digest_max`, `/minus_words`
-- Admin-команды: `/ban`, `/unban`, `/close`, `/open`, `/stats`
-- Inline-кнопки: digest, summary, channels, profile, feedback
-- Функции: `digestReply()`, `sendMorningDigests()`, `ensureRankingsForUser()`
+Main bot logic: commands, inline keyboards, digest rendering, feedback handling.
+
+**Commands:** `/start`, `/digest`, `/profile`, `/summary`, `/channels`, `/add`, `/remove`, `/menu`, `/digest_max`, `/minus_words`
+
+**Admin commands:** `/ban`, `/unban`, `/close`, `/open`, `/stats`
+
+**Key functions:**
+- `digestReply()` — Renders digest with pagination
+- `sendMorningDigests()` — Sends morning digest to all users
+- `ensureRankingsForUser()` — Triggers ranking generation if needed
 
 ### `src/gemini.js`
 
-- `rankPosts(posts, userProfile, options)` — оценка постов (score 0-1)
-- `generateSummaryBlocks(posts, dateLabel, userProfile, maxItems)` — генерация блоков дайджеста + тизер
-- `recommendChannels(userProfile, channelUsernames)` — рекомендации каналов по профилю
+AI integration for ranking and summarization.
+
+**Key functions:**
+- `rankPosts(posts, userProfile, options)` — Scores posts (0-1) based on profile and feedback
+- `generateSummaryBlocks(posts, dateLabel, userProfile, maxItems)` — Generates digest blocks + teaser
+- `recommendChannels(userProfile, channelUsernames)` — Recommends channels matching interests
 
 ### `src/db.js`
 
-- CRUD для channels, posts, rankings, users
-- `getRankedPostIds()`, `getRankedPostIdsAboveScore()` — получение ранжированных постов
-- `upsertPostFeedback()` — сохранение обратной связи
+Database operations (synchronous `better-sqlite3`, WAL mode).
 
-### `src/utils.js`
+**Key functions:**
+- CRUD for channels, posts, rankings, users
+- `getRankedPostIdsWithTotal()` — Pagination support
+- `upsertPostFeedback()` — Save like/dislike
+- `getUserChannelSettings()` — Per-user channel preferences
+
+### `src/cron.js`
+
+Scheduled tasks (Europe/Moscow timezone).
+
+- **06:00** — Collect posts from channels
+- **07:00** — Send morning digests
+
+### `src/gramjs.js`
+
+Channel reading via MTProto.
+
+**Key functions:**
+- `fetchPostsFromChannels()` — Fetches posts from all tracked channels
+- `fetchRecentPostsFromChannel(channelName, limit)` — Fetches recent posts from a specific channel
+
+---
+
+## Database Schema
+
+### Tables
+
+- **`settings`** — Global settings (`gramjs_session`, `is_open`)
+- **`channels`** — Tracked channels (username, added_by, added_at)
+- **`posts`** — Collected posts (id, channel, post_id, text, link, views, date)
+- **`rankings`** — Post rankings per user (user_id, post_id, score, reason, date)
+- **`users`** — User profiles (user_id, username, profile, is_banned, digest_max_items, minus_keywords, digest_format)
+- **`user_channel_settings`** — Per-user channel preferences (hidden, priority)
+- **`post_feedback`** — User feedback on posts (user_id, post_id, rating: 1=like, -1=dislike)
+
+### Key Constants (utils.js)
 
 - `DIGEST_PAGE_SIZE = 10`
-- `MIN_DIGEST_SCORE = 0.5` — минимальный score для попадания в дайджест
-- Форматирование: `formatDigestHeader()`, `formatBlockText()`, `formatChannelList()`
+- `MIN_DIGEST_SCORE = 0.5` — Minimum score for digest inclusion
 
 ---
 
-## Переменные окружения (.env)
+## Architecture Flow
 
-| Переменная | Описание |
-|------------|----------|
-| `BOT_TOKEN` | Токен бота от @BotFather |
-| `TG_API_ID`, `TG_API_HASH` | Данные с my.telegram.org |
-| `GEMINI_API_KEY` | API-ключ Gemini |
-| `GEMINI_PROXY_URL` | URL прокси (xray), например `http://127.0.0.1:10808` |
-| `GEMINI_MODEL` | Модель Gemini (по умолчанию `gemini-3-flash`) |
-| `ADMIN_ID` | Telegram user_id админа |
-| `CHANNELS` | Начальные каналы (через запятую, без @) |
-| `DB_PATH` | Путь к SQLite (по умолчанию `./data/db.sqlite`) |
+1. **Collection (cron 06:00 MSK):** `cron.js` → `gramjs.js` fetches posts from last 24h → saves to `posts` table
+2. **Ranking (on-demand):** `bot.js` → `gemini.js rankPosts()` → stores in `rankings` table
+3. **Digest Generation:** `bot.js` → `gemini.js generateSummaryBlocks()` → sends to user
+4. **Morning Delivery (cron 07:00 MSK):** `sendMorningDigests()` → teaser with button → full digest
 
 ---
 
-## Конвенции кода
+## Development Commands
 
-- **ES Modules**: `import`/`export`, `type: "module"` в package.json
-- **Асинхронность**: `async`/`await`
-- **Именование**: camelCase для переменных и функций, UPPER_CASE для констант
-- **База данных**: синхронный `better-sqlite3`, WAL-режим
-- **Форматирование**: HTML для Telegram-сообщений (parse_mode: "HTML")
-- **Ошибки**: логирование в консоль, краткие сообщения пользователю через `formatErrorForChat()`
-
----
-
-## Тестирование
-
-Тестов нет. Для проверки: запустить бота локально (`npm run dev`) и протестировать команды.
+```bash
+npm install                  # Install dependencies
+cp .env.example .env         # Create .env and fill variables
+node src/auth.js             # Obtain GramJS session (one-time)
+npm run dev                  # Start with nodemon (hot reload)
+npm start                    # Production start
+npm run lint                 # Lint code
+npm run lint:fix             # Fix lint issues
+npm run deploy               # SSH to VPS + deploy.sh (requires .deploy.env)
+```
 
 ---
 
-## Деплой на VPS
+## Environment Variables
 
-1. Клонировать репозиторий
-2. `cp .env.example .env` + заполнить переменные
-3. `node src/auth.js` — получить GramJS-сессию
-4. `npm ci`
-5. `pm2 start ecosystem.config.cjs`
-6. `pm2 save && pm2 startup`
+| Variable | Description |
+|----------|-------------|
+| `BOT_TOKEN` | Bot token from @BotFather |
+| `TG_API_ID`, `TG_API_HASH` | From my.telegram.org |
+| `AI_PROVIDER` | AI provider: `auto`, `gemini`, `groq`, `openrouter` (default: `auto`) |
+| `GEMINI_API_KEY` | Gemini API key |
+| `GEMINI_PROXY_URL` | Proxy URL (xray), e.g. `http://127.0.0.1:10808` |
+| `GEMINI_MODEL` | Gemini model (default: `gemini-2.0-flash`) |
+| `GROQ_API_KEY` | Groq API key |
+| `GROQ_MODEL` | Groq model (default: `llama-3.3-70b-versatile`) |
+| `OPENROUTER_API_KEY` | OpenRouter API key |
+| `OPENROUTER_MODEL` | OpenRouter model |
+| `ADMIN_ID` | Telegram user_id of admin |
+| `CHANNELS` | Initial channels (comma-separated, without @) |
+| `DB_PATH` | SQLite file path (default: `./data/db.sqlite`) |
+| `DEBUG_AI` | Set to `1` or `true` to enable AI debug logging |
 
-Обновление: `git pull && npm ci && pm2 restart tg-digest-bot`
+**Note:** GramJS session is stored in DB (`settings.gramjs_session`), not in `.env`.
 
 ---
 
-## Важные нюансы
+## Code Conventions
 
-- **GramJS-сессия** хранится в БД (`settings.gramjs_session`), не в .env
-- **Рейтинг постов** персонализирован для каждого пользователя (user profile + channel priorities + feedback)
-- **Фильтрация**: скрытые каналы, minus-слова, рекламные посты (ИНН, erid)
-- **Утренний дайджест**: сначала тизер с кнопкой, затем полный дайджест
-- **Timezone**: Europe/Moscow для cron-задач
+- **ES Modules:** `import`/`export`, `type: "module"` in package.json
+- **Async:** `async`/`await` throughout
+- **Naming:** camelCase for variables/functions, UPPER_CASE for constants
+- **Database:** Synchronous `better-sqlite3` with WAL mode
+- **Formatting:** HTML for Telegram messages (`parse_mode: "HTML"`)
+- **Error Handling:** Console logging + user-friendly messages via `formatErrorForChat()`
+- **Code Language:** All string literals and comments must be in English
+
+---
+
+## Product Features
+
+### Personalization
+- User profile (interests) influences ranking
+- Channel priorities (normal/important)
+- Hidden channels per user
+- Minus-words filter
+- Feedback (like/dislike) improves future rankings
+
+### Morning Digest
+- **06:00 MSK:** Posts collected
+- **07:00 MSK:** Teaser sent with "Open digest" button, followed by full digest
+- Posts filtered by score ≥ 0.5, limited by `digest_max_items`
+
+### Digest Formats
+- **Full:** Emoji + summary + action + potential + links
+- **Compact:** Emoji + summary + links only
+- "Why in digest" available via "📌 Подробнее" button
+
+### Feedback
+- Like/dislike buttons under each post
+- Feedback stored and used for ranking
+
+### Channel Recommendations
+- AI recommends channels matching user interests
+- One-tap "Important" marking
+
+---
+
+## Important Notes
+
+- **GramJS session** is obtained once via `node src/auth.js` and stored in DB
+- **Timezone:** All cron jobs use Europe/Moscow timezone
+- **Post filtering:** Ads (ИНН, erid), hidden channels, minus-words are excluded
+- **Ranking is personalized:** Based on profile, channel priorities, and feedback history
+- **Forwarding:** Forwarding a post from a channel to the bot adds that channel to tracking
+- **Testing:** Manual testing via `npm run dev` (no automated tests)

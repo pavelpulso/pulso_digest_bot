@@ -1,14 +1,14 @@
 import { UIFormatter } from "../ui/UIFormatter.js"
 
 /**
- * Класс для управления статусными сообщениями в командах бота.
- * Реализует единую логику отображения прогресса выполнения задач.
+ * Status message manager for bot commands.
+ * Provides unified progress display logic.
  *
- * Использование:
+ * Usage:
  *   const status = new StatusMessage(ctx)
- *   await status.start("⏳ Начинаю...")
- *   await status.update("⏳ Делаю...")
- *   await status.replace("✅ Готово!", { reply_markup: ... })
+ *   await status.start("⏳ Starting...")
+ *   await status.update("⏳ Processing...")
+ *   await status.replace("✅ Done!", { reply_markup: ... })
  */
 export class StatusMessage {
 	constructor(ctx) {
@@ -19,8 +19,8 @@ export class StatusMessage {
 	}
 
 	/**
-	 * Показать стартовое сообщение
-	 * @param {string} text — текст сообщения (может содержать HTML)
+	 * Show start message
+	 * @param {string} text — message text (may contain HTML)
 	 * @returns {Promise<void>}
 	 */
 	async start(text) {
@@ -30,72 +30,69 @@ export class StatusMessage {
 	}
 
 	/**
-	 * Показать стартовое сообщение с прогрессом в процентах
-	 * @param {string} text — текст сообщения
-	 * @param {number} percent — текущий прогресс (0-100)
+	 * Show start message with progress percentage
+	 * @param {string} text — message text (may contain HTML)
+	 * @param {number} percent — current progress (0-100)
 	 * @returns {Promise<void>}
 	 */
 	async startProgress(text, percent) {
-		const safeText = UIFormatter.escapeHtml(text)
-		const fullText = `${safeText} <b>${percent}%</b>`
+		const fullText = `${text} <b>${percent}%</b>`
 		const msg = await this.ctx.reply(fullText, { parse_mode: "HTML" })
 		this.messageId = msg.message_id
 		this.currentPercent = percent
 	}
 
 	/**
-	 * Обновить текст статусного сообщения
-	 * @param {string} text — новый текст
+	 * Update status message text
+	 * @param {string} text — new text (may contain HTML)
 	 * @returns {Promise<void>}
 	 */
 	async update(text) {
 		if (!this.messageId) return
-		const safeText = UIFormatter.escapeHtml(text)
 		try {
 			await this.ctx.telegram.editMessageText(
 				this.chatId,
 				this.messageId,
 				null,
-				safeText,
+				text,
 				{ parse_mode: "HTML" }
 			)
 		} catch (e) {
-			// Игнорируем ошибки редактирования (сообщение могло быть удалено)
+			// Ignore edit errors (message may have been deleted)
 			console.warn("[StatusMessage.update] error:", e.message)
 		}
 	}
 
 	/**
-	 * Обновить прогресс в процентах
-	 * @param {string} text — базовый текст
-	 * @param {number} percent — текущий прогресс (0-100)
-	 * @param {string} [detail] — дополнительная информация (например "45/100 каналов — 3/7 батчей")
+	 * Update progress percentage
+	 * @param {string} text — base text (may contain HTML)
+	 * @param {number} percent — current progress (0-100)
+	 * @param {string} [detail] — additional info (e.g. "45/100 channels — 3/7 batches")
 	 * @returns {Promise<void>}
 	 */
 	async percent(text, percent, detail = "") {
 		this.currentPercent = percent
-		const safeText = UIFormatter.escapeHtml(text)
 		const safeDetail = detail ? `\n<i>${UIFormatter.escapeHtml(detail)}</i>` : ""
-		const fullText = `${safeText}\n<b>${percent}%</b>${safeDetail}`
+		const fullText = `${text}\n<b>${percent}%</b>${safeDetail}`
 		await this.update(fullText)
 	}
 
 	/**
-	 * Обновить только процент без смены текста (использует последний текст)
-	 * @param {number} percent — текущий прогресс (0-100)
+	 * Update only percentage without changing text (uses last text)
+	 * @param {number} percent — current progress (0-100)
 	 * @returns {Promise<void>}
 	 */
 	async updatePercent(percent) {
-		// Метод устарел, используйте percent(text, percent) вместо этого
-		// Оставлен для обратной совместимости
+		// Deprecated, use percent(text, percent) instead
+		// Kept for backward compatibility
 		if (!this.messageId) return
 		this.currentPercent = percent
 	}
 
 	/**
-	 * Заменить статусное сообщение на результат
-	 * @param {string} text — текст результата (может содержать HTML)
-	 * @param {object} options — опции Telegram API (reply_markup, parse_mode и т.д.)
+	 * Replace status message with result
+	 * @param {string} text — result text (may contain HTML)
+	 * @param {object} options — Telegram API options (reply_markup, parse_mode, etc.)
 	 * @returns {Promise<void>}
 	 */
 	async replace(text, options = {}) {
@@ -112,14 +109,19 @@ export class StatusMessage {
 				{ parse_mode: "HTML", ...options }
 			)
 		} catch (e) {
-			// Если не удалось отредактировать — отправляем новое сообщение
+			const errMsg = e.message || ""
+			// If message wasn't modified, ignore silently
+			if (errMsg.includes("message is not modified") || errMsg.includes("message is not changed")) {
+				return
+			}
+			// If edit failed, send a new message
 			console.warn("[StatusMessage.replace] edit failed, sending new:", e.message)
 			await this.ctx.reply(text, { parse_mode: "HTML", ...options })
 		}
 	}
 
 	/**
-	 * Удалить статусное сообщение
+	 * Remove status message
 	 * @returns {Promise<void>}
 	 */
 	async remove() {
@@ -133,7 +135,7 @@ export class StatusMessage {
 	}
 
 	/**
-	 * Получить ID текущего сообщения
+	 * Get current message ID
 	 * @returns {number|null}
 	 */
 	getId() {

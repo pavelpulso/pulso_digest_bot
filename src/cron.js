@@ -3,8 +3,8 @@ import { collectChannelPosts } from "./gramjs.js"
 import { getChannelUsernames, addChannel } from "./db.js"
 import { sendMorningDigests } from "./bot.js"
 
-const CRON_SCHEDULE = "0 6 * * *" // 06:00 каждый день
-const MORNING_DIGEST_SCHEDULE = "0 7 * * *" // 07:00 — рассылка дайджеста
+const CRON_SCHEDULE = "0 6 * * *" // 06:00 daily
+const MORNING_DIGEST_SCHEDULE = "0 7 * * *" // 07:00 — morning digest delivery
 
 function seedChannelsFromEnv() {
   const list = (process.env.CHANNELS || "").split(",").map((s) => s.trim().replace(/^@/, "")).filter(Boolean)

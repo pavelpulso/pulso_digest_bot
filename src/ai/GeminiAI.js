@@ -5,7 +5,7 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ""
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash"
 
 /**
- * Gemini AI провайдер через OpenAI-совместимый прокси.
+ * Gemini AI provider via OpenAI-compatible proxy.
  */
 export class GeminiAI extends BaseAI {
   constructor() {
@@ -29,8 +29,8 @@ export class GeminiAI extends BaseAI {
       stream: false
     }
     if (options.maxTokens) body.max_tokens = options.maxTokens
-    // response_format может не поддерживаться некоторыми прокси для Gemini
-    // Пропускаем его — Gemini и так возвращает JSON при соответствующем промпте
+    // response_format may not be supported by some proxies for Gemini
+    // Skipping it — Gemini returns JSON with proper prompt anyway
 
     return this.#chatWithRetry(url, GEMINI_API_KEY, body)
   }

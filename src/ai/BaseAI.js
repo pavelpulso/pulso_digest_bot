@@ -1,6 +1,6 @@
 /**
- * Базовый класс для AI-провайдеров.
- * Определяет общий интерфейс и общую логику для всех реализаций.
+ * Base class for AI providers.
+ * Defines common interface and logic for all implementations.
  */
 import {
   buildRankPrompt,
@@ -9,7 +9,7 @@ import {
   buildAuditAllChannelsPrompt,
   buildRecommendChannelsPrompt
 } from "./prompts.js"
-import { LIMITS, JSON_ARRAY_KEYS, VERDICTS, MAX_RETRIES, RETRY_DELAY_MS } from "./constants.js"
+import { LIMITS, JSON_ARRAY_KEYS, VERDICTS } from "./constants.js"
 
 export class BaseAI {
   constructor(name) {
@@ -24,29 +24,29 @@ export class BaseAI {
   }
 
   /**
-   * Парсинг JSON-массива из ответа.
+   * Parse JSON array from response.
    * @protected
    */
   #parseJSONArray(raw) {
     const cleaned = raw.replace(/```\w*\n?/g, "").trim()
-    
-    // Найти первую [ и последнюю ]
-    // Это нужно т.к. AI может добавлять текст до и после JSON
-    const startIndex = cleaned.indexOf('[')
-    const endIndex = cleaned.lastIndexOf(']')
-    
+
+    // Find first [ and last ]
+    // Needed because AI may add text before/after JSON
+    const startIndex = cleaned.indexOf("[")
+    const endIndex = cleaned.lastIndexOf("]")
+
     let jsonStr = cleaned
     if (startIndex >= 0 && endIndex > startIndex) {
       jsonStr = cleaned.slice(startIndex, endIndex + 1)
     }
-    
+
     let parsed
     try {
       parsed = JSON.parse(jsonStr)
     } catch (e) {
       console.error("[#parseJSONArray] Failed to parse JSON:")
       console.error("JSON string (first 500 chars):", jsonStr.slice(0, 500))
-      throw new Error(`${this.name}: invalid JSON - ${e.message}`)
+      throw new Error(`${this.name}: invalid JSON - ${e.message}`, { cause: e })
     }
     if (Array.isArray(parsed)) return parsed
     for (const key of JSON_ARRAY_KEYS) {
@@ -58,40 +58,40 @@ export class BaseAI {
   }
 
   /**
-   * Парсинг JSON-объекта из ответа.
+   * Parse JSON object from response.
    * @protected
    */
   #parseJSONObject(raw) {
     const cleaned = raw.replace(/```\w*\n?/g, "").trim()
-    
+
     console.log("[#parseJSONObject] Raw response preview:", raw.slice(0, 100))
     console.log("[#parseJSONObject] Cleaned preview:", cleaned.slice(0, 100))
-    
-    // Найти первую { и последнюю }
-    // Это нужно т.к. AI может добавлять текст до и после JSON
-    const startIndex = cleaned.indexOf('{')
-    const endIndex = cleaned.lastIndexOf('}')
-    
+
+    // Find first { and last }
+    // Needed because AI may add text before/after JSON
+    const startIndex = cleaned.indexOf("{")
+    const endIndex = cleaned.lastIndexOf("}")
+
     let jsonStr = cleaned
     if (startIndex >= 0 && endIndex > startIndex) {
       jsonStr = cleaned.slice(startIndex, endIndex + 1)
     }
-    
+
     console.log("[#parseJSONObject] JSON string preview:", jsonStr.slice(0, 200))
-    
+
     try {
       return JSON.parse(jsonStr)
     } catch (e) {
       console.error("[#parseJSONObject] Failed to parse JSON:")
       console.error("Full JSON string:", jsonStr)
-      throw new Error(`${this.name}: invalid JSON - ${e.message}`)
+      throw new Error(`${this.name}: invalid JSON - ${e.message}`, { cause: e })
     }
   }
 
-  async rankPosts(posts, userProfile = "", options = {}) {
+  async rankPosts(posts, userProfile = "", _options = {}) {
     if (posts.length === 0) return []
 
-    const { onProgress } = options
+    const { onProgress, systemPrompt } = _options
     if (typeof onProgress === "function") onProgress(10)
 
     const list = posts.map((p) => ({
@@ -100,17 +100,17 @@ export class BaseAI {
       text: (p.text || "").slice(0, LIMITS.RANK_TEXT)
     }))
 
-    const channelPriorities = options.channelPriorities || {}
+    const channelPriorities = _options.channelPriorities || {}
     const importantChannels = Object.entries(channelPriorities)
       .filter(([, p]) => p === 2)
       .map(([ch]) => ch)
       .join(", ")
 
-    const feedback = options.feedback || {}
+    const feedback = _options.feedback || {}
     const liked = feedback.liked || []
     const disliked = feedback.disliked || []
 
-    const prompt = buildRankPrompt(list, userProfile, importantChannels, liked, disliked)
+    const prompt = buildRankPrompt(list, userProfile, importantChannels, liked, disliked, systemPrompt || null)
 
     if (typeof onProgress === "function") onProgress(50)
     const raw = await this._callAPI(prompt, { type: "json_object" })
@@ -126,10 +126,10 @@ export class BaseAI {
     }))
   }
 
-  async generateSummaryBlocks(posts, dateLabel, userProfile = "", maxItems = 10, options = {}) {
+  async generateSummaryBlocks(posts, dateLabel, userProfile = "", maxItems = 10, _options = {}) {
     if (posts.length === 0) return { teaser: null, blocks: [] }
 
-    const { onProgress } = options
+    const { onProgress, systemPrompt } = _options
     if (typeof onProgress === "function") onProgress(10)
 
     const list = posts.map((p) => ({
@@ -141,7 +141,7 @@ export class BaseAI {
     }))
 
     const maxBlocks = Math.min(LIMITS.MAX_BLOCKS, Math.max(LIMITS.MIN_BLOCKS, maxItems))
-    const prompt = buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks)
+    const prompt = buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt || null)
 
     if (typeof onProgress === "function") onProgress(50)
     const raw = await this._callAPI(prompt, { type: "json_object" })
@@ -174,13 +174,13 @@ export class BaseAI {
     return { teaser, blocks: blocks.slice(0, maxBlocks) }
   }
 
-  async analyzeChannel(posts, channel, userProfile = "") {
+  async analyzeChannel(posts, channel, userProfile = "", systemPrompt = null) {
     const list = posts.map((p) => ({
       text: (p.text || "").slice(0, LIMITS.ANALYZE_TEXT),
       link: p.link
     }))
 
-    const prompt = buildAnalyzeChannelPrompt(channel, userProfile, list)
+    const prompt = buildAnalyzeChannelPrompt(channel, userProfile, list, systemPrompt)
     const raw = await this._callAPI(prompt, { type: "json_object" })
     const parsed = this.#parseJSONObject(raw)
 
@@ -195,14 +195,14 @@ export class BaseAI {
     }
   }
 
-  async auditAllChannels(channelsData, userProfile = "", options = {}) {
+  async auditAllChannels(channelsData, userProfile = "", _options = {}) {
     if (channelsData.length === 0) return []
 
-    const { onProgress } = options
+    const { onProgress, systemPrompt } = _options
     const BATCH_SIZE = 15
     const batches = []
-    
-    // Разбиваем на батчи по 15 каналов
+
+    // Split into batches of 15 channels
     for (let i = 0; i < channelsData.length; i += BATCH_SIZE) {
       batches.push(channelsData.slice(i, i + BATCH_SIZE))
     }
@@ -210,7 +210,7 @@ export class BaseAI {
     const allResults = []
     let completedBatches = 0
 
-    // Обрабатываем каждый батч
+    // Process each batch
     for (const batch of batches) {
       const list = batch.map((cd) => ({
         channel: cd.channel,
@@ -222,18 +222,18 @@ export class BaseAI {
       }))
 
       try {
-        const prompt = buildAuditAllChannelsPrompt(userProfile, list)
+        const prompt = buildAuditAllChannelsPrompt(userProfile, list, systemPrompt || null)
         console.log(`[auditAllChannels] Processing batch: ${batch.length} channels, prompt length: ${prompt.length}`)
         const raw = await this._callAPI(prompt, { type: "json_object", maxTokens: 2048 })
-        console.log(`[auditAllChannels] Raw response (first 300 chars):`, raw.slice(0, 300))
+        console.log("[auditAllChannels] Raw response (first 300 chars):", raw.slice(0, 300))
         const parsed = this.#parseJSONObject(raw)
-        console.log(`[auditAllChannels] Parsed channels:`, Array.isArray(parsed) ? parsed.length : (parsed.channels?.length || 0))
+        console.log("[auditAllChannels] Parsed channels:", Array.isArray(parsed) ? parsed.length : (parsed.channels?.length || 0))
         const batchResults = Array.isArray(parsed) ? parsed : (parsed.channels || [])
         allResults.push(...batchResults)
       } catch (e) {
         console.warn(`[auditAllChannels] Batch failed for ${batch.length} channels:`, e.message)
         console.error("Full error:", e)
-        // Fallback для этого батча
+        // Fallback for this batch
         for (const cd of batch) {
           const postCount = cd.posts.length || 1
           const totalViews = cd.posts.reduce((sum, p) => sum + (p.views || 0), 0) || 0
@@ -242,8 +242,8 @@ export class BaseAI {
             score: 0,
             avg_views: Math.round(totalViews / postCount),
             verdict: "mute",
-            summary: "Нет данных (AI недоступен)",
-            reason: "Не удалось получить оценку AI",
+            summary: "No data (AI unavailable)",
+            reason: "Failed to get AI score",
             problem_type: "none"
           })
         }
@@ -273,8 +273,8 @@ export class BaseAI {
           score: Number(item.score) || 0,
           avgViews: Number(item.avg_views) || Math.round(totalViews / postCount),
           verdict: ["keep", "review", "mute"].includes(item.verdict) ? item.verdict : "mute",
-          summary: item.summary ? String(item.summary).trim().slice(0, 200) : "Нет описания",
-          reason: item.reason ? String(item.reason).trim().slice(0, 400) : "Нет обоснования",
+          summary: item.summary ? String(item.summary).trim().slice(0, 200) : "No description",
+          reason: item.reason ? String(item.reason).trim().slice(0, 400) : "No explanation",
           problemType: ["spam", "irrelevant", "low_quality", "promo", "outdated", "low_frequency", "duplicate", "noise", "too_basic", "none"].includes(item.problem_type) ? item.problem_type : "none",
           scoreBreakdown: {
             quality: Number(item.score_breakdown?.quality) || 0.5,
@@ -288,11 +288,11 @@ export class BaseAI {
       .sort((a, b) => b.score - a.score)
   }
 
-  async recommendChannels(userProfile, channelUsernames) {
-    if (!channelUsernames?.length) return []
+  async recommendChannels(userProfile, _channelUsernames, systemPrompt = null) {
+    if (!_channelUsernames?.length) return []
 
-    const list = channelUsernames.slice(0, LIMITS.MAX_CHANNELS_ANALYZE)
-    const prompt = buildRecommendChannelsPrompt(userProfile, list)
+    const list = _channelUsernames.slice(0, LIMITS.MAX_CHANNELS_ANALYZE)
+    const prompt = buildRecommendChannelsPrompt(userProfile, list, systemPrompt)
 
     const raw = await this._callAPI(prompt, { type: "json_object", maxTokens: 1024 })
     const parsed = this.#parseJSONObject(raw)
@@ -311,7 +311,7 @@ export class BaseAI {
       }))
   }
 
-  async _callAPI(prompt, options) {
+  async _callAPI(_prompt, _options) {
     throw new Error("Method '_callAPI()' must be implemented")
   }
 

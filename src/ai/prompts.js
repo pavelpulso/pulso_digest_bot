@@ -4,13 +4,28 @@
  */
 
 /**
+ * Определяет контекст читателя: приоритет — systemPrompt, иначе — userProfile.
+ * @param {string|null} systemPrompt - Загруженный системный промпт
+ * @param {string} userProfile - Профиль пользователя (fallback)
+ * @returns {string} Контекст для промпта
+ */
+function getReaderContext(systemPrompt, userProfile) {
+  if (systemPrompt && systemPrompt.trim().length > 0) {
+    return systemPrompt.trim()
+  }
+  return userProfile || "не указан"
+}
+
+/**
  * Промпт для ранжирования постов.
  */
-export function buildRankPrompt(list, userProfile, importantChannels, liked, disliked) {
+export function buildRankPrompt(list, userProfile, importantChannels, liked, disliked, systemPrompt = null) {
   const priorityHint = importantChannels ? `\nВажные каналы: ${importantChannels}.` : ""
   const feedbackHint = (liked.length || disliked.length)
     ? `\nОбратная связь: релевантные [${liked.join(", ")}], нерелевантные [${disliked.join(", ")}].`
     : ""
+
+  const readerContext = getReaderContext(systemPrompt, userProfile)
 
   return `Ты — редактор дайджеста. Оцени каждый пост для читателя (0.0–1.0). Будь строг: только посты с явной личной пользой.
 
@@ -18,7 +33,7 @@ export function buildRankPrompt(list, userProfile, importantChannels, liked, dis
 - Score >= 0.6 только для постов с очевидной пользой: действие, решение, навык, возможность.
 - «Просто интересные» — score 0.3–0.5.
 
-Контекст читателя: ${userProfile || "не указан"}${priorityHint}${feedbackHint}
+Контекст читателя: ${readerContext}${priorityHint}${feedbackHint}
 
 Посты:
 ${JSON.stringify(list, null, 2)}
@@ -29,10 +44,12 @@ ${JSON.stringify(list, null, 2)}
 /**
  * Промпт для генерации блоков дайджеста.
  */
-export function buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks) {
+export function buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt = null) {
+  const readerContext = getReaderContext(systemPrompt, userProfile)
+
   return `Ты — редактор дайджеста. Дайджест за ${dateLabel}. Включай только посты с явной пользой.
 
-Контекст читателя: ${userProfile || "не указан"}
+Контекст читателя: ${readerContext}
 Посты: ${JSON.stringify(list, null, 2)}
 
 Правила:
@@ -49,19 +66,62 @@ export function buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks) {
 /**
  * Промпт для анализа канала.
  */
-export function buildAnalyzeChannelPrompt(channel, userProfile, list) {
-  return `Анализируй канал @${channel} для читателя.
+export function buildAnalyzeChannelPrompt(channel, userProfile, list, systemPrompt = null) {
+  const readerContext = getReaderContext(systemPrompt, userProfile)
 
-Профиль: ${userProfile || "не указан"}
-Посты (${list.length}): ${JSON.stringify(list, null, 2)}
+  return `
+<recent_posts>
+${JSON.stringify(list, null, 2)}
+</recent_posts>
 
-Верни JSON: score (0-10), signal_noise (0-1), verdict (keep/mute/unsubscribe), summary (20 слов), arguments (3 строки).`
+<reader_profile>
+${readerContext}
+</reader_profile>
+
+<task>
+Ты — аналитик Telegram-каналов. Выполни два шага:
+
+**ШАГ 1: Извлеки факты об АВТОРЕ канала только из <recent_posts>**
+- Локация: только если автор явно упомянул город/страну
+- Профессия: только если автор явно назвал себя
+- Опыт: только если автор явно указал стаж/опыт
+- Темы: основные темы канала
+
+**ШАГ 2: Оцени релевантность канала для читателя**
+- Сравни темы канала с интересами из <reader_profile>
+- Оцени пользу контента для этого конкретного читателя
+</task>
+
+<examples>
+ПРИМЕР 1 (правильно):
+Пост: "Я разработчик с 13-летним опытом. Живу в Праге."
+Профиль читателя: "Senior JS, Barcelona"
+Вывод: "Автор — разработчик с 13-летним опытом из Праги" ✅
+
+ПРИМЕР 2 (НЕПРАВИЛЬНО):
+Пост: "Я разработчик с 13-летним опытом." (без локации)
+Профиль читателя: "Senior JS, Barcelona"
+Вывод: "Senior разработчик из Barcelona" ❌ ОШИБКА: локация и Senior взяты из профиля читателя!
+
+ПРИМЕР 3 (правильно):
+Пост: "Переехал в Германию, ищу работу Junior."
+Профиль читателя: "CTO, Moscow"
+Вывод: "Junior разработчик из Германии" ✅
+</examples>
+
+<rules>
+- Факты об авторе берёшь ТОЛЬКО из <recent_posts>
+- <reader_profile> используешь ТОЛЬКО для оценки релевантности
+- Если факт не упомянут в постах явно — его нет
+</rules>
+
+Верни JSON: score (0-10), signal_noise (0-1), verdict (keep/mute/unsubscribe), summary (20 слов — портрет АВТОРА), arguments (3 строки).`.trim()
 }
 
 /**
  * Промпт для аудита всех каналов.
  */
-export function buildAuditAllChannelsPrompt(userProfile, list) {
+export function buildAuditAllChannelsPrompt(userProfile, list, systemPrompt = null) {
   // Упрощаем данные для каждого канала — только текст постов и views
   const simplified = list.map(ch => ({
     channel: ch.channel,
@@ -69,7 +129,7 @@ export function buildAuditAllChannelsPrompt(userProfile, list) {
     posts: ch.posts.map(p => ({ text: p.text.slice(0, 300), views: p.views }))
   }))
 
-  const profileContext = userProfile || "не указан"
+  const profileContext = getReaderContext(systemPrompt, userProfile)
 
   return `Ты — старший продуктолог с 20-летним опытом. Оцени каналы для читателя.
 
@@ -94,10 +154,12 @@ export function buildAuditAllChannelsPrompt(userProfile, list) {
 /**
  * Промпт для рекомендации каналов.
  */
-export function buildRecommendChannelsPrompt(userProfile, list) {
+export function buildRecommendChannelsPrompt(userProfile, list, systemPrompt = null) {
+  const profileContext = getReaderContext(systemPrompt, userProfile)
+
   return `Подбери до 5 каналов для читателя.
 
-Профиль: ${userProfile || "не указан"}
+Профиль: ${profileContext}
 Каналы: ${list.join(", ")}
 
 Верни ТОЛЬКО JSON без пояснений. Формат:

@@ -1,9 +1,9 @@
 /**
- * Названия кнопок текстовой клавиатуры
- * Используются для сравнения в обработчиках
+ * Text labels for reply keyboard buttons
+ * Used for comparison in handlers
  */
 
-// Главное меню
+// Main menu
 export const BTN_DIGEST = "📰 Digest"
 export const BTN_SUMMARY = "📋 Summary"
 export const BTN_CHANNELS = "📢 Channels"
@@ -13,22 +13,23 @@ export const BTN_CHANNEL_AUDIT = "📊 Channel Audit"
 export const BTN_SETTINGS = "⚙️ Settings"
 export const BTN_FETCH = "🔄 Fetch posts"
 
-// Настройки
+// Settings
 export const BTN_MINUS_WORDS = "🚫 Minus words"
 export const BTN_DIGEST_MAX_ITEMS = "🔢 Digest max items"
 export const BTN_DIGEST_FORMAT = "📦 Digest format"
 export const BTN_EDIT_PROFILE = "📝 Edit Profile"
+export const BTN_SYSTEM_PROMPT = "📜 System Prompt"
 
-// Каналы
+// Channels
 export const BTN_ADD_CHANNEL = "➕ Add channel"
 export const BTN_REMOVE_CHANNEL = "➖ Remove channel"
 
-// Навигация
+// Navigation
 export const BTN_BACK = "🔙 Back"
 
-// Массив всех кнопок для проверки
+// Array of all buttons for validation
 export const ALL_BUTTONS = [
-	// Главное меню
+	// Main menu
 	BTN_DIGEST,
 	BTN_SUMMARY,
 	BTN_CHANNELS,
@@ -37,14 +38,15 @@ export const ALL_BUTTONS = [
 	BTN_CHANNEL_AUDIT,
 	BTN_SETTINGS,
 	BTN_FETCH,
-	// Настройки
+	// Settings
 	BTN_MINUS_WORDS,
 	BTN_DIGEST_MAX_ITEMS,
 	BTN_DIGEST_FORMAT,
 	BTN_EDIT_PROFILE,
-	// Каналы
+	BTN_SYSTEM_PROMPT,
+	// Channels
 	BTN_ADD_CHANNEL,
 	BTN_REMOVE_CHANNEL,
-	// Навигация
+	// Navigation
 	BTN_BACK
 ]

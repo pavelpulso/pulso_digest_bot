@@ -1,15 +1,15 @@
 /**
- * Форматирование сообщений и пагинация.
+ * Message formatting and pagination utilities.
  */
 
 export const DIGEST_PAGE_SIZE = 10
 export const MAX_MESSAGE_LEN = 4096
 
-/** Минимальный score поста для попадания в дайджест (ниже — не показываем). */
+/** Minimum post score for digest inclusion (posts below are excluded). */
 export const MIN_DIGEST_SCORE = 0.5
 
 /**
- * Обрезает текст до maxLen, добавляет многоточие при необходимости.
+ * Truncates text to maxLen, adds ellipsis if needed.
  */
 export function truncate(text, maxLen = 300) {
   if (!text || typeof text !== "string") return ""
@@ -19,7 +19,7 @@ export function truncate(text, maxLen = 300) {
 }
 
 /**
- * Форматирует один пункт дайджеста: канал, описание, ссылка.
+ * Formats a single digest item: channel, description, link.
  */
 export function formatDigestItem(index, post, reason = "") {
   const channel = post.channel || "channel"
@@ -30,7 +30,7 @@ export function formatDigestItem(index, post, reason = "") {
 }
 
 /**
- * Собирает текст дайджеста для постов с offset и limit.
+ * Builds digest text for posts with offset and limit.
  */
 export function formatDigestPage(posts, reasonsMap = {}, offset = 0) {
   const lines = posts.map((p, i) => formatDigestItem(offset + i + 1, p, reasonsMap[p.id]))
@@ -38,7 +38,7 @@ export function formatDigestPage(posts, reasonsMap = {}, offset = 0) {
 }
 
 /**
- * Возвращает offset для страницы (0-based page index).
+ * Returns offset for page (0-based page index).
  */
 export function getOffsetForPage(pageIndex) {
   return Math.max(0, pageIndex) * DIGEST_PAGE_SIZE
@@ -46,7 +46,7 @@ export function getOffsetForPage(pageIndex) {
 
 
 /**
- * Форматирует список каналов для вывода.
+ * Formats channel list for display.
  */
 export function formatChannelList(channels) {
   if (!channels || channels.length === 0) return "No channels yet. Add via /add @channel or forward a post from a channel."
@@ -54,7 +54,7 @@ export function formatChannelList(channels) {
 }
 
 /**
- * Последние N дней для кнопок выбора даты (summary).
+ * Last N days for date selection buttons (summary).
  */
 export function getLastDays(count = 7) {
   const days = []
@@ -78,7 +78,7 @@ export function formatDateLabel(date) {
   return `${day} ${month} ${year}`
 }
 
-/** Подпись для диапазона дат, например "19–25 Feb 2026". */
+/** Date range label, e.g. "19–25 Feb 2026". */
 export function formatDateRangeLabel(sinceDate, untilDate) {
   const since = sinceDate instanceof Date ? sinceDate : new Date(sinceDate)
   const until = untilDate instanceof Date ? untilDate : new Date(untilDate)

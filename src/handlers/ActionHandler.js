@@ -10,7 +10,9 @@ import {
 	setUserChannelHidden,
 	getPostsForCalendarDay,
 	removeChannelsByUsernames,
-	removeChannel
+	removeChannel,
+	addChannel,
+	hasChannel
 } from "../db.js"
 import { formatDateLabel, formatChannelList } from "../utils.js"
 import { collectChannelPosts } from "../gramjs.js"
@@ -21,7 +23,7 @@ export class ActionHandler extends BaseHandler {
 		const count = parseInt(ctx.match[2], 10)
 		const userId = ctx.from?.id
 		if (!userId || isUserBanned(userId)) return
-		await this.safeAnswerCbQuery(ctx, "Формирую…")
+		await this.safeAnswerCbQuery(ctx, "Loading…")
 		return this.mgr.service.digestReply(ctx, offset, count)
 	}
 
@@ -33,38 +35,48 @@ export class ActionHandler extends BaseHandler {
 		const cached = this.mgr.cache.getBlock(postId)
 		if (!cached) {
 			const r = this.mgr.service.getRanking(userId, postId)
-			if (!r?.reason) return this.safeAnswerCbQuery(ctx, "Объяснение недоступно")
+			if (!r?.reason) return this.safeAnswerCbQuery(ctx, "Explanation unavailable")
 			await this.safeAnswerCbQuery(ctx)
-			return ctx.reply(`📌 <b>Почему в дайджесте:</b>\n\n${UIFormatter.escapeHtml(r.reason)}`, { parse_mode: "HTML" })
+			return ctx.reply(`📌 <b>Why in digest:</b>\n\n${UIFormatter.escapeHtml(r.reason)}`, { parse_mode: "HTML" })
 		}
 
 		await this.safeAnswerCbQuery(ctx)
 		const { block, postById, reason } = cached
 		const fullText = UIFormatter.formatBlockText(block, postById, { compact: false })
-		const expanded = fullText + (reason ? `\n\n📌 <b>Почему в дайджесте:</b>\n${UIFormatter.escapeHtml(reason)}` : "")
+		const expanded = fullText + (reason ? `\n\n📌 <b>Why in digest:</b>\n${UIFormatter.escapeHtml(reason)}` : "")
+
+		// Get channel and hidden status
+		const channel = postById[postId]?.channel || null
+		const isHidden = channel ? this.mgr.service.isUserChannelHidden(userId, channel) : false
 
 		try {
 			await ctx.editMessageText(expanded, {
 				parse_mode: "HTML",
 				disable_web_page_preview: true,
-				...KeyboardProvider.blockKeyboard(postId, false, true)
+				...KeyboardProvider.blockKeyboard(postId, false, true, channel, isHidden)
 			})
-		} catch (_) { }
+		} catch { /* Ignore */ }
 	}
 
 	async handleWhyCollapse(ctx) {
 		const postId = ctx.match[1]
 		const cached = this.mgr.cache.getBlock(postId)
-		if (!cached) return this.safeAnswerCbQuery(ctx, "Невозможно свернуть")
+		if (!cached) return this.safeAnswerCbQuery(ctx, "Cannot collapse")
 
 		await this.safeAnswerCbQuery(ctx)
+
+		// Get channel and hidden status
+		const userId = ctx.from?.id
+		const channel = cached.postById[postId]?.channel || null
+		const isHidden = channel && userId ? this.mgr.service.isUserChannelHidden(userId, channel) : false
+
 		try {
 			await ctx.editMessageText(cached.normalText, {
 				parse_mode: "HTML",
 				disable_web_page_preview: true,
-				...KeyboardProvider.blockKeyboard(postId, !!cached.reason, false)
+				...KeyboardProvider.blockKeyboard(postId, !!cached.reason, false, channel, isHidden)
 			})
-		} catch (_) { }
+		} catch { /* Ignore */ }
 	}
 
 	async handleFeedback(ctx) {
@@ -74,17 +86,42 @@ export class ActionHandler extends BaseHandler {
 		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
 
 		upsertPostFeedback(userId, postId, rating)
-		await this.safeAnswerCbQuery(ctx, "Спасибо, учту")
+		await this.safeAnswerCbQuery(ctx, "Thanks, noted")
+	}
+
+	async handleToggleHidden(ctx) {
+		const channel = ctx.match[1]
+		const userId = ctx.from?.id
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+
+		const isHidden = this.mgr.service.toggleUserChannelHidden(userId, channel)
+		const actionText = isHidden ? "🙈 Hidden" : "👁 Shown"
+		await this.safeAnswerCbQuery(ctx, `${actionText} @${channel}`)
+
+		// Update message keyboard
+		try {
+			const msg = ctx.callbackQuery?.message
+			const oldMarkup = msg?.reply_markup?.inline_keyboard || []
+			const newRows = oldMarkup.map((row) => {
+				return row.map((btn) => {
+					if (btn.callback_data === `toggle_hidden:${channel}`) {
+						return { ...btn, text: isHidden ? "👁 Show channel" : "🙈 Hide channel" }
+					}
+					return btn
+				})
+			})
+			await ctx.editMessageReplyMarkup({ inline_keyboard: newRows })
+		} catch { /* Ignore */ }
 	}
 
 	async handleDigest(ctx) {
-		await this.safeAnswerCbQuery(ctx, "⏳ Собираю дайджест…")
+		await this.safeAnswerCbQuery(ctx, "⏳ Building digest…")
 		return this.mgr.handlers.command.handleDigest(ctx)
 	}
 
 	async handleSummary(ctx) {
 		await this.safeAnswerCbQuery(ctx)
-		await ctx.editMessageText("📅 <b>Выберите дату для дайджеста:</b>", { parse_mode: "HTML", reply_markup: KeyboardProvider.summaryDate().reply_markup })
+		await ctx.editMessageText("📅 <b>Select date for digest:</b>", { parse_mode: "HTML", reply_markup: KeyboardProvider.summaryDate().reply_markup })
 	}
 
 	async handleSummaryDay(ctx) {
@@ -102,19 +139,19 @@ export class ActionHandler extends BaseHandler {
 			await this.safeAnswerCbQuery(ctx)
 
 			const status = new StatusMessage(ctx)
-			await status.startProgress("⏳ <b>Подготовка дайджеста за выбранную дату...</b>", 0)
+			await status.startProgress("⏳ <b>Preparing digest for selected date...</b>", 0)
 
-			// Этап 1: Загрузка постов (0-30%)
-			await status.percent("⏳ <b>Загружаю посты...</b>", 15)
+			// Stage 1: Load posts (0-30%)
+			await status.percent("⏳ <b>Loading posts...</b>", 15)
 			const user = getOrCreateUser(userId)
 			const date = dateStr
 			const label = formatDateLabel(date)
 
-			// Проверяем наличие постов за выбранную дату
+			// Check for posts on selected date
 			const posts = getPostsForCalendarDay(date)
 			if (posts.length === 0) {
-				// Выкачиваем посты по каналам за выбранный день
-				await status.percent("⏳ <b>Постов нет — выкачиваю из каналов...</b>", 25)
+				// Fetch posts from channels for selected day
+				await status.percent("⏳ <b>No posts — fetching from channels...</b>", 25)
 				const sinceTs = Math.floor(new Date(`${date}T00:00:00.000Z`).getTime() / 1000)
 				const untilTs = sinceTs + 24 * 60 * 60
 				await collectChannelPosts({
@@ -122,45 +159,45 @@ export class ActionHandler extends BaseHandler {
 					untilTs,
 					onProgress: async ({ channel, index, total, collected }) => {
 						const pct = Math.round(25 + (index / total) * 40)
-						const progressText = "⏳ <b>Выкачиваю посты...</b>\n\n" +
-							`${pct}% (${index}/${total} каналов)\n` +
-							`📥 Собрано: ${collected} постов\n` +
-							`📌 Сейчас: @${channel}`
+						const progressText = "⏳ <b>Fetching posts...</b>\n\n" +
+							`${pct}% (${index}/${total} channels)\n` +
+							`📥 Collected: ${collected} posts\n` +
+							`📌 Now: @${channel}`
 						await status.update(progressText)
 					}
 				})
-				await status.percent("⏳ <b>Посты выкачаны...</b>", 65)
+				await status.percent("⏳ <b>Posts fetched...</b>", 65)
 			}
 
-			// Этап 2: Ранжирование (30-70%)
-			await status.percent("⏳ <b>Ранжирую посты...</b>", 70)
+			// Stage 2: Ranking (30-70%)
+			await status.percent("⏳ <b>Ranking posts...</b>", 70)
 			await this.mgr.service.ensureRankingsForDate(userId, date, user.profile || "")
-			await status.percent("⏳ <b>Ранжирую посты...</b>", 80)
+			await status.percent("⏳ <b>Ranking posts...</b>", 80)
 
-			// Этап 3: Генерация блоков (80-100%)
-			await status.percent("⏳ <b>Генерирую блоки...</b>", 90)
+			// Stage 3: Block generation (80-100%)
+			await status.percent("⏳ <b>Generating blocks...</b>", 90)
 			await this.mgr.service.sendSummaryBlocks(ctx, date, label, 0, {
 				messageToEdit: ctx.callbackQuery?.message?.message_id,
 				status
 			})
 
-			// Завершение (100%)
-			await status.replace("✅ <b>Дайджест готов!</b>")
+			// Complete (100%)
+			await status.replace("✅ <b>Digest ready!</b>")
 		} catch (e) {
 			console.error("[handleSummaryDay] error:", e)
 			const userMsg = this.formatErrorForChat(e)
-			await status.replace("❌ <b>Не удалось создать дайджест</b>\n\n" + userMsg)
+			await status.replace("❌ <b>Failed to create digest</b>\n\n" + userMsg)
 		}
 	}
 
 	async handleChannels(ctx) {
-		await this.safeAnswerCbQuery(ctx, "⏳ Загружаю список каналов…")
+		await this.safeAnswerCbQuery(ctx, "⏳ Loading channels…")
 		const channels = getChannels()
 		await ctx.editMessageText(formatChannelList(channels), { ...KeyboardProvider.channels(), parse_mode: "HTML" })
 	}
 
 	async handleProfile(ctx) {
-		await this.safeAnswerCbQuery(ctx, "⏳ Загружаю профиль…")
+		await this.safeAnswerCbQuery(ctx, "⏳ Loading profile…")
 		const userId = ctx.from?.id
 		const user = getOrCreateUser(userId)
 		await ctx.editMessageText(this.mgr.service.renderProfileText(userId, user), { ...KeyboardProvider.profile(), parse_mode: "HTML" })
@@ -172,7 +209,7 @@ export class ActionHandler extends BaseHandler {
 		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
 
 		setUserChannelHidden(userId, channel, true)
-		await this.safeAnswerCbQuery(ctx, `🙈 @${channel} скрыт`)
+		await this.safeAnswerCbQuery(ctx, `🙈 @${channel} hidden`)
 
 		try {
 			const oldMarkup = ctx.callbackQuery?.message?.reply_markup?.inline_keyboard || []
@@ -180,34 +217,34 @@ export class ActionHandler extends BaseHandler {
 				.map((row) => row.filter((btn) => btn.callback_data !== `audit_hide:${channel}`))
 				.filter((row) => row.length > 0)
 			await ctx.editMessageReplyMarkup({ inline_keyboard: newRows })
-		} catch (_) { }
+		} catch { /* Ignore */ }
 	}
 
 	async handleAuditAll(ctx) {
 		await this.safeAnswerCbQuery(ctx)
 		const userId = ctx.from?.id
 		if (!userId || isUserBanned(userId)) return
-		await ctx.telegram.sendMessage(ctx.chat.id, "/channel_audit — запусти командой для полного аудита.")
+		await ctx.telegram.sendMessage(ctx.chat.id, "/channel_audit — run this command for full audit.")
 	}
 
 	async handleAuditHideAll(ctx) {
 		const userId = ctx.from?.id
 		const weak = this.mgr.cache.getAuditWeak(userId) || []
-		if (weak.length === 0) return this.safeAnswerCbQuery(ctx, "Нет данных")
+		if (weak.length === 0) return this.safeAnswerCbQuery(ctx, "No data")
 
 		for (const ch of weak) setUserChannelHidden(userId, ch, true)
-		await this.safeAnswerCbQuery(ctx, `🔕 Скрыто ${weak.length} каналов`)
+		await this.safeAnswerCbQuery(ctx, `🔕 Hidden ${weak.length} channels`)
 		this.mgr.cache.deleteAuditWeak(userId)
-		try { await ctx.editMessageReplyMarkup({ inline_keyboard: [] }) } catch (_) { }
+		try { await ctx.editMessageReplyMarkup({ inline_keyboard: [] }) } catch { /* Ignore */ }
 	}
 
 	async handleFetchDays(ctx) {
 		if (!this.mgr.handlers.admin.isAdmin(ctx.from?.id)) {
-			return this.safeAnswerCbQuery(ctx, "Только администратор")
+			return this.safeAnswerCbQuery(ctx, "Administrators only")
 		}
 		const days = parseInt(ctx.match[1], 10)
 		await this.safeAnswerCbQuery(ctx)
-		await ctx.editMessageText(`<b>🔄 Сбор постов за ${days} д...</b>`, { parse_mode: "HTML" })
+		await ctx.editMessageText(`<b>🔄 Fetching posts for ${days} days...</b>`, { parse_mode: "HTML" })
 
 		const nowTs = Math.floor(Date.now() / 1000)
 		const sinceTs = nowTs - (days * 24 * 60 * 60)
@@ -222,26 +259,26 @@ export class ActionHandler extends BaseHandler {
 			onProgress: async ({ channel, index, total, collected: currentCollected }) => {
 				const pct = Math.round((index / total) * 100)
 				const elapsed = Math.round((Date.now() - startTime) / 1000)
-				const progressText = `🔄 Сбор постов за ${days} д...\n\n` +
-					`${pct}% (${index}/${total} каналов)\n` +
-					`📥 Собрано: ${currentCollected} постов\n` +
-					`⏱ Прошло: ${elapsed}с\n` +
-					`📌 Сейчас: @${channel}`
+				const progressText = `🔄 Fetching posts for ${days} days...\n\n` +
+					`${pct}% (${index}/${total} channels)\n` +
+					`📥 Collected: ${currentCollected} posts\n` +
+					`⏱ Elapsed: ${elapsed}s\n` +
+					`📌 Now: @${channel}`
 				await status.update(progressText)
 			}
 		})
 
 		const elapsed = Math.round((Date.now() - startTime) / 1000)
-		let resultText = "✅ Сбор завершён\n\n" +
-			`📥 Собрано: ${collected} постов\n` +
-			`⏱ Всего: ${elapsed}с`
+		let resultText = "✅ Fetch complete\n\n" +
+			`📥 Collected: ${collected} posts\n` +
+			`⏱ Total: ${elapsed}s`
 		if (errors.length > 0) {
-			resultText += `\n⚠️ Ошибки: ${errors.length}`
+			resultText += `\n⚠️ Errors: ${errors.length}`
 			resultText += `\n${errors.slice(0, 5).map(e => `• ${e}`).join("\n")}`
-			if (errors.length > 5) resultText += `\n... и ещё ${errors.length - 5}`
+			if (errors.length > 5) resultText += `\n... and ${errors.length - 5} more`
 		}
 		if (perChannel.length > 0) {
-			resultText += "\n\nПо каналам:\n" +
+			resultText += "\n\nBy channel:\n" +
 				perChannel.map(c => `• @${c.channel}: ${c.count}`).join("\n")
 		}
 
@@ -254,17 +291,17 @@ export class ActionHandler extends BaseHandler {
 
 		const weakChannels = this.mgr.cache.getAuditWeak(userId)
 		if (!weakChannels || weakChannels.length === 0) {
-			return this.safeAnswerCbQuery(ctx, "Нет слабых каналов для удаления")
+			return this.safeAnswerCbQuery(ctx, "No weak channels to remove")
 		}
 
-		await this.safeAnswerCbQuery(ctx, `🗑 Удаляю ${weakChannels.length} каналов...`)
+		await this.safeAnswerCbQuery(ctx, `🗑 Removing ${weakChannels.length} channels...`)
 
 		const removed = removeChannelsByUsernames(weakChannels)
 		this.mgr.cache.deleteAuditWeak(userId)
 
 		try {
-			await ctx.editMessageText(`<b>✅ Удалено ${removed} слабых каналов</b>\n${weakChannels.slice(0, 10).map(c => `@${c}`).join("\n")}${weakChannels.length > 10 ? `\n... и ещё ${weakChannels.length - 10}` : ""}`, { parse_mode: "HTML" })
-		} catch (_) { }
+			await ctx.editMessageText(`<b>✅ Removed ${removed} weak channels</b>\n${weakChannels.slice(0, 10).map(c => `@${c}`).join("\n")}${weakChannels.length > 10 ? `\n... and ${weakChannels.length - 10} more` : ""}`, { parse_mode: "HTML" })
+		} catch { /* Ignore */ }
 	}
 
 	async handleRemoveOneChannel(ctx) {
@@ -272,15 +309,15 @@ export class ActionHandler extends BaseHandler {
 		const userId = ctx.from?.id
 		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
 
-		await this.safeAnswerCbQuery(ctx, `🗑 Удаляю @${channel}...`)
+		await this.safeAnswerCbQuery(ctx, `🗑 Removing @${channel}...`)
 
 		const removed = removeChannel(channel)
 		this.mgr.cache.deleteAuditWeak(userId)
 		this.mgr.cache.deleteAuditScores(userId)
 
 		try {
-			await ctx.editMessageText(removed ? `<b>✅ Удалён @${channel}</b>` : `<b>❌ Не удалось удалить @${channel}</b>`, { parse_mode: "HTML" })
-		} catch (_) { }
+			await ctx.editMessageText(removed ? `<b>✅ Removed @${channel}</b>` : `<b>❌ Failed to remove @${channel}</b>`, { parse_mode: "HTML" })
+		} catch { /* Ignore */ }
 	}
 
 	async handleFullReport(ctx) {
@@ -289,30 +326,30 @@ export class ActionHandler extends BaseHandler {
 
 		const scores = this.mgr.cache.getAuditScores(userId)
 		if (!scores || scores.length === 0) {
-			return this.safeAnswerCbQuery(ctx, "Нет данных аудита")
+			return this.safeAnswerCbQuery(ctx, "No audit data")
 		}
 
 		await this.safeAnswerCbQuery(ctx)
 
-		// Формируем полный отчёт с score breakdown
+		// Build full report with score breakdown
 		const lines = scores.map((s, i) => {
 			const emoji = { keep: "🟢", review: "🟡", mute: "🔴" }[s.verdict] || "⚪"
 			const problemLabel = s.problemType && s.problemType !== "none" ? `| ${s.problemType}` : ""
 			const qualityPct = Math.round(s.scoreBreakdown.quality * 100)
 			const relevancePct = Math.round(s.scoreBreakdown.relevance * 100)
 			const spamFreePct = Math.round(s.scoreBreakdown.spamFree * 100)
-			const recText = s.recommendation === "keep_if" && s.keepIfCondition ? `\n   ⚠️ Оставить если: ${s.keepIfCondition}` : ""
-			return `${i + 1}. ${emoji} @${s.channel} — ${s.score.toFixed(1)} ${problemLabel}\n   ${s.summary}\n   Оценка: Q:${qualityPct}% R:${relevancePct}% S:${spamFreePct}%\n   ${s.reason || "Нет обоснования"}${recText}`
+			const recText = s.recommendation === "keep_if" && s.keepIfCondition ? `\n   ⚠️ Keep if: ${s.keepIfCondition}` : ""
+			return `${i + 1}. ${emoji} @${s.channel} — ${s.score.toFixed(1)} ${problemLabel}\n   ${s.summary}\n   Score: Q:${qualityPct}% R:${relevancePct}% S:${spamFreePct}%\n   ${s.reason || "No explanation"}${recText}`
 		})
 
-		const metricsLegend = "\n\n<i>Метрики: Q=Качество, R=Релевантность, S=Чистота от спама</i>"
-		const reportText = `📊 <b>Полный отчёт: ${scores.length} каналов</b>\n\n` + lines.join("\n\n") + metricsLegend
+		const metricsLegend = "\n\n<i>Metrics: Q=Quality, R=Relevance, S=Spam-free</i>"
+		const reportText = `📊 <b>Full Report: ${scores.length} channels</b>\n\n` + lines.join("\n\n") + metricsLegend
 		const safeText = reportText.length > 4096 ? reportText.slice(0, 4093) + "…" : reportText
 
 		try {
 			await ctx.editMessageText(safeText, { parse_mode: "HTML", disable_web_page_preview: true })
-		} catch (e) {
-			// Если не влезает в одно сообщение — отправляем частями
+		} catch {
+			// If too long for one message — send as separate message
 			await ctx.reply(safeText, { parse_mode: "HTML", disable_web_page_preview: true })
 		}
 	}
@@ -323,37 +360,37 @@ export class ActionHandler extends BaseHandler {
 
 		const scores = this.mgr.cache.getAuditScores(userId)
 		if (!scores || scores.length === 0) {
-			return this.safeAnswerCbQuery(ctx, "Нет данных аудита")
+			return this.safeAnswerCbQuery(ctx, "No audit data")
 		}
 
 		const muteChannels = scores.filter(s => s.verdict === "mute")
 		const keepChannels = scores.filter(s => s.verdict !== "mute")
-		
+
 		if (muteChannels.length === 0) {
-			return this.safeAnswerCbQuery(ctx, "Нет каналов для удаления")
+			return this.safeAnswerCbQuery(ctx, "No channels to remove")
 		}
 
 		await this.safeAnswerCbQuery(ctx)
 
-		// Превью оптимизации
+		// Optimization preview
 		const currentAvg = (scores.reduce((sum, s) => sum + s.score, 0) / scores.length).toFixed(1)
 		const newAvg = (keepChannels.reduce((sum, s) => sum + s.score, 0) / Math.max(1, keepChannels.length)).toFixed(1)
-		const timeSaved = muteChannels.length * 3 // ~3 мин на канал в день
+		const timeSaved = muteChannels.length * 3 // ~3 min per channel per day
 
-		const previewText = "⚡ <b>Оптимизация ленты</b>\n\n" +
-			`<b>Сейчас:</b> ${scores.length} каналов, средний score: ${currentAvg}\n` +
-			`<b>После:</b> ${keepChannels.length} каналов, средний score: ${newAvg}\n\n` +
-			`<b>Удалить (${muteChannels.length}):</b>\n` +
+		const previewText = "⚡ <b>Feed Optimization</b>\n\n" +
+			`<b>Current:</b> ${scores.length} channels, avg score: ${currentAvg}\n` +
+			`<b>After:</b> ${keepChannels.length} channels, avg score: ${newAvg}\n\n` +
+			`<b>Remove (${muteChannels.length}):</b>\n` +
 			muteChannels.slice(0, 10).map(c => `@${c.channel}`).join("\n") +
-			(muteChannels.length > 10 ? `\n... и ещё ${muteChannels.length - 10}` : "") +
-			`\n\n<i>~${timeSaved} мин в день сэкономлено</i>`
+			(muteChannels.length > 10 ? `\n... and ${muteChannels.length - 10} more` : "") +
+			`\n\n<i>~${timeSaved} min/day saved</i>`
 
 		const keyboard = {
 			reply_markup: {
 				inline_keyboard: [
 					[
-						{ text: "✅ Подтвердить удаление", callback_data: "optimize_confirm" },
-						{ text: "❌ Отмена", callback_data: "optimize_cancel" }
+						{ text: "✅ Confirm removal", callback_data: "optimize_confirm" },
+						{ text: "❌ Cancel", callback_data: "optimize_cancel" }
 					]
 				]
 			}
@@ -361,7 +398,7 @@ export class ActionHandler extends BaseHandler {
 
 		try {
 			await ctx.editMessageText(previewText, { parse_mode: "HTML", ...keyboard })
-		} catch (_) {
+		} catch {
 			await ctx.reply(previewText, { parse_mode: "HTML", ...keyboard })
 		}
 	}
@@ -371,14 +408,14 @@ export class ActionHandler extends BaseHandler {
 		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
 
 		const scores = this.mgr.cache.getAuditScores(userId)
-		if (!scores) return this.safeAnswerCbQuery(ctx, "Нет данных аудита")
+		if (!scores) return this.safeAnswerCbQuery(ctx, "No audit data")
 
 		const muteChannels = scores.filter(s => s.verdict === "mute").map(s => s.channel)
 		if (muteChannels.length === 0) {
-			return this.safeAnswerCbQuery(ctx, "Нет каналов для удаления")
+			return this.safeAnswerCbQuery(ctx, "No channels to remove")
 		}
 
-		await this.safeAnswerCbQuery(ctx, `🗑 Удаляю ${muteChannels.length} каналов...`)
+		await this.safeAnswerCbQuery(ctx, `🗑 Removing ${muteChannels.length} channels...`)
 
 		const removed = removeChannelsByUsernames(muteChannels)
 		this.mgr.cache.deleteAuditScores(userId)
@@ -388,17 +425,17 @@ export class ActionHandler extends BaseHandler {
 		const newAvg = (keepChannels.reduce((sum, s) => sum + s.score, 0) / Math.max(1, keepChannels.length)).toFixed(1)
 
 		try {
-			await ctx.editMessageText(`<b>✅ Оптимизация завершена!</b>\n\nУдалено: ${removed} каналов\nОсталось: ${keepChannels.length} каналов\nСредний score: ${newAvg}`, { parse_mode: "HTML" })
-		} catch (_) {
-			await ctx.reply(`<b>✅ Оптимизация завершена!</b>\n\nУдалено: ${removed} каналов\nОсталось: ${keepChannels.length} каналов\nСредний score: ${newAvg}`, { parse_mode: "HTML" })
+			await ctx.editMessageText(`<b>✅ Optimization complete!</b>\n\nRemoved: ${removed} channels\nRemaining: ${keepChannels.length} channels\nAvg score: ${newAvg}`, { parse_mode: "HTML" })
+		} catch {
+			await ctx.reply(`<b>✅ Optimization complete!</b>\n\nRemoved: ${removed} channels\nRemaining: ${keepChannels.length} channels\nAvg score: ${newAvg}`, { parse_mode: "HTML" })
 		}
 	}
 
 	async handleOptimizeCancel(ctx) {
-		await this.safeAnswerCbQuery(ctx, "❌ Отменено")
+		await this.safeAnswerCbQuery(ctx, "❌ Cancelled")
 		try {
-			await ctx.editMessageText("<b>❌ Оптимизация отменена</b>", { parse_mode: "HTML" })
-		} catch (_) { }
+			await ctx.editMessageText("<b>❌ Optimization cancelled</b>", { parse_mode: "HTML" })
+		} catch { /* Ignore */ }
 	}
 
 	async handleAnalyzeChannelClick(ctx) {
@@ -408,9 +445,81 @@ export class ActionHandler extends BaseHandler {
 		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
 
 		await this.safeAnswerCbQuery(ctx)
-		await ctx.editMessageText(`🔍 Анализирую @${channelName}...`)
+		await ctx.editMessageText(`🔍 Analyzing @${channelName}...`)
 
-		// Вызываем команду анализа канала
+		// Call channel analysis command
 		return this.mgr.handlers.command.handleAnalyzeChannel(ctx, channelName)
+	}
+
+	async handleChannelAdd(ctx) {
+		const channelName = ctx.match[1]
+		const userId = ctx.from?.id
+
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+
+		// Check if channel already added
+		const isAlreadyAdded = hasChannel(channelName)
+		if (isAlreadyAdded) {
+			return this.safeAnswerCbQuery(ctx, `✅ @${channelName} already added`)
+		}
+
+		await this.safeAnswerCbQuery(ctx, `⏳ Adding @${channelName}...`)
+
+		const result = addChannel(channelName, userId)
+
+		// Update message keyboard
+		try {
+			const newKeyboard = KeyboardProvider.analyzeChannelResult(channelName, true)
+			await ctx.editMessageReplyMarkup(newKeyboard.reply_markup)
+		} catch {
+			// Ignore error
+		}
+
+		if (result.ok) {
+			await ctx.reply(`✅ Channel <b>@${UIFormatter.escapeHtml(channelName)}</b> added!`, { parse_mode: "HTML" })
+		} else {
+			await ctx.reply(`⚠️ Channel <b>@${UIFormatter.escapeHtml(channelName)}</b> already exists.`, { parse_mode: "HTML" })
+		}
+	}
+
+	async handleChannelSkip(ctx) {
+		const channelName = ctx.match[1]
+		const userId = ctx.from?.id
+
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+
+		await this.safeAnswerCbQuery(ctx)
+
+		// Just hide buttons, keep message
+		try {
+			const newKeyboard = KeyboardProvider.analyzeChannelResult(channelName, true)
+			await ctx.editMessageReplyMarkup(newKeyboard.reply_markup)
+		} catch {
+			// Ignore error
+		}
+	}
+
+	async handleAnalyzeChannelMenu(ctx) {
+		const userId = ctx.from?.id
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+
+		await this.safeAnswerCbQuery(ctx)
+
+		const channels = getChannels()
+		if (channels.length === 0) {
+			return ctx.editMessageText(
+				"🔍 <b>Channel Analysis:</b>\n\n" +
+				"No channels to analyze. Add channels via <code>/add @channel</code>",
+				{ parse_mode: "HTML" }
+			)
+		}
+
+		const channelList = channels.map((ch, i) => `${i + 1}. @${ch.username}`).join("\n")
+		await ctx.editMessageText(
+			"🔍 <b>Channel Analysis:</b>\n\n" +
+			`Select a channel to analyze:\n\n${channelList}\n\n` +
+			"Or send channel name:\n<code>@username</code>",
+			{ parse_mode: "HTML", reply_markup: KeyboardProvider.analyzeChannelList(channels).reply_markup }
+		)
 	}
 }
