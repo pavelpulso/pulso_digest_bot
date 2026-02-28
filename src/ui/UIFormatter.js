@@ -18,7 +18,7 @@ export class UIFormatter {
 		const suffix = opts.morning ? "\n\n<i>/digest — more posts</i>" : ""
 		const safeLabel = this.escapeHtml(label)
 		const safeTeaser = teaser ? this.escapeHtml(teaser) : ""
-		
+
 		// Build header with post count info
 		let header
 		if (safeTeaser) {
@@ -26,12 +26,15 @@ export class UIFormatter {
 		} else {
 			header = `📰 <b>Digest for ${safeLabel}</b> (${count} items)${suffix}`
 		}
-		
-		// Add total posts info if provided
-		if (opts.total !== undefined && opts.total !== opts.count) {
+
+		// Add stats: collected vs filtered
+		if (opts.allPostsCount !== undefined) {
+			const filtered = opts.allPostsCount - count
+			header += `\n\n<i>📥 Collected: ${opts.allPostsCount} posts | 🎯 Filtered: ${filtered} posts</i>`
+		} else if (opts.total !== undefined && opts.total !== count) {
 			header += `\n\n<i>Filtered from ${opts.total} posts</i>`
 		}
-		
+
 		return header.trim()
 	}
 

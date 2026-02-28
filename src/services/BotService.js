@@ -301,7 +301,10 @@ export class BotService {
 		const rankMap = getRankingsMap(userId, date)
 		const compact = getDigestFormat(userId) === "compact"
 
-		const header = UIFormatter.formatDigestHeader(label, result.teaser, result.blocks.length, { total })
+		// Get total collected posts count for stats
+		const allPostsCount = getPostsForCalendarDay(date).length
+
+		const header = UIFormatter.formatDigestHeader(label, result.teaser, result.blocks.length, { total, allPostsCount })
 
 		// Calculate next offset and check if more posts available
 		const nextOffset = offset + count
@@ -553,8 +556,11 @@ export class BotService {
 		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", user.digest_max_items, { systemPrompt })
 		if (!result.blocks?.length) return null
 
+		// Get total collected posts count for stats
+		const allPostsCount = getPostsForCalendarDay(date).length
+
 		return {
-			header: UIFormatter.formatDigestHeader("morning", result.teaser, result.blocks.length, { morning: true, total }),
+			header: UIFormatter.formatDigestHeader("morning", result.teaser, result.blocks.length, { morning: true, total, allPostsCount }),
 			teaser: result.teaser,
 			blocks: result.blocks,
 			postById: UIFormatter.buildPostById(posts),
@@ -576,8 +582,11 @@ export class BotService {
 		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", user.digest_max_items, { systemPrompt })
 		if (!result.blocks?.length) return null
 
+		// Get total collected posts count for stats
+		const allPostsCount = getPostsForCalendarDay(date).length
+
 		return {
-			header: UIFormatter.formatDigestHeader(label, result.teaser, result.blocks.length, { total }),
+			header: UIFormatter.formatDigestHeader(label, result.teaser, result.blocks.length, { total, allPostsCount }),
 			teaser: result.teaser,
 			blocks: result.blocks,
 			postById: UIFormatter.buildPostById(posts),
