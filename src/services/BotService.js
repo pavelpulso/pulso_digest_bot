@@ -162,7 +162,7 @@ export class BotService {
 		// Debug: check what scores we have in DB
 		const allRankings = getRankedPostIds(userId, date, 100, 0)
 		console.log("[getDigestPostIds] allRankings in DB:", allRankings.length)
-		
+
 		// Adaptive threshold: start with MIN_DIGEST_SCORE (0.5)
 		let threshold = MIN_DIGEST_SCORE
 
@@ -229,6 +229,35 @@ export class BotService {
 			postIds: allIds.slice(offset, offset + limit),
 			total: allIds.length,
 			threshold
+		}
+	}
+
+	/** Get filtered posts (score 0.3-0.5) that were excluded from main digest */
+	getFilteredPostIds(userId, date, limit = 7) {
+		console.log("[getFilteredPostIds] userId:", userId, "date:", date, "limit:", limit)
+		
+		// Get posts with score 0.3-0.5 (filtered out from main digest)
+		const allIds = getRankedPostIds(userId, date, 10000, 0)
+		const rankingsMap = getRankingsMap(userId, date)
+		
+		// Filter by score range 0.3-0.5 and sort by score desc
+		const filteredIds = allIds
+			.filter(id => {
+				const rank = rankingsMap[id]
+				return rank && rank.score >= 0.3 && rank.score < 0.5
+			})
+			.sort((a, b) => {
+				const scoreA = rankingsMap[a]?.score || 0
+				const scoreB = rankingsMap[b]?.score || 0
+				return scoreB - scoreA
+			})
+			.slice(0, limit)
+		
+		console.log("[getFilteredPostIds] filteredIds.length:", filteredIds.length)
+		return {
+			postIds: filteredIds,
+			total: filteredIds.length,
+			threshold: 0.3
 		}
 	}
 
@@ -319,13 +348,24 @@ export class BotService {
 		}
 		row.push({ text: "📋 Summary", callback_data: "summary" })
 
+		// Add button for filtered posts (score 0.3-0.5) if we have main digest posts
+		const hasFilteredButton = offset === 0 && count === DIGEST_PAGE_SIZE && total > 0
+		const filteredRow = []
+		if (hasFilteredButton) {
+			filteredRow.push({ text: "📬 Show next 7 (lower score)", callback_data: "filtered:7" })
+		}
+
 		// Replace status message with digest header (100%)
 		if (status) {
-			await status.replace(header, { reply_markup: { inline_keyboard: [row] }, disable_web_page_preview: true, parse_mode: "HTML" })
+			const keyboard = [row]
+			if (filteredRow.length > 0) keyboard.push(filteredRow)
+			await status.replace(header, { reply_markup: { inline_keyboard: keyboard }, disable_web_page_preview: true, parse_mode: "HTML" })
 		} else {
+			const keyboard = [row]
+			if (filteredRow.length > 0) keyboard.push(filteredRow)
 			await ctx.telegram.sendMessage(ctx.chat.id, header, {
 				parse_mode: "HTML",
-				reply_markup: { inline_keyboard: [row] },
+				reply_markup: { inline_keyboard: keyboard },
 				disable_web_page_preview: true
 			})
 		}
@@ -362,6 +402,76 @@ export class BotService {
 
 		// Track digest open in stats
 		upsertUserStat(userId, date, { digest_opened: 1, posts_read: result.blocks.length })
+	}
+
+	/** Show filtered posts (score 0.3-0.5) as additional digest */
+	async showFilteredPosts(ctx, limit = 7) {
+		const userId = ctx.from?.id
+		if (!userId) return
+
+		const date = this.digestDate()
+		const { postIds, total } = this.getFilteredPostIds(userId, date, limit)
+
+		if (postIds.length === 0) {
+			return ctx.reply("ℹ️ <b>No filtered posts</b>\n\nAll posts with score >= 0.3 are already shown in the main digest.", { parse_mode: "HTML" })
+		}
+
+		const posts = getPostsByIds(postIds)
+		const orderMap = Object.fromEntries(postIds.map((id, i) => [id, i]))
+		posts.sort((a, b) => orderMap[a.id] - orderMap[b.id])
+
+		const user = getOrCreateUser(userId)
+		const label = formatDateLabel(date)
+		const systemPrompt = await getUserSystemPrompt(user)
+
+		// Generate blocks for filtered posts
+		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", limit, { systemPrompt })
+
+		if (!result.blocks?.length) {
+			return ctx.reply("⚠️ Failed to generate blocks for filtered posts.", { parse_mode: "HTML" })
+		}
+
+		// Header for filtered posts
+		const header = `📬 <b>Additional posts (${postIds.length})</b>\n\n<i>These posts had lower scores (0.3-0.5) but may still be interesting.</i>`
+
+		await ctx.reply(header, { parse_mode: "HTML" })
+
+		const postById = UIFormatter.buildPostById(posts)
+		const rankMap = getRankingsMap(userId, date)
+		const compact = getDigestFormat(userId) === "compact"
+
+		for (const block of result.blocks) {
+			const postId = block.ids.length === 1 ? block.ids[0] : null
+			const reason = postId ? rankMap[postId]?.reason : null
+			const channel = postId && postById[postId] ? postById[postId].channel : null
+			const blockText = UIFormatter.formatBlockText(block, postById, { compact })
+			const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false, channel)
+
+			await ctx.telegram.sendMessage(ctx.chat.id, blockText, {
+				parse_mode: "HTML",
+				disable_web_page_preview: true,
+				...kb
+			})
+			if (postId) this.mgr.cache.setBlock(postId, { normalText: blockText, block, postById, reason })
+		}
+
+		// Add back button
+		const backKeyboard = {
+			inline_keyboard: [[{ text: "📰 Back to digest", callback_data: "digest" }]]
+		}
+		await ctx.reply("📊 <b>How useful was this digest?</b>", {
+			parse_mode: "HTML",
+			reply_markup: {
+				inline_keyboard: [
+					[
+						{ text: "👍 Useful", callback_data: `digest_fb:${date}:1` },
+						{ text: "😐 So-so", callback_data: `digest_fb:${date}:0` },
+						{ text: "👎 Irrelevant", callback_data: `digest_fb:${date}:-1` }
+					],
+					[{ text: "📰 Back to digest", callback_data: "digest" }]
+				]
+			}
+		})
 	}
 
 	getRanking(userId, postId) {

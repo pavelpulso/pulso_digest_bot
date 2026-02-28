@@ -33,6 +33,15 @@ export class ActionHandler extends BaseHandler {
 		return this.mgr.service.digestReply(ctx, offset, count)
 	}
 
+	async handleFiltered(ctx) {
+		const limit = parseInt(ctx.match[1], 10)
+		const userId = ctx.from?.id
+		console.log("[handleFiltered] userId:", userId, "limit:", limit)
+		if (!userId || isUserBanned(userId)) return
+		await this.safeAnswerCbQuery(ctx, "Loading filtered posts…")
+		return this.mgr.service.showFilteredPosts(ctx, limit)
+	}
+
 	async handleWhy(ctx) {
 		const postId = ctx.match[1]
 		const userId = ctx.from?.id

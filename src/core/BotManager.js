@@ -103,6 +103,7 @@ export class BotManager {
 		const { action: act } = this.handlers
 
 		this.bot.action(/^more:(\d+):(\d+)$/, (ctx) => act.handleMore(ctx))
+		this.bot.action(/^filtered:(\d+)$/, (ctx) => act.handleFiltered(ctx))
 		this.bot.action(/^why:(.+)$/, (ctx) => act.handleWhy(ctx))
 		this.bot.action(/^why_collapse:(.+)$/, (ctx) => act.handleWhyCollapse(ctx))
 		this.bot.action(/^fb:(.+):(-?1)$/, (ctx) => act.handleFeedback(ctx))
