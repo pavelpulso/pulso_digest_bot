@@ -191,6 +191,21 @@ npm run deploy               # SSH to VPS + deploy.sh (requires .deploy.env)
 - **Error Handling:** Console logging + user-friendly messages via `formatErrorForChat()`
 - **Code Language:** All string literals and comments must be in English
 
+### File Size Limit
+
+**Rule:** Keep files under **400 lines** (code only, excluding blank lines and comments).
+
+**If a file exceeds 400 lines:**
+1. Extract related functions into a separate module (e.g., `src/services/`, `src/handlers/`, `src/ui/`)
+2. Split by responsibility (e.g., commands → `CommandHandler.js`, actions → `ActionHandler.js`)
+3. Move constants/configs to `utils.js` or dedicated `constants.js`
+4. Extract UI/keyboard logic to `src/ui/`
+5. Extract service logic to `src/services/`
+
+**Exceptions:**
+- `db.js` — Database schema + operations (can be larger due to many queries)
+- `prompts.js` — AI prompts (can be larger due to prompt templates)
+
 ---
 
 ## Product Features
