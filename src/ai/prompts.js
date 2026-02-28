@@ -121,7 +121,8 @@ Posts: ${JSON.stringify(list, null, 2)}
 Rules:
 - JSON with teaser and blocks (max ${maxBlocks}).
 - teaser: up to 12 words, catchy essence — what's the main point of this digest.
-- blocks: only useful content, no ads, polls, announcements, filler content.
+- IMPORTANT: Create ONE block for EACH post in the list above. Do NOT skip or filter posts — they are already pre-selected by relevance.
+- blocks: transform each post into a useful block with essence, potential, and action.
 - IMPORTANT: Only combine posts if they are DUPLICATES — same news/event posted by different channels. Do NOT merge different posts on similar topics — each unique post gets its own block.
 - Each block:
   • ids: array of post IDs (multiple IDs only for duplicates from different channels)

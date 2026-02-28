@@ -128,9 +128,10 @@ export class CommandHandler extends BaseHandler {
 		// If no posts or too few (< 5) — fetch from last 48h to ensure we cover the digest period
 		if (posts.length < 5) {
 			await status.percent("⏳ <b>Not enough posts — fetching from channels...</b>\n\n📌 Channels: " + channels.map(c => `@${c}`).slice(0, 10).join(", ") + (channels.length > 10 ? `... +${channels.length - 10} more` : ""), 15)
-			// Fetch posts from 48 hours ago to ensure we cover 06:00 MSK yesterday to now
+			// Fetch posts from 72 hours ago to ensure we cover the full digest period (06:00 MSK yesterday to now)
+			// Using 72h instead of 48h to account for timezone differences and ensure we don't miss posts
 			const nowTs = Math.floor(Date.now() / 1000)
-			const sinceTs = nowTs - 48 * 60 * 60
+			const sinceTs = nowTs - 72 * 60 * 60
 			try {
 				const result = await collectChannelPosts({
 					sinceTs,

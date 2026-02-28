@@ -51,11 +51,12 @@ export class BotService {
 		let allPosts = getPostsForCalendarDay(date)
 		console.log(`[ensureRankings] userId=${userId} date=${date} allPosts=${allPosts.length}`)
 
-		// If no posts or too few (< 5) — fetch last 48 hours to ensure we cover the digest period
+		// If no posts or too few (< 5) — fetch last 72 hours to ensure we cover the digest period
+		// Using 72h instead of 48h to account for timezone differences and ensure we don't miss posts
 		if (allPosts.length < 5) {
 			console.log(`[ensureRankings] Not enough posts (${allPosts.length}), fetching...`)
 			const nowTs = Math.floor(Date.now() / 1000)
-			const sinceTs = nowTs - 48 * 60 * 60
+			const sinceTs = nowTs - 72 * 60 * 60
 			await collectChannelPosts({ sinceTs, untilTs: nowTs })
 			allPosts = getPostsForCalendarDay(date)
 			console.log(`[ensureRankings] After fetch: allPosts=${allPosts.length}`)
