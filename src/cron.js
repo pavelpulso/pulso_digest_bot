@@ -19,18 +19,40 @@ function seedChannelsFromEnv() {
 }
 
 async function runCollection() {
+  const startTime = Date.now()
   console.log("[cron] Starting channel post collection...")
-  seedChannelsFromEnv()
-  const { collected, errors } = await collectChannelPosts()
-  if (errors.length) console.error("[cron] Errors:", errors)
-  console.log(`[cron] Collected ${collected} posts.`)
+  try {
+    seedChannelsFromEnv()
+    const { collected, errors, perChannel } = await collectChannelPosts()
+    const elapsed = Math.round((Date.now() - startTime) / 1000)
+    
+    if (errors.length) {
+      console.error("[cron] Errors:", errors)
+    }
+    console.log(`[cron] Collected ${collected} posts in ${elapsed}s.`)
+    if (perChannel && perChannel.length > 0) {
+      console.log("[cron] Per channel:", perChannel.map(c => `${c.channel}:${c.count}`).join(", "))
+    }
+  } catch (err) {
+    console.error("[cron] Fatal error:", err.message, err.stack)
+  }
+}
+
+async function runMorningDigest(botInstance) {
+  console.log("[cron] Starting morning digest delivery...")
+  try {
+    await sendMorningDigests(botInstance)
+    console.log("[cron] Morning digest delivery completed.")
+  } catch (err) {
+    console.error("[cron] Morning digest error:", err.message, err.stack)
+  }
 }
 
 export function startCron(botInstance) {
   cron.schedule(CRON_SCHEDULE, runCollection, { timezone: "Europe/Moscow" })
   console.log("[cron] Scheduled daily collection at 06:00 (Europe/Moscow).")
   if (botInstance) {
-    cron.schedule(MORNING_DIGEST_SCHEDULE, () => sendMorningDigests(botInstance), {
+    cron.schedule(MORNING_DIGEST_SCHEDULE, () => runMorningDigest(botInstance), {
       timezone: "Europe/Moscow"
     })
     console.log("[cron] Scheduled morning digest at 07:00 (Europe/Moscow).")

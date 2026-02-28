@@ -47,10 +47,10 @@ export class BotService {
 
 		let allPosts = getPostsForCalendarDay(date)
 
-		// If no posts or too few (< 5) — fetch last 24 hours
+		// If no posts or too few (< 5) — fetch last 48 hours to ensure we cover the digest period
 		if (allPosts.length < 5) {
 			const nowTs = Math.floor(Date.now() / 1000)
-			const sinceTs = nowTs - 24 * 60 * 60
+			const sinceTs = nowTs - 48 * 60 * 60
 			await collectChannelPosts({ sinceTs, untilTs: nowTs })
 			allPosts = getPostsForCalendarDay(date)
 		}
@@ -205,9 +205,35 @@ export class BotService {
 	async digestReply(ctx, offset = 0, count = DIGEST_PAGE_SIZE, status = null) {
 		const userId = ctx.from?.id
 		const date = this.digestDate()
-		const { postIds, total } = this.getDigestPostIds(userId, date, count, offset)
+		
+		// First check if we have rankings
+		let { postIds, total } = this.getDigestPostIds(userId, date, count, offset)
 
 		console.log("[digestReply] userId:", userId, "offset:", offset, "count:", count, "postIds.length:", postIds.length, "total:", total)
+
+		// If no posts — try to fetch them
+		if (postIds.length === 0) {
+			if (status) {
+				await status.percent("⏳ <b>No ranked posts — fetching from channels...</b>", 50)
+			}
+			// Fetch posts from 48 hours ago
+			const nowTs = Math.floor(Date.now() / 1000)
+			const sinceTs = nowTs - 48 * 60 * 60
+			await collectChannelPosts({ sinceTs, untilTs: nowTs })
+			
+			// Re-build rankings
+			const user = getOrCreateUser(userId)
+			await this.ensureRankings(userId, user.profile || "")
+			
+			// Check again
+			const result = this.getDigestPostIds(userId, date, count, offset)
+			postIds = result.postIds
+			total = result.total
+			
+			if (status) {
+				await status.percent(`⏳ <b>Posts fetched: ${total} posts</b>`, 70)
+			}
+		}
 
 		if (postIds.length === 0) {
 			if (status) {

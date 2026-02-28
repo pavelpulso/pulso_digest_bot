@@ -234,10 +234,14 @@ export function getPostsLast24h() {
   ).all(since)
 }
 
-/** Posts for a specific calendar day (date in YYYY-MM-DD format). */
+/** Posts for a specific calendar day (date in YYYY-MM-DD format). Uses Moscow time (UTC+3). */
 export function getPostsForCalendarDay(dateStr) {
-  const since = `${dateStr}T00:00:00.000Z`
-  const until = new Date(new Date(since).getTime() + 24 * 60 * 60 * 1000).toISOString()
+  // Convert dateStr (YYYY-MM-DD) to Moscow time range: 00:00 to 23:59:59 MSK
+  // Moscow is UTC+3, so we need to convert to UTC for storage comparison
+  const moscowDate = new Date(dateStr + "T00:00:00+03:00") // 00:00 MSK
+  const since = moscowDate.toISOString() // Convert to UTC
+  const until = new Date(moscowDate.getTime() + 24 * 60 * 60 * 1000).toISOString() // Next day 00:00 MSK in UTC
+  
   return db.prepare(
     "SELECT id, channel, post_id, text, link, views, date FROM posts WHERE date >= ? AND date < ? ORDER BY date DESC"
   ).all(since, until)

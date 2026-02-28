@@ -113,27 +113,62 @@ export class CommandHandler extends BaseHandler {
 		// Stage 1: Data preparation (0-20%)
 		await status.percent("⏳ <b>Preparing data...</b>", 10)
 
-		// Check for posts for digest date (since 06:00 MSK yesterday to 06:00 MSK today)
+		// Check for posts for digest date
 		let posts = getPostsForCalendarDay(date)
-		
-		// If no posts or too few (< 5) — fetch from last 24h
+		const channels = getChannelUsernames()
+
+		console.log(`[handleDigest] userId=${userId} date=${date} channels=${channels.length} posts=${posts.length}`)
+
+		// Always fetch if no channels or no posts
+		if (channels.length === 0) {
+			await status.percent("❌ <b>No channels configured</b>\n\nAdd channels via:\n• /add @channel\n• Forward a post from a channel", 100)
+			return
+		}
+
+		// If no posts or too few (< 5) — fetch from last 48h to ensure we cover the digest period
 		if (posts.length < 5) {
-			await status.percent("⏳ <b>Not enough posts — fetching from channels...</b>", 15)
+			await status.percent("⏳ <b>Not enough posts — fetching from channels...</b>\n\n📌 Channels: " + channels.map(c => `@${c}`).slice(0, 10).join(", ") + (channels.length > 10 ? `... +${channels.length - 10} more` : ""), 15)
+			// Fetch posts from 48 hours ago to ensure we cover 06:00 MSK yesterday to now
 			const nowTs = Math.floor(Date.now() / 1000)
-			const sinceTs = nowTs - 24 * 60 * 60
-			await collectChannelPosts({
-				sinceTs,
-				untilTs: nowTs,
-				onProgress: async ({ channel, index, total, collected }) => {
-					const pct = Math.round(15 + (index / total) * 50)
-					const progressText = "⏳ <b>Fetching posts...</b>\n\n" +
-						`${pct}% (${index}/${total} channels)\n` +
-						`📥 Collected: ${collected} posts\n` +
-						`📌 Now: @${channel}`
-					await status.update(progressText)
+			const sinceTs = nowTs - 48 * 60 * 60
+			try {
+				const result = await collectChannelPosts({
+					sinceTs,
+					untilTs: nowTs,
+					onProgress: async ({ channel, index, total, collected }) => {
+						const pct = Math.round(15 + (index / total) * 50)
+						const progressText = "⏳ <b>Fetching posts...</b>\n\n" +
+							`${pct}% (${index}/${total} channels)\n` +
+							`📥 Collected: ${collected} posts\n` +
+							`📌 Now: @${channel}`
+						await status.update(progressText)
+					}
+				})
+				console.log(`[handleDigest] Fetch result: collected=${result.collected} errors=${result.errors.length}`)
+				if (result.errors.length > 0) {
+					console.error(`[handleDigest] Errors: ${result.errors.slice(0, 5).join(", ")}`)
 				}
-			})
-			await status.percent("⏳ <b>Posts fetched...</b>", 65)
+			} catch (e) {
+				console.error(`[handleDigest] Fetch error:`, e)
+				await status.replace("❌ <b>Failed to fetch posts</b>\n\n" + e.message)
+				return
+			}
+			// Re-fetch posts for the digest date
+			posts = getPostsForCalendarDay(date)
+			console.log(`[handleDigest] After fetch: posts=${posts.length}`)
+			await status.percent(`⏳ <b>Posts fetched... ${posts.length} posts for ${date}</b>`, 65)
+		}
+
+		// If still no posts after fetch
+		if (posts.length === 0) {
+			await status.replace("❌ <b>No posts found</b>\n\n" +
+				`Checked ${channels.length} channels for ${date}\n\n` +
+				"Possible reasons:\n" +
+				"• Channels are private\n" +
+				"• No new posts in last 48h\n" +
+				"• TG_API_ID/HASH invalid\n\n" +
+				"Try /fetch 1 to debug")
+			return
 		}
 
 		const hasRankings = this.mgr.service.hasRankings(userId, date)
@@ -145,6 +180,7 @@ export class CommandHandler extends BaseHandler {
 				await this.mgr.service.ensureRankings(userId, user.profile || "")
 				await status.percent("⏳ <b>Ranking posts...</b>", 80)
 			} catch (e) {
+				console.error(`[handleDigest] Rankings error:`, e)
 				const userMsg = this.formatErrorForChat(e)
 				await status.replace("❌ <b>Failed to get rankings</b>\n\n" + userMsg)
 				return
@@ -510,7 +546,8 @@ Use:
 	}
 
 	async handleFetch(ctx) {
-		if (!this.mgr.handlers.admin.isAdmin(ctx.from?.id)) return
+		const userId = ctx.from?.id
+		if (!userId || isUserBanned(userId)) return
 
 		const args = ctx.message?.text?.split(/\s+/) || []
 		const daysArg = parseInt(args[1], 10)

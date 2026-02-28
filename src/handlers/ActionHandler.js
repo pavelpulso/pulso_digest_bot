@@ -245,9 +245,9 @@ export class ActionHandler extends BaseHandler {
 	}
 
 	async handleFetchDays(ctx) {
-		if (!this.mgr.handlers.admin.isAdmin(ctx.from?.id)) {
-			return this.safeAnswerCbQuery(ctx, "Administrators only")
-		}
+		const userId = ctx.from?.id
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+		
 		const days = parseInt(ctx.match[1], 10)
 		await this.safeAnswerCbQuery(ctx)
 		await ctx.editMessageText(`<b>🔄 Fetching posts for ${days} days...</b>`, { parse_mode: "HTML" })

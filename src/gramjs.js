@@ -10,7 +10,9 @@ function createClient() {
   const saved = getSetting("gramjs_session") || ""
   const session = new StringSession(saved)
   return new TelegramClient(session, apiId, apiHash, {
-    connectionRetries: 5
+    connectionRetries: 10,
+    timeout: 60,
+    floodSleepThreshold: 120
   })
 }
 
@@ -23,7 +25,14 @@ export async function collectChannelPosts(options = {}) {
   const { onProgress, sinceTs: customSinceTs, untilTs: customUntilTs } = options
   const channelUsernames = getChannelUsernames()
   if (channelUsernames.length === 0) {
-    return { collected: 0, errors: [], perChannel: [] }
+    console.log("[collectChannelPosts] No channels to collect from. Add channels first.")
+    return { collected: 0, errors: ["No channels configured. Add channels via /add or forward a post."], perChannel: [] }
+  }
+
+  // Validate API credentials
+  if (!apiId || !apiHash) {
+    console.error("[collectChannelPosts] Missing TG_API_ID or TG_API_HASH in .env")
+    return { collected: 0, errors: ["Missing Telegram API credentials. Set TG_API_ID and TG_API_HASH in .env"], perChannel: [] }
   }
 
   const client = createClient()
@@ -32,16 +41,23 @@ export async function collectChannelPosts(options = {}) {
   let collected = 0
   const total = channelUsernames.length
 
+  console.log(`[collectChannelPosts] Starting collection from ${total} channels...`)
+
   try {
     await client.connect()
+    console.log("[collectChannelPosts] Connected to Telegram.")
   } catch (e) {
-    errors.push(`GramJS connect: ${e.message}`)
+    const errMsg = `GramJS connect: ${e.message}`
+    console.error(`[collectChannelPosts] ${errMsg}`)
+    errors.push(errMsg)
     return { collected: 0, errors, perChannel: [] }
   }
 
   const nowTs = Math.floor(Date.now() / 1000)
   const sinceTs = customSinceTs || (nowTs - 24 * 60 * 60)
   const untilTs = customUntilTs || nowTs
+  
+  console.log(`[collectChannelPosts] Time range: ${new Date(sinceTs * 1000).toISOString()} to ${new Date(untilTs * 1000).toISOString()}`)
 
   for (let i = 0; i < channelUsernames.length; i++) {
     const username = channelUsernames[i]
@@ -51,21 +67,27 @@ export async function collectChannelPosts(options = {}) {
       await Promise.resolve(onProgress({ channel: channelKey, index: i + 1, total, collected }))
     }
     try {
+      console.log(`[collectChannelPosts] Processing ${i + 1}/${total}: @${channelKey}`)
       const count = await collectFromChannel(client, channelName, sinceTs, untilTs)
       collected += count
+      console.log(`[collectChannelPosts] @${channelKey}: ${count} posts`)
       perChannel.push({ channel: channelKey, count })
     } catch (e) {
-      errors.push(`${username}: ${e.message}`)
+      const errMsg = `${username}: ${e.message}`
+      console.error(`[collectChannelPosts] Error for @${channelKey}: ${e.message}`)
+      errors.push(errMsg)
       perChannel.push({ channel: channelKey, count: 0, error: e.message })
     }
   }
 
   try {
     await client.disconnect()
+    console.log("[collectChannelPosts] Disconnected from Telegram.")
   } catch (e) {
-    console.warn("GramJS disconnect error:", e.message)
+    console.warn("[collectChannelPosts] Disconnect error:", e.message)
   }
 
+  console.log(`[collectChannelPosts] Finished. Total: ${collected} posts, ${errors.length} errors.`)
   return { collected, errors, perChannel }
 }
 
