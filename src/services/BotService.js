@@ -43,27 +43,51 @@ export class BotService {
 
 	async ensureRankings(userId, userProfile) {
 		const date = this.digestDate()
-		if (this.hasRankings(userId, date)) return
+		if (this.hasRankings(userId, date)) {
+			console.log(`[ensureRankings] Rankings already exist for userId=${userId} date=${date}`)
+			return
+		}
 
 		let allPosts = getPostsForCalendarDay(date)
+		console.log(`[ensureRankings] userId=${userId} date=${date} allPosts=${allPosts.length}`)
 
 		// If no posts or too few (< 5) — fetch last 48 hours to ensure we cover the digest period
 		if (allPosts.length < 5) {
+			console.log(`[ensureRankings] Not enough posts (${allPosts.length}), fetching...`)
 			const nowTs = Math.floor(Date.now() / 1000)
 			const sinceTs = nowTs - 48 * 60 * 60
 			await collectChannelPosts({ sinceTs, untilTs: nowTs })
 			allPosts = getPostsForCalendarDay(date)
+			console.log(`[ensureRankings] After fetch: allPosts=${allPosts.length}`)
 		}
 
 		const posts = this.filterPostsForUser(allPosts, userId)
-		if (posts.length === 0) return
+		console.log(`[ensureRankings] After filter: posts=${posts.length}`)
+		if (posts.length === 0) {
+			console.log(`[ensureRankings] No posts after filter for userId=${userId}`)
+			return
+		}
 
 		const priorities = getUserChannelPriorities(userId)
 		const feedback = getPostFeedbackForRanking(userId)
 		const user = getUser(userId)
 		const systemPrompt = await getUserSystemPrompt(user)
 
-		const ranked = await this.mgr.ai.rankPosts(posts, userProfile, { channelPriorities: priorities, feedback, systemPrompt })
+		console.log(`[ensureRankings] Calling rankPosts with ${posts.length} posts...`)
+		let ranked
+		try {
+			ranked = await this.mgr.ai.rankPosts(posts, userProfile, { channelPriorities: priorities, feedback, systemPrompt })
+		} catch (e) {
+			console.error(`[ensureRankings] rankPosts error:`, e.message)
+			throw e // Re-throw to let caller handle
+		}
+		
+		if (!ranked || ranked.length === 0) {
+			console.error(`[ensureRankings] rankPosts returned empty result`)
+			return
+		}
+		
+		console.log(`[ensureRankings] Ranked ${ranked.length} posts, inserting...`)
 		clearRankingsForUser(userId, date)
 
 		const items = ranked.map((r) => ({
@@ -73,6 +97,7 @@ export class BotService {
 			reason: r.reason
 		}))
 		insertRankings(userId, date, items)
+		console.log(`[ensureRankings] Inserted ${items.length} rankings for userId=${userId} date=${date}`)
 	}
 
 	async ensureRankingsForDate(userId, date, userProfile) {
