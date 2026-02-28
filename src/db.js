@@ -294,6 +294,12 @@ export function insertRankings(userId, date, items) {
 }
 
 export function getRankedPostIds(userId, date, limit = 10, offset = 0) {
+  // Debug: check raw rankings without join
+  const rawRankings = db.prepare(
+    `SELECT post_id, score FROM rankings WHERE user_id = ? AND date = ? ORDER BY score DESC LIMIT ? OFFSET ?`
+  ).all(userId, date, limit, offset)
+  console.log(`[getRankedPostIds] raw rankings (no join): ${rawRankings.length}, scores: ${rawRankings.map(r => r.score.toFixed(2)).join(', ')}`)
+  
   const rows = db.prepare(
     `SELECT r.post_id FROM rankings r
      JOIN posts p ON r.post_id = p.id
@@ -304,6 +310,7 @@ export function getRankedPostIds(userId, date, limit = 10, offset = 0) {
        )
      ORDER BY r.score DESC LIMIT ? OFFSET ?`
   ).all(userId, date, userId, limit, offset)
+  console.log(`[getRankedPostIds] after join + hidden filter: ${rows.length}`)
   return rows.map((r) => r.post_id)
 }
 

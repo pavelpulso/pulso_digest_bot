@@ -157,6 +157,10 @@ export class BotService {
 
 	getDigestPostIds(userId, date, limit, offset) {
 		console.log("[getDigestPostIds] userId:", userId, "date:", date, "limit:", limit, "offset:", offset)
+
+		// Debug: check what scores we have in DB
+		const allRankings = getRankedPostIds(userId, date, 100, 0)
+		console.log("[getDigestPostIds] allRankings in DB:", allRankings.length)
 		
 		// Adaptive threshold: start with MIN_DIGEST_SCORE (0.5)
 		let threshold = MIN_DIGEST_SCORE
@@ -164,7 +168,7 @@ export class BotService {
 		// Get all posts with score >= 0.5
 		const idsAbove = getRankedPostIdsAboveScore(userId, date, threshold, 10000, 0)
 
-		console.log("[getDigestPostIds] idsAbove.length:", idsAbove.length)
+		console.log("[getDigestPostIds] idsAbove.length (score >= 0.5):", idsAbove.length)
 
 		// If too many posts (> 1.5x limit), raise threshold to 0.65
 		const maxItems = limit * 1.5
