@@ -157,6 +157,9 @@ export class BaseAI {
 
     const parsed = this.#parseJSONArray(raw)
     if (typeof onProgress === "function") onProgress(100)
+    
+    // Debug: log what AI returned
+    console.log(`[rankPosts] AI returned ${parsed.length} items, sample: ${JSON.stringify(parsed.slice(0, 2))}`)
 
     return parsed.map((item) => ({
       post_id: String(item.post_id || item.id),
