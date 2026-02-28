@@ -285,10 +285,17 @@ export function insertRankings(userId, date, items) {
   )
   const tx = db.transaction((list) => {
     const existing = new Set(selectExisting.all(...postIds).map((r) => r.id))
+    console.log(`[insertRankings] items=${list.length} postIds=${postIds.length} existing=${existing.size}`)
+    let inserted = 0
     for (const it of list) {
-      if (!existing.has(it.post_id)) continue
+      if (!existing.has(it.post_id)) {
+        console.log(`[insertRankings] Skipping post_id=${it.post_id} (not in posts table)`)
+        continue
+      }
       insertStmt.run(it.id, userId, it.post_id, it.score, it.reason || null, date)
+      inserted++
     }
+    console.log(`[insertRankings] Inserted ${inserted} rankings for userId=${userId} date=${date}`)
   })
   tx(normalized)
 }
