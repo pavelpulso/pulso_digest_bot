@@ -159,7 +159,7 @@ export class BaseAI {
     if (typeof onProgress === "function") onProgress(100)
 
     return parsed.map((item) => ({
-      post_id: String(item.post_id),
+      post_id: String(item.post_id || item.id),
       score: Number(item.score) || 0,
       reason: String(item.reason || "")
     }))

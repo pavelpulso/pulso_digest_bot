@@ -44,7 +44,12 @@ Evaluate strictly:
 - Score 0.4–0.6 — useful but without specifics: general advice, theory without examples.
 - Score < 0.4 — just interesting, news, announcements, ads, polls.
 
-Return JSON array: post_id (string), score (number 0–1), reason (string explaining why this score).`
+Return JSON array with EXACT structure:
+[
+  {"post_id": "POST_ID_FROM_POSTS", "score": 0.85, "reason": "why this score"},
+  ...
+]
+Use EXACT "post_id" field (not "id"). Value must match "id" from posts above.`
 }
 
 /**
