@@ -25,8 +25,12 @@ export function buildRankPrompt(list, userProfile, importantChannels, liked, dis
     : ""
 
   const readerContext = getReaderContext(systemPrompt, userProfile)
+  const lang = detectLanguage(list)
+  const langInstruction = getLanguageInstruction(lang)
 
   return `You are an experienced digest editor (10+ years). Your task is to select only what's truly useful for the reader.
+
+${langInstruction}
 
 Priorities when evaluating:
 - Practice > theory: posts with concrete steps, examples, templates are more valuable than abstract reasoning.
@@ -49,7 +53,48 @@ Return JSON array with EXACT structure:
   {"post_id": "POST_ID_FROM_POSTS", "score": 0.85, "reason": "why this score"},
   ...
 ]
-Use EXACT "post_id" field (not "id"). Value must match "id" from posts above.`
+Use EXACT "post_id" field (not "id"). Value must match "id" from posts above. Write "reason" in the same language as posts (${lang}).`
+}
+
+/**
+ * Detect language from posts text.
+ * @param {Array} list - Posts list
+ * @returns {string} Detected language code (ru, en, es, etc.) or 'en' as default
+ */
+function detectLanguage(list) {
+  if (!list || list.length === 0) return 'en'
+  
+  // Take first 3 posts with text
+  const texts = list.slice(0, 3).map(p => p.text || '').filter(Boolean).join(' ').toLowerCase()
+  if (!texts) return 'en'
+  
+  // Cyrillic characters indicate Russian
+  const cyrillicChars = texts.match(/[а-яё]/gi)
+  if (cyrillicChars && cyrillicChars.length > 5) return 'ru'
+  
+  // Spanish indicators
+  if (texts.includes('ción') || texts.includes('sión') || texts.includes('ñ')) return 'es'
+  
+  // German indicators
+  if (texts.includes('sch') || texts.includes('ch') || texts.includes('ß')) return 'de'
+  
+  // Default to English
+  return 'en'
+}
+
+/**
+ * Get language instruction for AI.
+ * @param {string} lang - Language code
+ * @returns {string} Instruction for AI
+ */
+function getLanguageInstruction(lang) {
+  const instructions = {
+    ru: 'IMPORTANT: Respond in RUSSIAN language. All teaser, essence, potential, action must be in Russian.',
+    es: 'IMPORTANT: Respond in SPANISH language. All teaser, essence, potential, action must be in Spanish.',
+    de: 'IMPORTANT: Respond in GERMAN language. All teaser, essence, potential, action must be in German.',
+    en: 'IMPORTANT: Respond in ENGLISH language. All teaser, essence, potential, action must be in English.'
+  }
+  return instructions[lang] || instructions.en
 }
 
 /**
@@ -57,8 +102,12 @@ Use EXACT "post_id" field (not "id"). Value must match "id" from posts above.`
  */
 export function buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt = null) {
   const readerContext = getReaderContext(systemPrompt, userProfile)
+  const lang = detectLanguage(list)
+  const langInstruction = getLanguageInstruction(lang)
 
   return `You are an experienced digest editor (10+ years). Your task is to create a digest for ${dateLabel} that the reader will actually apply in life.
+
+${langInstruction}
 
 Priorities when selecting:
 - Practice > theory: concrete steps, examples, templates instead of abstract reasoning.
