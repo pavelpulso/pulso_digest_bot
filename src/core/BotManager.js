@@ -112,7 +112,7 @@ export class BotManager {
 		this.bot.action("summary", (ctx) => act.handleSummary(ctx))
 		this.bot.action(/^summary_day:(.+)$/, (ctx) => act.handleSummaryDay(ctx))
 
-		this.bot.action("audit_hide:(.+)$", (ctx) => act.handleAuditHide(ctx))
+		this.bot.action(/^audit_hide:(.+)$/, (ctx) => act.handleAuditHide(ctx))
 		this.bot.action("audit_all", (ctx) => act.handleAuditAll(ctx))
 		this.bot.action("audit_hide_all_weak", (ctx) => act.handleAuditHideAll(ctx))
 		this.bot.action("audit_remove_weak", (ctx) => act.handleRemoveWeakChannels(ctx))
@@ -127,6 +127,15 @@ export class BotManager {
 		this.bot.action(/^channel_skip:(.+)$/, (ctx) => act.handleChannelSkip(ctx))
 		this.bot.action("analyze_channel_menu", (ctx) => act.handleAnalyzeChannelMenu(ctx))
 		this.bot.action(/^fetch:(\d+)$/, (ctx) => act.handleFetchDays(ctx))
+
+		// Pause digest actions
+		this.bot.action(/^pause_(.+)$/, (ctx) => act.handlePauseAction(ctx))
+
+		// Digest feedback
+		this.bot.action(/^digest_fb:(\d{4}-\d{2}-\d{2}):(-?1)$/, (ctx) => act.handleDigestFeedback(ctx))
+
+		// Stats refresh
+		this.bot.action("stats_refresh", (ctx) => act.handleStatsRefresh(ctx))
 	}
 
 	_registerHandlers() {
@@ -158,7 +167,7 @@ export class BotManager {
 			if (!userId || isUserBanned(userId)) return
 
 			const text = ctx.message.text?.trim()
-			console.log("[BotManager text] userId:", userId, "text:", JSON.stringify(text))
+			console.log("[BotManager text] userId:", userId, "text:", JSON.stringify(text), "BTN_SETTINGS:", JSON.stringify(BTN_SETTINGS), "match:", text === BTN_SETTINGS)
 
 			// Handle @username — offer channel analysis
 			const usernameMatch = text.match(/^@([a-zA-Z0-9_]{3,32})$/)
@@ -176,7 +185,10 @@ export class BotManager {
 			if (text === BTN_SUMMARY) return cmd.handleSummary(ctx)
 			if (text === BTN_CHANNELS) return cmd.handleChannels(ctx)
 			if (text === BTN_PROFILE) return cmd.handleProfile(ctx)
-			if (text === BTN_SETTINGS) return cmd.handleSettings(ctx)
+			if (text === BTN_SETTINGS) {
+				console.log("[BotManager] Settings button clicked, userId:", userId)
+				return cmd.handleSettings(ctx)
+			}
 			if (text === BTN_ANALYZE_CHANNEL) return cmd.handleCmdAnalyzeChannel(ctx)
 			if (text === BTN_CHANNEL_AUDIT) return cmd.handleChannelAudit(ctx)
 			if (text === BTN_BACK) return cmd.handleBack(ctx)
@@ -222,6 +234,12 @@ export class BotManager {
 			}
 			if (text === BTN_REMOVE_CHANNEL) {
 				return ctx.reply("➖ <b>Remove channel:</b>\n\nSend: <code>/remove @channel</code>\nExample: <code>/remove @durov</code>", { parse_mode: "HTML" })
+			}
+			if (text === "⏸ Pause digest") {
+				return cmd.handlePauseDigest(ctx)
+			}
+			if (text === "📊 My stats") {
+				return cmd.handleStats(ctx)
 			}
 
 			const handled = await cmd.handleText(ctx)

@@ -21,10 +21,19 @@ import {
 	hasChannel,
 	updateUserSystemPromptUrl,
 	updateUserSystemPromptCached,
-	clearUserSystemPrompt
+	clearUserSystemPrompt,
+	setUserOnboardingCompleted,
+	isUserOnboardingCompleted,
+	isUserDigestPaused,
+	getUserDigestPause,
+	getUserDigestPauseWeekends,
+	setUserDigestPause,
+	getUserStatsSummary,
+	getUserTopChannels
 } from "../db.js"
 import { collectChannelPosts, fetchRecentPostsFromChannel } from "../gramjs.js"
 import { DIGEST_PAGE_SIZE } from "../utils.js"
+import { getDigestDate } from "../utils.js"
 
 export class CommandHandler extends BaseHandler {
 	async handleStart(ctx) {
@@ -39,19 +48,56 @@ export class CommandHandler extends BaseHandler {
 		getOrCreateUser(userId, ctx.from?.username ? String(ctx.from.username).toLowerCase() : null)
 		if (isUserBanned(userId)) return ctx.reply("You are blocked.")
 
-		const text =
-			"Hi! I collect posts from your channels and build a digest.\n\n" +
-			"Use the buttons below:\n\n" +
-			"📰 <b>Digest</b> — top posts for today\n" +
-			"📋 <b>Summary</b> — digest for a chosen day\n" +
-			"📢 <b>Channels</b> — list of channels\n" +
-			"👤 <b>Profile</b> — set your interests\n" +
-			"🔍 <b>Analyze Channel</b> — score a channel for you\n" +
-			"📊 <b>Channel Audit</b> — audit all channels\n" +
-			"⚙️ <b>Settings</b> — digest settings\n\n" +
-			"You can forward a post from a channel — the channel will be added automatically."
+		// Check if onboarding already completed
+		if (isUserOnboardingCompleted(userId)) {
+			const text =
+				"Hi! I collect posts from your channels and build a digest.\n\n" +
+				"Use the buttons below:\n\n" +
+				"📰 <b>Digest</b> — top posts for today\n" +
+				"📋 <b>Summary</b> — digest for a chosen day\n" +
+				"📢 <b>Channels</b> — list of channels\n" +
+				"👤 <b>Profile</b> — set your interests\n" +
+				"🔍 <b>Analyze Channel</b> — score a channel for you\n" +
+				"📊 <b>Channel Audit</b> — audit all channels\n" +
+				"⚙️ <b>Settings</b> — digest settings\n\n" +
+				"You can forward a post from a channel — the channel will be added automatically."
 
-		await ctx.reply(text, KeyboardProvider.mainReply())
+			return ctx.reply(text, KeyboardProvider.mainReply())
+		}
+
+		// Onboarding tour — 3 messages
+		setUserOnboardingCompleted(userId, true)
+
+		const step1 =
+			"👋 <b>Welcome to Pulso Digest Bot!</b>\n\n" +
+			"I'm your personal AI assistant for Telegram channels.\n\n" +
+			"<b>What I do:</b>\n" +
+			"• Collect posts from your tracked channels\n" +
+			"• Rank them by relevance to YOU\n" +
+			"• Build a concise digest with key insights\n\n" +
+			"Result: 10-15 min to read instead of hours scrolling."
+
+		const step2 =
+			"⚙️ <b>How to set up:</b>\n\n" +
+			"1️⃣ <b>Add channels</b> — send <code>/add @channel</code>\n" +
+			"2️⃣ <b>Set interests</b> — tell me what you care about\n" +
+			"3️⃣ <b>Get digest</b> — tap /digest or wait for morning delivery\n\n" +
+			"💡 <i>Tip: Forward any post from a channel to me — I'll add it automatically.</i>"
+
+		const step3 =
+			"🎯 <b>Let's personalize your digest!</b>\n\n" +
+			"Send me your interests in this format:\n\n" +
+			"<code>context your interests</code>\n\n" +
+			"Examples:\n" +
+			"• <code>context Senior JS dev, interested in AI/agents, career growth</code>\n" +
+			"• <code>context Product manager, SaaS, B2B, analytics</code>\n\n" +
+			"Or skip and set up later via /profile"
+
+		await ctx.reply(step1, { parse_mode: "HTML" })
+		await new Promise(r => setTimeout(r, 800))
+		await ctx.reply(step2, { parse_mode: "HTML" })
+		await new Promise(r => setTimeout(r, 800))
+		await ctx.reply(step3, { parse_mode: "HTML", reply_markup: KeyboardProvider.mainReply() })
 	}
 
 	async handleDigest(ctx) {
@@ -62,16 +108,17 @@ export class CommandHandler extends BaseHandler {
 		await status.startProgress("⏳ <b>Starting digest preparation...</b>", 0)
 
 		const user = getOrCreateUser(userId)
-		const date = this.mgr.service.todayDate()
+		const date = getDigestDate()
 
 		// Stage 1: Data preparation (0-20%)
 		await status.percent("⏳ <b>Preparing data...</b>", 10)
 
-		// Check for posts today
-		const posts = getPostsForCalendarDay(date)
-		if (posts.length === 0) {
-			// Fetch posts from last 24 hours
-			await status.percent("⏳ <b>No posts — fetching from channels...</b>", 15)
+		// Check for posts for digest date (since 06:00 MSK yesterday to 06:00 MSK today)
+		let posts = getPostsForCalendarDay(date)
+		
+		// If no posts or too few (< 5) — fetch from last 24h
+		if (posts.length < 5) {
+			await status.percent("⏳ <b>Not enough posts — fetching from channels...</b>", 15)
 			const nowTs = Math.floor(Date.now() / 1000)
 			const sinceTs = nowTs - 24 * 60 * 60
 			await collectChannelPosts({
@@ -439,10 +486,10 @@ Use:
 		const userId = ctx.from?.id
 		const user = getOrCreateUser(userId)
 		const text = "⚙️ <b>Settings:</b>\n\n" +
-			`<b>Interests:</b> ${user.profile || "Not set"}\n` +
+			`<b>Interests:</b> ${UIFormatter.escapeHtml(user.profile || "Not set")}\n` +
 			`<b>Digest size:</b> ${user.digest_max_items || 7}\n` +
 			`<b>Format:</b> ${user.digest_format || "full"}\n` +
-			`<b>Minus keywords:</b> ${user.minus_keywords || "None"}`
+			`<b>Minus keywords:</b> ${UIFormatter.escapeHtml(user.minus_keywords || "None")}`
 		await ctx.reply(text, { parse_mode: "HTML", reply_markup: KeyboardProvider.settings().reply_markup })
 	}
 
@@ -648,6 +695,70 @@ Use:
 			}
 		}
 		return false
+	}
+
+	async handlePauseDigest(ctx) {
+		const userId = ctx.from?.id
+		if (!userId) return
+
+		const isPaused = isUserDigestPaused(userId)
+		const pauseUntil = getUserDigestPause(userId)
+		const weekendsEnabled = getUserDigestPauseWeekends(userId)
+
+		if (isPaused) {
+			const untilDate = new Date(pauseUntil).toLocaleDateString()
+			return ctx.reply(
+				`⏸ <b>Digest is paused</b>\n\n` +
+				`Until: ${untilDate}\n\n` +
+				"Select option:",
+				{
+					parse_mode: "HTML",
+					reply_markup: {
+						inline_keyboard: [
+							[{ text: "▶️ Resume now", callback_data: "pause_resume" }],
+							[{ text: "⏭ Skip weekends", callback_data: `pause_weekend:${weekendsEnabled ? 0 : 1}` }],
+							[{ text: "⏸ Pause 3 days", callback_data: "pause_3d" }, { text: "⏸ Pause 7 days", callback_data: "pause_7d" }],
+							[{ text: "❌ Cancel", callback_data: "menu" }]
+						]
+					}
+				}
+			)
+		}
+
+		return ctx.reply(
+			"⏸ <b>Pause morning digest</b>\n\n" +
+			"Select option:",
+			{
+				parse_mode: "HTML",
+				reply_markup: {
+					inline_keyboard: [
+						[{ text: "⏸ Pause 3 days", callback_data: "pause_3d" }, { text: "⏸ Pause 7 days", callback_data: "pause_7d" }],
+						[{ text: "⏭ Skip weekends", callback_data: `pause_weekend:${weekendsEnabled ? 0 : 1}` }],
+						[{ text: "❌ Cancel", callback_data: "menu" }]
+					]
+				}
+			}
+		)
+	}
+
+	async handleStats(ctx) {
+		const userId = ctx.from?.id
+		if (!userId) return
+
+		const stats = getUserStatsSummary(userId, 7)
+		const topChannels = getUserTopChannels(userId, 3)
+
+		const topChannelsText = topChannels.length > 0
+			? topChannels.map((c, i) => `${i + 1}. @${c.channel} — ${c.count} liked posts`).join("\n")
+			: "No data yet"
+
+		const text =
+			"📊 <b>Your stats (last 7 days)</b>\n\n" +
+			`📰 Digests opened: ${stats.digestsOpened}\n` +
+			`📝 Posts read: ${stats.postsRead}\n\n` +
+			`<b>Top channels:</b>\n${topChannelsText}`
+
+		await ctx.reply(text, { parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "🔄 Refresh", callback_data: "stats_refresh" }]] } })
 	}
 }
 

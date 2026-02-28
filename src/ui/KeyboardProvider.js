@@ -40,6 +40,8 @@ export class KeyboardProvider {
 					[BTN_MINUS_WORDS],
 					[BTN_DIGEST_MAX_ITEMS],
 					[BTN_DIGEST_FORMAT],
+					["⏸ Pause digest"],
+					["📊 My stats"],
 					[BTN_EDIT_PROFILE],
 					[BTN_BACK]
 				],

@@ -54,6 +54,37 @@ export function formatChannelList(channels) {
 }
 
 /**
+ * Returns the digest date based on current time.
+ * Digest day starts at 06:00 MSK (03:00 UTC in winter, 04:00 UTC in summer).
+ * 
+ * Logic:
+ * - If current time in Moscow is BEFORE 06:00 MSK → digest date = yesterday
+ * - If current time in Moscow is 06:00 MSK or later → digest date = today
+ * 
+ * This ensures morning digest at 07:00 MSK contains posts from 06:00 yesterday to 06:00 today.
+ */
+export function getDigestDate() {
+  const now = new Date()
+  
+  // Get current time in Moscow (UTC+3)
+  const moscowTime = new Date(now.toLocaleString("en-US", { timeZone: "Europe/Moscow" }))
+  
+  // Check if it's before 06:00 MSK
+  const moscowHour = moscowTime.getHours()
+  const moscowMinute = moscowTime.getMinutes()
+  const isBeforeSixAM = moscowHour < 6 || (moscowHour === 6 && moscowMinute < 0)
+  
+  // Get digest date: if before 06:00 MSK → yesterday, else → today
+  const digestDate = new Date(moscowTime)
+  if (isBeforeSixAM) {
+    digestDate.setDate(digestDate.getDate() - 1)
+  }
+  
+  // Return date in YYYY-MM-DD format (UTC date that corresponds to Moscow date)
+  return digestDate.toISOString().slice(0, 10)
+}
+
+/**
  * Last N days for date selection buttons (summary).
  */
 export function getLastDays(count = 7) {

@@ -19,10 +19,11 @@ import {
 	getPostsForCalendarDay,
 	toggleUserChannelHidden,
 	getUserChannelSettings,
-	getUser
+	getUser,
+	upsertUserStat
 } from "../db.js"
 import { getUserSystemPrompt } from "./SystemPromptLoader.js"
-import { formatDateLabel, MIN_DIGEST_SCORE, DIGEST_PAGE_SIZE } from "../utils.js"
+import { formatDateLabel, MIN_DIGEST_SCORE, DIGEST_PAGE_SIZE, getDigestDate } from "../utils.js"
 import { UIFormatter } from "../ui/UIFormatter.js"
 import { KeyboardProvider } from "../ui/KeyboardProvider.js"
 import { collectChannelPosts } from "../gramjs.js"
@@ -32,8 +33,8 @@ export class BotService {
 		this.mgr = botManager
 	}
 
-	todayDate() {
-		return new Date().toISOString().slice(0, 10)
+	digestDate() {
+		return getDigestDate()
 	}
 
 	hasRankings(userId, date) {
@@ -41,13 +42,13 @@ export class BotService {
 	}
 
 	async ensureRankings(userId, userProfile) {
-		const date = this.todayDate()
+		const date = this.digestDate()
 		if (this.hasRankings(userId, date)) return
 
 		let allPosts = getPostsForCalendarDay(date)
 
-		// If no posts — fetch last 24 hours
-		if (allPosts.length === 0) {
+		// If no posts or too few (< 5) — fetch last 24 hours
+		if (allPosts.length < 5) {
 			const nowTs = Math.floor(Date.now() / 1000)
 			const sinceTs = nowTs - 24 * 60 * 60
 			await collectChannelPosts({ sinceTs, untilTs: nowTs })
@@ -130,11 +131,15 @@ export class BotService {
 	}
 
 	getDigestPostIds(userId, date, limit, offset) {
+		console.log("[getDigestPostIds] userId:", userId, "date:", date, "limit:", limit, "offset:", offset)
+		
 		// Adaptive threshold: start with MIN_DIGEST_SCORE (0.5)
 		let threshold = MIN_DIGEST_SCORE
 
 		// Get all posts with score >= 0.5
 		const idsAbove = getRankedPostIdsAboveScore(userId, date, threshold, 10000, 0)
+
+		console.log("[getDigestPostIds] idsAbove.length:", idsAbove.length)
 
 		// If too many posts (> 1.5x limit), raise threshold to 0.65
 		const maxItems = limit * 1.5
@@ -153,18 +158,21 @@ export class BotService {
 						const rankB = getRankingByUserAndPost(userId, b, date)
 						return (rankB?.score || 0) - (rankA?.score || 0)
 					})
+					console.log("[getDigestPostIds] returning sorted, total:", allIds.length)
 					return {
 						postIds: allIds.slice(offset, offset + limit),
 						total: allIds.length,
 						threshold: 0.75
 					}
 				}
+				console.log("[getDigestPostIds] returning idsAboveEvenHigher, total:", idsAboveEvenHigher.length)
 				return {
 					postIds: idsAboveEvenHigher.slice(offset, offset + limit),
 					total: idsAboveEvenHigher.length,
 					threshold
 				}
 			}
+			console.log("[getDigestPostIds] returning idsAboveHigher, total:", idsAboveHigher.length)
 			return {
 				postIds: idsAboveHigher.slice(offset, offset + limit),
 				total: idsAboveHigher.length,
@@ -176,6 +184,7 @@ export class BotService {
 		if (idsAbove.length < 5 && idsAbove.length > 0) {
 			threshold = 0.4
 			const idsAboveLower = getRankedPostIdsAboveScore(userId, date, threshold, 10000, 0)
+			console.log("[getDigestPostIds] returning idsAboveLower, total:", idsAboveLower.length)
 			return {
 				postIds: idsAboveLower.slice(offset, offset + limit),
 				total: idsAboveLower.length,
@@ -185,6 +194,7 @@ export class BotService {
 
 		// If no posts with score >= 0.5, take all
 		const allIds = idsAbove.length === 0 ? getRankedPostIds(userId, date, 10000, 0) : idsAbove
+		console.log("[getDigestPostIds] returning allIds/idsAbove, total:", allIds.length)
 		return {
 			postIds: allIds.slice(offset, offset + limit),
 			total: allIds.length,
@@ -194,8 +204,10 @@ export class BotService {
 
 	async digestReply(ctx, offset = 0, count = DIGEST_PAGE_SIZE, status = null) {
 		const userId = ctx.from?.id
-		const date = this.todayDate()
+		const date = this.digestDate()
 		const { postIds, total } = this.getDigestPostIds(userId, date, count, offset)
+
+		console.log("[digestReply] userId:", userId, "offset:", offset, "count:", count, "postIds.length:", postIds.length, "total:", total)
 
 		if (postIds.length === 0) {
 			if (status) {
@@ -227,15 +239,24 @@ export class BotService {
 			systemPrompt
 		})
 
+		console.log("[digestReply] result.blocks.length:", result.blocks.length)
+
 		const postById = UIFormatter.buildPostById(posts)
 		const rankMap = getRankingsMap(userId, date)
 		const compact = getDigestFormat(userId) === "compact"
 
-		const header = UIFormatter.formatDigestHeader(label, result.teaser, result.blocks.length)
+		const header = UIFormatter.formatDigestHeader(label, result.teaser, result.blocks.length, { total })
+
+		// Calculate next offset and check if more posts available
+		const nextOffset = offset + count
+		const hasMore = nextOffset < total
+
+		console.log("[digestReply] nextOffset:", nextOffset, "hasMore:", hasMore)
+
 		const row = []
-		if (offset + count < total) {
-			row.push({ text: "▶️ More 5", callback_data: `more:${offset + count}:5` })
-			row.push({ text: "▶️ More 10", callback_data: `more:${offset + count}:10` })
+		if (hasMore) {
+			row.push({ text: "▶️ More 5", callback_data: `more:${nextOffset}:5` })
+			row.push({ text: "▶️ More 10", callback_data: `more:${nextOffset}:10` })
 		}
 		row.push({ text: "📋 Summary", callback_data: "summary" })
 
@@ -264,10 +285,28 @@ export class BotService {
 			})
 			if (postId) this.mgr.cache.setBlock(postId, { normalText: blockText, block, postById, reason })
 		}
+
+		// Add digest feedback buttons at the end
+		const feedbackKeyboard = {
+			inline_keyboard: [
+				[
+					{ text: "👍 Useful", callback_data: `digest_fb:${date}:1` },
+					{ text: "😐 So-so", callback_data: `digest_fb:${date}:0` },
+					{ text: "👎 Irrelevant", callback_data: `digest_fb:${date}:-1` }
+				]
+			]
+		}
+		await ctx.telegram.sendMessage(ctx.chat.id, "📊 <b>How useful was this digest?</b>", {
+			parse_mode: "HTML",
+			reply_markup: feedbackKeyboard
+		})
+
+		// Track digest open in stats
+		upsertUserStat(userId, date, { digest_opened: 1, posts_read: result.blocks.length })
 	}
 
 	getRanking(userId, postId) {
-		return getRankingByUserAndPost(userId, postId, this.todayDate())
+		return getRankingByUserAndPost(userId, postId, this.digestDate())
 	}
 
 	async ensureRankingsForUserAndPosts(userId, date, posts, userProfile) {
@@ -350,7 +389,7 @@ export class BotService {
 
 		if (options.messageToEdit) await ctx.telegram.deleteMessage(chatId, options.messageToEdit).catch(() => { })
 
-		const header = UIFormatter.formatDigestHeader(label, result.teaser, result.blocks.length)
+		const header = UIFormatter.formatDigestHeader(label, result.teaser, result.blocks.length, { total })
 		const hasMore = offset + maxItems < total
 		const row = []
 		if (hasMore) row.push({ text: `▶️ More ${maxItems}`, callback_data: `summary_more:${dateStr}:${offset + maxItems}:${maxItems}` })
@@ -378,14 +417,18 @@ export class BotService {
 
 	async sendMorningDigests(botInstance) {
 		const users = getUsersForMorningDigest()
-		const yesterday = new Date()
-		yesterday.setDate(yesterday.getDate() - 1)
-		const yesterdayStr = yesterday.toISOString().slice(0, 10)
+		// Morning digest at 07:00 MSK shows digest for "yesterday" (06:00 MSK yesterday to 06:00 MSK today)
+		// Use getDigestDate() which returns yesterday before 06:00 MSK, today after
+		// At 07:00 MSK, getDigestDate() returns "today", so we need to subtract 1 day
+		const digestDate = getDigestDate()
+		const digestDateObj = new Date(digestDate)
+		digestDateObj.setDate(digestDateObj.getDate() - 1)
+		const digestDateStr = digestDateObj.toISOString().slice(0, 10)
 
 		for (const u of users) {
 			try {
-				await this.ensureRankingsForDate(u.user_id, yesterdayStr, u.profile || "")
-				const payload = await this.buildDigestBlocksForDate(u.user_id, yesterdayStr)
+				await this.ensureRankingsForDate(u.user_id, digestDateStr, u.profile || "")
+				const payload = await this.buildDigestBlocksForDate(u.user_id, digestDateStr)
 				if (!payload) continue
 
 				const teaserText = payload.teaser
@@ -415,6 +458,24 @@ export class BotService {
 					})
 					if (postId) this.mgr.cache.setBlock(postId, { normalText: blockText, block, postById: payload.postById, reason })
 				}
+
+				// Add digest feedback buttons
+				const feedbackKeyboard = {
+					inline_keyboard: [
+						[
+							{ text: "👍 Useful", callback_data: `digest_fb:${digestDateStr}:1` },
+							{ text: "😐 So-so", callback_data: `digest_fb:${digestDateStr}:0` },
+							{ text: "👎 Irrelevant", callback_data: `digest_fb:${digestDateStr}:-1` }
+						]
+					]
+				}
+				await botInstance.telegram.sendMessage(u.user_id, "📊 <b>How useful was this digest?</b>", {
+					parse_mode: "HTML",
+					reply_markup: feedbackKeyboard
+				})
+
+				// Track digest open
+				upsertUserStat(u.user_id, digestDateStr, { digest_opened: 1, posts_read: payload.blocks.length })
 			} catch (e) {
 				console.error("[morning digest] user", u.user_id, e)
 			}
@@ -422,8 +483,8 @@ export class BotService {
 	}
 
 	async buildDigestBlocks(userId) {
-		const date = this.todayDate()
-		const { postIds } = this.getDigestPostIds(userId, date, DIGEST_PAGE_SIZE, 0)
+		const date = this.digestDate()
+		const { postIds, total } = this.getDigestPostIds(userId, date, DIGEST_PAGE_SIZE, 0)
 		if (postIds.length === 0) return null
 
 		const posts = getPostsByIds(postIds)
@@ -437,7 +498,7 @@ export class BotService {
 		if (!result.blocks?.length) return null
 
 		return {
-			header: UIFormatter.formatDigestHeader("morning", result.teaser, result.blocks.length, { morning: true }),
+			header: UIFormatter.formatDigestHeader("morning", result.teaser, result.blocks.length, { morning: true, total }),
 			teaser: result.teaser,
 			blocks: result.blocks,
 			postById: UIFormatter.buildPostById(posts),
@@ -446,7 +507,7 @@ export class BotService {
 	}
 
 	async buildDigestBlocksForDate(userId, date) {
-		const { postIds } = this.getDigestPostIds(userId, date, DIGEST_PAGE_SIZE, 0)
+		const { postIds, total } = this.getDigestPostIds(userId, date, DIGEST_PAGE_SIZE, 0)
 		if (postIds.length === 0) return null
 
 		const posts = getPostsByIds(postIds)
@@ -460,7 +521,7 @@ export class BotService {
 		if (!result.blocks?.length) return null
 
 		return {
-			header: UIFormatter.formatDigestHeader(label, result.teaser, result.blocks.length),
+			header: UIFormatter.formatDigestHeader(label, result.teaser, result.blocks.length, { total }),
 			teaser: result.teaser,
 			blocks: result.blocks,
 			postById: UIFormatter.buildPostById(posts),

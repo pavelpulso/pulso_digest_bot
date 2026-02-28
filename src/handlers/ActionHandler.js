@@ -13,7 +13,11 @@ import {
 	removeChannelsByUsernames,
 	removeChannel,
 	addChannel,
-	hasChannel
+	hasChannel,
+	setUserDigestPause,
+	clearUserDigestPause,
+	setUserDigestPauseWeekends,
+	upsertDigestFeedback
 } from "../db.js"
 import { formatDateLabel, formatChannelList } from "../utils.js"
 import { collectChannelPosts, fetchRecentPostsFromChannel } from "../gramjs.js"
@@ -23,6 +27,7 @@ export class ActionHandler extends BaseHandler {
 		const offset = parseInt(ctx.match[1], 10)
 		const count = parseInt(ctx.match[2], 10)
 		const userId = ctx.from?.id
+		console.log("[handleMore] userId:", userId, "offset:", offset, "count:", count)
 		if (!userId || isUserBanned(userId)) return
 		await this.safeAnswerCbQuery(ctx, "Loading…")
 		return this.mgr.service.digestReply(ctx, offset, count)
@@ -586,5 +591,75 @@ export class ActionHandler extends BaseHandler {
 		} catch (e) {
 			await status.replace("❌ Failed to analyze channel: " + this.formatErrorForChat(e))
 		}
+	}
+
+	async handlePauseAction(ctx) {
+		const userId = ctx.from?.id
+		if (!userId) return
+
+		const action = ctx.match[1]
+
+		if (action === "resume") {
+			clearUserDigestPause(userId)
+			await ctx.editMessageText("▶️ <b>Digest resumed</b>\n\nMorning digest will be delivered as usual.", {
+				parse_mode: "HTML",
+				reply_markup: { inline_keyboard: [[{ text: "⚙️ Settings", callback_data: "menu" }]] }
+			})
+		} else if (action === "3d") {
+			const until = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString()
+			setUserDigestPause(userId, until)
+			await ctx.editMessageText(
+				`⏸ <b>Paused for 3 days</b>\n\nUntil: ${until.toLocaleDateString()}\n\nUse /settings to resume earlier.`,
+				{ parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "⚙️ Settings", callback_data: "menu" }]] } }
+			)
+		} else if (action === "7d") {
+			const until = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString()
+			setUserDigestPause(userId, until)
+			await ctx.editMessageText(
+				`⏸ <b>Paused for 7 days</b>\n\nUntil: ${until.toLocaleDateString()}\n\nUse /settings to resume earlier.`,
+				{ parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "⚙️ Settings", callback_data: "menu" }]] } }
+			)
+		} else if (action.startsWith("weekend:")) {
+			const enabled = action.split(":")[1] === "1"
+			setUserDigestPauseWeekends(userId, enabled)
+			const text = enabled ? "⏭ <b>Weekend skip enabled</b>\n\nNo digest on Sat/Sun." : "⏭ <b>Weekend skip disabled</b>\n\nDigest will be delivered every day."
+			await ctx.editMessageText(text, {
+				parse_mode: "HTML",
+				reply_markup: {
+					inline_keyboard: [
+						[{ text: "⏸ Pause 3 days", callback_data: "pause_3d" }, { text: "⏸ Pause 7 days", callback_data: "pause_7d" }],
+						[{ text: "⏭ Skip weekends", callback_data: `pause_weekend:${enabled ? 0 : 1}` }],
+						[{ text: "❌ Cancel", callback_data: "menu" }]
+					]
+				}
+			})
+		}
+
+		await this.safeAnswerCbQuery(ctx)
+	}
+
+	async handleDigestFeedback(ctx) {
+		const userId = ctx.from?.id
+		if (!userId) return
+
+		const date = ctx.match[1]
+		const rating = parseInt(ctx.match[2], 10) // 1 = useful, 0 = so-so, -1 = irrelevant
+
+		upsertDigestFeedback(userId, date, rating)
+
+		const labels = { 1: "👍 Useful", 0: "😐 So-so", "-1": "👎 Irrelevant" }
+		await ctx.editMessageText(`✅ <b>Feedback saved:</b> ${labels[rating]}`, {
+			parse_mode: "HTML",
+			reply_markup: { inline_keyboard: [[{ text: "📰 Open digest", callback_data: "digest" }]] }
+		})
+		await this.safeAnswerCbQuery(ctx)
+	}
+
+	async handleStatsRefresh(ctx) {
+		const userId = ctx.from?.id
+		if (!userId) return
+
+		await this.safeAnswerCbQuery(ctx)
+		return this.mgr.handlers.command.handleStats(ctx)
 	}
 }

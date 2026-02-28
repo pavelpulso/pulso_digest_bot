@@ -68,9 +68,9 @@ Rules:
 - JSON with teaser and blocks (max ${maxBlocks}).
 - teaser: up to 12 words, catchy essence — what's the main point of this digest.
 - blocks: only useful content, no ads, polls, announcements, filler content.
-- Combine posts about the same topic into one block — if they complement each other, talk about the same event/trend/problem from different angles.
+- IMPORTANT: Only combine posts if they are DUPLICATES — same news/event posted by different channels. Do NOT merge different posts on similar topics — each unique post gets its own block.
 - Each block:
-  • ids: array of post IDs
+  • ids: array of post IDs (multiple IDs only for duplicates from different channels)
   • essence: main idea (15-20 words) — what happened, what problem they solve, what discovery they made. Write complete sentences, don't cut thoughts short.
   • potential: benefit for the reader (10-12 words) — how to apply this to themselves, what it will give them personally.
   • emoji: 1-2 characters by topic (📊 for data, 💡 for insights, 🛠 for tools, 🔍 for analysis).

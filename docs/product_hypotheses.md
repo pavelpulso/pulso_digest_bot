@@ -4,6 +4,18 @@ Ratings: **Complexity** and **Potential** on a 1–5 scale (1 = low, 5 = high). 
 
 ---
 
+## ✅ Implemented Quick Wins (Q1 2026)
+
+| # | Hypothesis | Status | Notes |
+|---|------------|--------|-------|
+| 1 | **Onboarding tour** — 3 messages at /start | ✅ Done | Explains value, setup steps, CTA for profile |
+| 2 | **Pause digest** — 3 days, 7 days, resume | ✅ Done | Settings → "⏸ Pause digest" button |
+| 3 | **Weekend skip** — no digest on Sat/Sun | ✅ Done | Toggle in pause menu |
+| 4 | **Digest feedback** — Useful / So-so / Irrelevant | ✅ Done | Buttons after each digest |
+| 5 | **Personal stats** — digests opened, posts read, top channels | ✅ Done | Settings → "📊 My stats" |
+
+---
+
 ## Hypotheses Table
 
 | # | Hypothesis | Complexity | Potential | Quick Win | Impact |

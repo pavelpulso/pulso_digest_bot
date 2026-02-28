@@ -89,6 +89,21 @@ if (!userCols.includes("system_prompt_cached_at")) {
   db.prepare("ALTER TABLE users ADD COLUMN system_prompt_cached_at TEXT").run()
 }
 
+// Migration: digest_pause_until — pause morning digest until date (ISO string)
+if (!userCols.includes("digest_pause_until")) {
+  db.prepare("ALTER TABLE users ADD COLUMN digest_pause_until TEXT").run()
+}
+
+// Migration: digest_pause_weekends — pause morning digest on Sat/Sun (0/1)
+if (!userCols.includes("digest_pause_weekends")) {
+  db.prepare("ALTER TABLE users ADD COLUMN digest_pause_weekends INTEGER DEFAULT 0").run()
+}
+
+// Migration: onboarding_completed — whether user completed onboarding tour
+if (!userCols.includes("onboarding_completed")) {
+  db.prepare("ALTER TABLE users ADD COLUMN onboarding_completed INTEGER DEFAULT 0").run()
+}
+
 // user_channel_settings: per-user hide-in-digest and priority (1=normal, 2=important)
 db.exec(`
   CREATE TABLE IF NOT EXISTS user_channel_settings (
@@ -113,6 +128,33 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(user_id)
   );
   CREATE INDEX IF NOT EXISTS idx_post_feedback_user ON post_feedback(user_id);
+`)
+
+// digest_feedback: overall digest rating (1 = useful, 0 = so-so, -1 = irrelevant)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS digest_feedback (
+    user_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    rating INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, date),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_digest_feedback_user ON digest_feedback(user_id);
+`)
+
+// user_stats: track digest opens, posts read for personal stats
+db.exec(`
+  CREATE TABLE IF NOT EXISTS user_stats (
+    user_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    digest_opened INTEGER DEFAULT 0,
+    posts_read INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, date),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_user_stats_user ON user_stats(user_id);
 `)
 
 // Settings
@@ -349,7 +391,7 @@ export function getRatedPostIds(userId) {
 
 // Users
 const USER_SELECT =
-  "SELECT user_id, username, profile, is_banned, updated_at, COALESCE(digest_max_items, 7) AS digest_max_items, minus_keywords, COALESCE(digest_format, 'full') AS digest_format, system_prompt_url, system_prompt_cached, system_prompt_cached_at FROM users WHERE user_id = ?"
+  "SELECT user_id, username, profile, is_banned, updated_at, COALESCE(digest_max_items, 7) AS digest_max_items, minus_keywords, COALESCE(digest_format, 'full') AS digest_format, system_prompt_url, system_prompt_cached, system_prompt_cached_at, digest_pause_until, digest_pause_weekends, onboarding_completed FROM users WHERE user_id = ?"
 
 export function getUser(userId) {
   return db.prepare(USER_SELECT).get(userId)
@@ -520,9 +562,18 @@ export function getStats() {
   }
 }
 
-/** Users that should receive morning digest (not banned). */
+/** Users that should receive morning digest (not banned, not paused). */
 export function getUsersForMorningDigest() {
-  return db.prepare("SELECT user_id, profile FROM users WHERE is_banned = 0").all()
+  const now = new Date().toISOString()
+  const dayOfWeek = new Date().getDay() // 0 = Sunday, 6 = Saturday
+  const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6) ? 1 : 0
+  
+  return db.prepare(
+    `SELECT user_id, profile FROM users 
+     WHERE is_banned = 0 
+       AND (digest_pause_until IS NULL OR digest_pause_until < ?)
+       AND (digest_pause_weekends = 0 OR ? = 0)`
+  ).all(now, isWeekend)
 }
 
 // System Prompt Management
@@ -545,6 +596,102 @@ export function getPostsForDateRange(since, until) {
   return db.prepare(
     "SELECT id, channel, post_id, text, link, views, date FROM posts WHERE date >= ? AND date < ? ORDER BY date DESC"
   ).all(since, until)
+}
+
+// Digest pause management
+export function setUserDigestPause(userId, pauseUntilIso) {
+  db.prepare("UPDATE users SET digest_pause_until = ?, updated_at = datetime('now') WHERE user_id = ?").run(pauseUntilIso, userId)
+}
+
+export function getUserDigestPause(userId) {
+  const row = db.prepare("SELECT digest_pause_until FROM users WHERE user_id = ?").get(userId)
+  return row?.digest_pause_until || null
+}
+
+export function clearUserDigestPause(userId) {
+  db.prepare("UPDATE users SET digest_pause_until = NULL, updated_at = datetime('now') WHERE user_id = ?").run(null, userId)
+}
+
+export function isUserDigestPaused(userId) {
+  const row = db.prepare("SELECT digest_pause_until FROM users WHERE user_id = ?").get(userId)
+  if (!row?.digest_pause_until) return false
+  const until = new Date(row.digest_pause_until)
+  return until > new Date()
+}
+
+// Weekend pause setting
+export function setUserDigestPauseWeekends(userId, enabled) {
+  db.prepare("UPDATE users SET digest_pause_weekends = ?, updated_at = datetime('now') WHERE user_id = ?").run(enabled ? 1 : 0, userId)
+}
+
+export function getUserDigestPauseWeekends(userId) {
+  const row = db.prepare("SELECT digest_pause_weekends FROM users WHERE user_id = ?").get(userId)
+  return (row?.digest_pause_weekends || 0) === 1
+}
+
+// Onboarding status
+export function setUserOnboardingCompleted(userId, completed) {
+  db.prepare("UPDATE users SET onboarding_completed = ?, updated_at = datetime('now') WHERE user_id = ?").run(completed ? 1 : 0, userId)
+}
+
+export function isUserOnboardingCompleted(userId) {
+  const row = db.prepare("SELECT onboarding_completed FROM users WHERE user_id = ?").get(userId)
+  return (row?.onboarding_completed || 0) === 1
+}
+
+// Digest feedback (overall rating)
+/** rating: 1 = useful, 0 = so-so, -1 = irrelevant */
+export function upsertDigestFeedback(userId, date, rating) {
+  db.prepare(
+    `INSERT INTO digest_feedback (user_id, date, rating) VALUES (?, ?, ?)
+     ON CONFLICT(user_id, date) DO UPDATE SET rating = excluded.rating, created_at = datetime('now')`
+  ).run(userId, date, rating)
+}
+
+export function getDigestFeedback(userId, date) {
+  const row = db.prepare("SELECT rating FROM digest_feedback WHERE user_id = ? AND date = ?").get(userId, date)
+  return row?.rating || null
+}
+
+// User stats tracking
+export function upsertUserStat(userId, date, stats) {
+  const { digest_opened = 0, posts_read = 0 } = stats
+  db.prepare(
+    `INSERT INTO user_stats (user_id, date, digest_opened, posts_read) VALUES (?, ?, ?, ?)
+     ON CONFLICT(user_id, date) DO UPDATE SET digest_opened = excluded.digest_opened, posts_read = excluded.posts_read`
+  ).run(userId, date, digest_opened, posts_read)
+}
+
+export function getUserStats(userId, days = 7) {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  return db.prepare(
+    "SELECT date, digest_opened, posts_read FROM user_stats WHERE user_id = ? AND date >= ? ORDER BY date DESC"
+  ).all(userId, since)
+}
+
+export function getUserStatsSummary(userId, days = 7) {
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const row = db.prepare(
+    "SELECT SUM(digest_opened) as total_opened, SUM(posts_read) as total_posts FROM user_stats WHERE user_id = ? AND date >= ?"
+  ).get(userId, since)
+  return {
+    digestsOpened: row?.total_opened || 0,
+    postsRead: row?.total_posts || 0
+  }
+}
+
+/** Get top channels by posts read (from feedback/interactions) for user */
+export function getUserTopChannels(userId, limit = 5) {
+  const rows = db.prepare(
+    `SELECT p.channel, COUNT(*) as cnt
+     FROM post_feedback pf
+     JOIN posts p ON pf.post_id = p.id
+     WHERE pf.user_id = ? AND pf.rating = 1
+     GROUP BY p.channel
+     ORDER BY cnt DESC
+     LIMIT ?`
+  ).all(userId, limit)
+  return rows.map(r => ({ channel: r.channel, count: r.cnt }))
 }
 
 export default db
