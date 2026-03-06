@@ -9,7 +9,7 @@ Telegram bot that aggregates posts from tracked channels and delivers personaliz
 - **Telegram Client:** GramJS (`telegram` package) for MTProto channel reading
 - **Database:** SQLite via `better-sqlite3` (file: `data/db.sqlite`)
 - **AI:** Multi-provider (Gemini, Groq, OpenRouter, QwenWorker) with auto-fallback
-- **Scheduling:** `node-cron`
+- **Scheduling:** System cron + `node-cron` (fallback)
 - **Process Manager:** PM2
 
 ## Quick Start
@@ -76,6 +76,31 @@ npm run deploy
 cd /path/to/pulso_digest_bot
 ./deploy.sh
 ```
+
+### Cron Setup (Обязательно!)
+
+Для надёжной работы ежедневного сбора постов и утреннего digest настройте системный cron:
+
+```bash
+# На VPS выполните:
+crontab -e
+```
+
+Добавьте строки (замените путь на ваш):
+```cron
+# Сбор постов в 06:00 MSK
+0 6 * * * cd /home/user/pulso_digest_bot && node src/cron-job.js --action=collect >> /var/log/pulso-cron.log 2>&1
+
+# Утренний digest в 07:00 MSK
+0 7 * * * cd /home/user/pulso_digest_bot && node src/cron-job.js --action=digest >> /var/log/pulso-cron.log 2>&1
+```
+
+**Важно:**
+- Проверьте timezone сервера: `timedatectl` (должна быть Europe/Moscow)
+- Путь к node: `which node` (может отличаться от `/usr/bin/node`)
+- Логи: `tail -f /var/log/pulso-cron.log`
+
+📖 Подробная инструкция: [docs/CRON_SETUP.md](docs/CRON_SETUP.md)
 
 ## Environment Variables (.env)
 
@@ -163,9 +188,10 @@ cd /path/to/pulso_digest_bot
 
 ```
 src/
-├── index.js        # Entry point: starts bot and cron
+├── index.js        # Entry point: starts bot
 ├── bot.js          # Telegraf commands, handlers, inline keyboards
-├── cron.js         # Daily post collection (06:00) and morning digest (07:00)
+├── cron.js         # Cron functions (для node-cron fallback)
+├── cron-job.js     # Standalone script для системного cron
 ├── gramjs.js       # Channel reading via MTProto (GramJS)
 ├── gemini.js       # Post ranking and digest generation via AI
 ├── db.js           # SQLite CRUD: users, channels, posts, rankings, feedback
@@ -195,10 +221,12 @@ data/
 
 ## Architecture Flow
 
-1. **Collection (cron 06:00 MSK):** `cron.js` → `gramjs.js` fetches posts from last 24h → saves to `posts` table
+1. **Collection (cron 06:00 MSK):** Системный cron → `cron-job.js` → `gramjs.js` fetches posts from last 24h → saves to `posts` table
 2. **Ranking (on-demand):** `bot.js` → `gemini.js rankPosts()` → stores in `rankings` table
 3. **Digest Generation:** `bot.js` → `gemini.js generateSummaryBlocks()` → sends to user
-4. **Morning Delivery (cron 07:00 MSK):** `sendMorningDigests()` → teaser with button → full digest
+4. **Morning Delivery (cron 07:00 MSK):** Системный cron → `cron-job.js` → `sendMorningDigests()` → teaser with button → full digest
+
+**Note:** System cron is preferred over `node-cron` for reliability. See [docs/CRON_SETUP.md](docs/CRON_SETUP.md)
 
 ## Development Conventions
 

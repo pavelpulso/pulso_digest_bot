@@ -10,6 +10,8 @@
   "scripts": {
     "start": "node src/index.js",
     "auth": "node src/auth.js",
+    "cron:collect": "node src/cron-job.js --action=collect",
+    "cron:digest": "node src/cron-job.js --action=digest",
     "dev": "nodemon src/index.js",
     "deploy": "./deploy-remote.sh",
     "lint": "eslint src/",
