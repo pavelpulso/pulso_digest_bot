@@ -1,7 +1,7 @@
 import cron from "node-cron"
 import { collectChannelPosts } from "./gramjs.js"
 import { getChannelUsernames, addChannel } from "./db.js"
-import { sendMorningDigests } from "./bot.js"
+import { BotManager } from "./core/BotManager.js"
 
 const CRON_SCHEDULE = "0 6 * * *" // 06:00 daily
 const MORNING_DIGEST_SCHEDULE = "0 7 * * *" // 07:00 — morning digest delivery
@@ -25,7 +25,7 @@ async function runCollection() {
     seedChannelsFromEnv()
     const { collected, errors, perChannel } = await collectChannelPosts()
     const elapsed = Math.round((Date.now() - startTime) / 1000)
-    
+
     if (errors.length) {
       console.error("[cron] Errors:", errors)
     }
@@ -41,7 +41,9 @@ async function runCollection() {
 async function runMorningDigest(botInstance) {
   console.log("[cron] Starting morning digest delivery...")
   try {
-    await sendMorningDigests(botInstance)
+    // Use BotManager singleton to send morning digests
+    const manager = new BotManager(process.env.BOT_TOKEN)
+    await manager.service.sendMorningDigests(botInstance)
     console.log("[cron] Morning digest delivery completed.")
   } catch (err) {
     console.error("[cron] Morning digest error:", err.message, err.stack)

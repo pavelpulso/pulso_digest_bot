@@ -11,8 +11,9 @@ function createClient() {
   const session = new StringSession(saved)
   return new TelegramClient(session, apiId, apiHash, {
     connectionRetries: 10,
-    timeout: 60,
-    floodSleepThreshold: 120
+    timeout: 180,
+    floodSleepThreshold: 180,
+    maxAutoReconnect: 5
   })
 }
 
