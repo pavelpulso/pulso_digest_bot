@@ -31,16 +31,17 @@ crontab -e
 Добавить строки (расписание в timezone сервера!):
 
 ```cron
-# Ежедневный сбор постов в 06:00 MSK
-0 6 * * * cd /home/user/pulso_digest_bot && /usr/bin/node src/cron-job.js --action=collect >> /var/log/pulso-cron.log 2>&1
+# Ежедневный сбор постов в 06:00 MSK (03:00 UTC)
+0 3 * * * cd /home/pullso/pulso_digest_bot && /home/pullso/.nvm/versions/node/v20.19.0/bin/node src/cron-job.js --action=collect >> ~/pulso-cron.log 2>&1
 
-# Утренняя рассылка digest в 07:00 MSK
-0 7 * * * cd /home/user/pulso_digest_bot && /usr/bin/node src/cron-job.js --action=digest >> /var/log/pulso-cron.log 2>&1
+# Утренняя рассылка digest в 10:00 MSK (07:00 UTC)
+0 7 * * * cd /home/pullso/pulso_digest_bot && /home/pullso/.nvm/versions/node/v20.19.0/bin/node src/cron-job.js --action=digest >> ~/pulso-cron.log 2>&1
 ```
 
-**Важно:** 
-- Заменить `/home/user/pulso_digest_bot` на ваш путь
-- Проверить путь к node: `which node` (может быть `/usr/local/bin/node`)
+**Важно:**
+- Лог писать в `~/pulso-cron.log` (НЕ в `/var/log/` — нет прав на запись!)
+- Путь к node через nvm: `~/.nvm/versions/node/v20.19.0/bin/node`
+- Заменить `/home/pullso/` на ваш домашний каталог
 - Время указывается по timezone сервера! Проверить: `timedatectl`
 
 ---
@@ -59,7 +60,7 @@ sudo timedatectl set-timezone Europe/Moscow
 
 ```bash
 # Посмотреть логи cron
-tail -f /var/log/pulso-cron.log
+tail -f ~/pulso-cron.log
 
 # Принудительно запустить сбор постов
 cd /home/user/pulso_digest_bot && node src/cron-job.js --action=collect
@@ -74,7 +75,7 @@ cd /home/user/pulso_digest_bot && node src/cron-job.js --action=digest
 
 ```bash
 # Логи cron
-tail -100 /var/log/pulso-cron.log
+tail -100 ~/pulso-cron.log
 
 # Статус cron службы
 sudo systemctl status cron

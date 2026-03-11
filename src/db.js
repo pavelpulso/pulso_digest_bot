@@ -366,6 +366,12 @@ export function getRankingByUserAndPost(userId, postId, date) {
   ).get(userId, postId, date)
 }
 
+export function getRankingByUserAndPostLatest(userId, postId) {
+  return db.prepare(
+    "SELECT score, reason, date FROM rankings WHERE user_id = ? AND post_id = ? ORDER BY date DESC LIMIT 1"
+  ).get(userId, postId)
+}
+
 export function getRankingsMap(userId, date) {
   const rows = db.prepare(
     "SELECT post_id, score, reason FROM rankings WHERE user_id = ? AND date = ?"

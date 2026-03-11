@@ -17,7 +17,8 @@ import {
 	setUserDigestPause,
 	clearUserDigestPause,
 	setUserDigestPauseWeekends,
-	upsertDigestFeedback
+	upsertDigestFeedback,
+	getRankingByUserAndPostLatest
 } from "../db.js"
 import { formatDateLabel, formatChannelList } from "../utils.js"
 import { collectChannelPosts, fetchRecentPostsFromChannel } from "../gramjs.js"
@@ -49,7 +50,7 @@ export class ActionHandler extends BaseHandler {
 
 		const cached = this.mgr.cache.getBlock(postId)
 		if (!cached) {
-			const r = this.mgr.service.getRanking(userId, postId)
+			const r = getRankingByUserAndPostLatest(userId, postId)
 			if (!r?.reason) return this.safeAnswerCbQuery(ctx, "Explanation unavailable")
 			await this.safeAnswerCbQuery(ctx)
 			return ctx.reply(`📌 <b>Why in digest:</b>\n\n${UIFormatter.escapeHtml(r.reason)}`, { parse_mode: "HTML" })

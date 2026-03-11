@@ -4,7 +4,7 @@ import { getChannelUsernames, addChannel } from "./db.js"
 import { BotManager } from "./core/BotManager.js"
 
 const CRON_SCHEDULE = "0 6 * * *" // 06:00 daily
-const MORNING_DIGEST_SCHEDULE = "0 7 * * *" // 07:00 — morning digest delivery
+const MORNING_DIGEST_SCHEDULE = "0 10 * * *" // 10:00 — morning digest delivery
 
 function seedChannelsFromEnv() {
   const list = (process.env.CHANNELS || "").split(",").map((s) => s.trim().replace(/^@/, "")).filter(Boolean)
