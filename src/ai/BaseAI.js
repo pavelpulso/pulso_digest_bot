@@ -30,31 +30,64 @@ export class BaseAI {
   #parseJSONArray(raw) {
     const cleaned = raw.replace(/```\w*\n?/g, "").trim()
 
-    // Find first [ and last ]
-    // Needed because AI may add text before/after JSON
     const startIndex = cleaned.indexOf("[")
-    const endIndex = cleaned.lastIndexOf("]")
+    if (startIndex === -1) throw new Error(`${this.name}: no JSON array found`)
 
-    let jsonStr = cleaned
-    if (startIndex >= 0 && endIndex > startIndex) {
-      jsonStr = cleaned.slice(startIndex, endIndex + 1)
+    // Bracket tracking to find matching ] — avoids lastIndexOf picking wrong bracket
+    let depth = 0
+    let endIndex = -1
+    for (let i = startIndex; i < cleaned.length; i++) {
+      if (cleaned[i] === "[") depth++
+      else if (cleaned[i] === "]") {
+        depth--
+        if (depth === 0) { endIndex = i; break }
+      }
     }
 
-    let parsed
+    const jsonStr = endIndex > startIndex
+      ? cleaned.slice(startIndex, endIndex + 1)
+      : cleaned.slice(startIndex)
+
     try {
-      parsed = JSON.parse(jsonStr)
+      const parsed = JSON.parse(jsonStr)
+      if (Array.isArray(parsed)) return parsed
+      for (const key of JSON_ARRAY_KEYS) {
+        if (parsed && Array.isArray(parsed[key])) return parsed[key]
+      }
+      const firstArr = Object.values(parsed || {}).find(Array.isArray)
+      if (firstArr) return firstArr
+      throw new Error(`${this.name}: expected array in JSON`)
     } catch (e) {
+      // Response may be truncated — recover complete objects before giving up
+      const recovered = this.#recoverPartialArray(cleaned.slice(startIndex))
+      if (recovered.length > 0) {
+        console.warn(`[#parseJSONArray] Recovered ${recovered.length} items from truncated response`)
+        return recovered
+      }
       console.error("[#parseJSONArray] Failed to parse JSON:")
       console.error("JSON string (first 500 chars):", jsonStr.slice(0, 500))
       throw new Error(`${this.name}: invalid JSON - ${e.message}`, { cause: e })
     }
-    if (Array.isArray(parsed)) return parsed
-    for (const key of JSON_ARRAY_KEYS) {
-      if (parsed && Array.isArray(parsed[key])) return parsed[key]
+  }
+
+  #recoverPartialArray(str) {
+    const results = []
+    let i = str.indexOf("[")
+    if (i === -1) return results
+    i++
+    while (i < str.length) {
+      while (i < str.length && /[\s,]/.test(str[i])) i++
+      if (i >= str.length || str[i] === "]") break
+      if (str[i] !== "{") break
+      let depth = 0
+      const start = i
+      for (; i < str.length; i++) {
+        if (str[i] === "{") depth++
+        else if (str[i] === "}") { depth--; if (depth === 0) { i++; break } }
+      }
+      try { results.push(JSON.parse(str.slice(start, i))) } catch {}
     }
-    const firstArr = Object.values(parsed || {}).find(Array.isArray)
-    if (firstArr) return firstArr
-    throw new Error(`${this.name}: expected array in JSON`)
+    return results
   }
 
   /**
@@ -152,7 +185,7 @@ export class BaseAI {
     const prompt = buildRankPrompt(list, userProfile, importantChannels, liked, disliked, systemPrompt || null)
 
     if (typeof onProgress === "function") onProgress(50)
-    const raw = await this._callAPI(prompt, { type: "json_object" })
+    const raw = await this._callAPI(prompt, { type: "json_object", maxTokens: 16384 })
     if (typeof onProgress === "function") onProgress(80)
 
     const parsed = this.#parseJSONArray(raw)

@@ -40,13 +40,10 @@ async function runCollection() {
       console.log("[cron-job] Per channel:", perChannel.map(c => `${c.channel}:${c.count}`).join(", "))
     }
     
-    // Close bot client
-    await bot.stop("cron-job-complete")
     console.log("[cron-job] Completed successfully.")
     process.exit(0)
   } catch (err) {
     console.error("[cron-job] Fatal error:", err.message, err.stack)
-    await bot.stop("cron-job-error")
     process.exit(1)
   }
 }
@@ -56,12 +53,9 @@ async function runMorningDigest() {
   try {
     await sendMorningDigests(bot)
     console.log("[cron-job] Morning digest delivery completed.")
-    await bot.stop("cron-job-complete")
-    console.log("[cron-job] Completed successfully.")
     process.exit(0)
   } catch (err) {
     console.error("[cron-job] Morning digest error:", err.message, err.stack)
-    await bot.stop("cron-job-error")
     process.exit(1)
   }
 }
