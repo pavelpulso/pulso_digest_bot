@@ -647,6 +647,12 @@ export class BotService {
 				upsertUserStat(u.user_id, digestDateStr, { digest_opened: 1, posts_read: payload.blocks.length })
 			} catch (e) {
 				console.error("[morning digest] user", u.user_id, e)
+				try {
+					await botInstance.telegram.sendMessage(u.user_id,
+						"⚠️ <b>Digest unavailable today</b>\n\nAI ranking failed. Posts were collected — open /digest to browse manually.",
+						{ parse_mode: "HTML" }
+					)
+				} catch {}
 			}
 		}
 	}
