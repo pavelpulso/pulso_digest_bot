@@ -30,43 +30,53 @@ export class BaseAI {
   #parseJSONArray(raw) {
     const cleaned = raw.replace(/```\w*\n?/g, "").trim()
 
-    const startIndex = cleaned.indexOf("[")
-    if (startIndex === -1) throw new Error(`${this.name}: no JSON array found`)
+    // Try each '[' occurrence — model may prefix with non-JSON text like "[Rules applied: ...]"
+    let searchFrom = 0
+    while (true) {
+      const startIndex = cleaned.indexOf("[", searchFrom)
+      if (startIndex === -1) throw new Error(`${this.name}: no JSON array found`)
 
-    // Bracket tracking to find matching ] — avoids lastIndexOf picking wrong bracket
-    let depth = 0
-    let endIndex = -1
-    for (let i = startIndex; i < cleaned.length; i++) {
-      if (cleaned[i] === "[") depth++
-      else if (cleaned[i] === "]") {
-        depth--
-        if (depth === 0) { endIndex = i; break }
+      // Bracket tracking to find matching ]
+      let depth = 0
+      let endIndex = -1
+      for (let i = startIndex; i < cleaned.length; i++) {
+        if (cleaned[i] === "[") depth++
+        else if (cleaned[i] === "]") {
+          depth--
+          if (depth === 0) { endIndex = i; break }
+        }
       }
-    }
 
-    const jsonStr = endIndex > startIndex
-      ? cleaned.slice(startIndex, endIndex + 1)
-      : cleaned.slice(startIndex)
+      const jsonStr = endIndex > startIndex
+        ? cleaned.slice(startIndex, endIndex + 1)
+        : cleaned.slice(startIndex)
 
-    try {
-      const parsed = JSON.parse(jsonStr)
-      if (Array.isArray(parsed)) return parsed
-      for (const key of JSON_ARRAY_KEYS) {
-        if (parsed && Array.isArray(parsed[key])) return parsed[key]
+      try {
+        const parsed = JSON.parse(jsonStr)
+        if (Array.isArray(parsed)) return parsed
+        for (const key of JSON_ARRAY_KEYS) {
+          if (parsed && Array.isArray(parsed[key])) return parsed[key]
+        }
+        const firstArr = Object.values(parsed || {}).find(Array.isArray)
+        if (firstArr) return firstArr
+        // Parsed but not an array — try next '['
+        searchFrom = startIndex + 1
+        continue
+      } catch (e) {
+        // Try recovery from this position first
+        const recovered = this.#recoverPartialArray(cleaned.slice(startIndex))
+        if (recovered.length > 0) {
+          console.warn(`[#parseJSONArray] Recovered ${recovered.length} items from truncated response`)
+          return recovered
+        }
+        // This '[' is not a JSON array — try next one
+        searchFrom = startIndex + 1
+        if (cleaned.indexOf("[", searchFrom) === -1) {
+          console.error("[#parseJSONArray] Failed to parse JSON:")
+          console.error("JSON string (first 500 chars):", jsonStr.slice(0, 500))
+          throw new Error(`${this.name}: invalid JSON - ${e.message}`, { cause: e })
+        }
       }
-      const firstArr = Object.values(parsed || {}).find(Array.isArray)
-      if (firstArr) return firstArr
-      throw new Error(`${this.name}: expected array in JSON`)
-    } catch (e) {
-      // Response may be truncated — recover complete objects before giving up
-      const recovered = this.#recoverPartialArray(cleaned.slice(startIndex))
-      if (recovered.length > 0) {
-        console.warn(`[#parseJSONArray] Recovered ${recovered.length} items from truncated response`)
-        return recovered
-      }
-      console.error("[#parseJSONArray] Failed to parse JSON:")
-      console.error("JSON string (first 500 chars):", jsonStr.slice(0, 500))
-      throw new Error(`${this.name}: invalid JSON - ${e.message}`, { cause: e })
     }
   }
 

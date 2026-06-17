@@ -151,10 +151,11 @@ export class ActionHandler extends BaseHandler {
 			return this.safeAnswerCbQuery(ctx)
 		}
 
+		let status = null
 		try {
 			await this.safeAnswerCbQuery(ctx)
 
-			const status = new StatusMessage(ctx)
+			status = new StatusMessage(ctx)
 			await status.startProgress("⏳ <b>Preparing digest for selected date...</b>", 0)
 
 			// Stage 1: Load posts (0-30%)
