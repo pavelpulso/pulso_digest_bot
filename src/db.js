@@ -305,6 +305,35 @@ export function upsertVideo(id, channel, videoId, text, link, views, durationSec
   ).run(id, channel, videoId, text || "", link || "", views || 0, date, durationSec || null)
 }
 
+export function getYouTubeChannels() {
+  return db.prepare(
+    "SELECT username, external_id FROM channels WHERE source = 'yt' AND unsubscribed_at IS NULL"
+  ).all()
+}
+
+export function upsertYouTubeChannel(username, externalId, addedBy) {
+  db.prepare(
+    `INSERT INTO channels (username, added_by, source, external_id)
+     VALUES (?, ?, 'yt', ?)
+     ON CONFLICT(username) DO UPDATE SET
+       external_id = excluded.external_id,
+       unsubscribed_at = NULL`
+  ).run(username, addedBy || 0, externalId)
+}
+
+export function markChannelUnsubscribed(username) {
+  db.prepare(
+    "UPDATE channels SET unsubscribed_at = datetime('now') WHERE username = ? AND source = 'yt'"
+  ).run(username)
+}
+
+export function getVideosInWindow(sinceIso) {
+  return db.prepare(
+    `SELECT id, channel, post_id, text, link, views, date, source, duration_sec
+     FROM posts WHERE source = 'yt' AND date >= ? ORDER BY date DESC`
+  ).all(sinceIso)
+}
+
 /** Returns last N posts for a channel (newest first). */
 export function getRecentPostsByChannel(channel, limit = 20) {
   const norm = channel.replace(/^@/, "").toLowerCase()
