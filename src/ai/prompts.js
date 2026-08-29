@@ -41,7 +41,7 @@ Priorities when evaluating:
 Reader context: ${readerContext}${priorityHint}${feedbackHint}
 
 Posts:
-${JSON.stringify(list, null, 2)}
+${JSON.stringify(list)}
 
 Evaluate strictly:
 - Score >= 0.7 — only posts with obvious personal benefit: concrete action, problem solution, new skill, real opportunity.

@@ -170,6 +170,34 @@ export class BaseAI {
     }
   }
 
+  /**
+   * Splits posts into batches whose rendered prompt stays within the token budget.
+   * @private
+   */
+  #splitIntoBatches(list, buildPrompt) {
+    const budgetChars = LIMITS.RANK_BATCH_TOKENS * 4
+    const overhead = buildPrompt([]).length
+    const costOf = (item) => JSON.stringify(item).length + 2
+
+    const batches = []
+    let current = []
+    let size = overhead
+
+    for (const item of list) {
+      const cost = costOf(item)
+      if (current.length > 0 && size + cost > budgetChars) {
+        batches.push(current)
+        current = []
+        size = overhead
+      }
+      current.push(item)
+      size += cost
+    }
+    if (current.length > 0) batches.push(current)
+
+    return batches
+  }
+
   async rankPosts(posts, userProfile = "", _options = {}) {
     if (posts.length === 0) return []
 
@@ -192,16 +220,21 @@ export class BaseAI {
     const liked = feedback.liked || []
     const disliked = feedback.disliked || []
 
-    const prompt = buildRankPrompt(list, userProfile, importantChannels, liked, disliked, systemPrompt || null)
+    const buildPrompt = (items) =>
+      buildRankPrompt(items, userProfile, importantChannels, liked, disliked, systemPrompt || null)
 
-    if (typeof onProgress === "function") onProgress(50)
-    const raw = await this._callAPI(prompt, { type: "json_object", maxTokens: 16384 })
-    if (typeof onProgress === "function") onProgress(80)
+    const batches = this.#splitIntoBatches(list, buildPrompt)
+    console.log(`[rankPosts] ${list.length} posts split into ${batches.length} request(s)`)
 
-    const parsed = this.#parseJSONArray(raw)
-    if (typeof onProgress === "function") onProgress(100)
-    
-    // Debug: log what AI returned
+    const parsed = []
+    for (let i = 0; i < batches.length; i++) {
+      const raw = await this._callAPI(buildPrompt(batches[i]), { type: "json_object", maxTokens: 16384 })
+      parsed.push(...this.#parseJSONArray(raw))
+      if (typeof onProgress === "function") {
+        onProgress(Math.round(((i + 1) / batches.length) * 100))
+      }
+    }
+
     console.log(`[rankPosts] AI returned ${parsed.length} items, sample: ${JSON.stringify(parsed.slice(0, 2))}`)
 
     return parsed.map((item) => ({

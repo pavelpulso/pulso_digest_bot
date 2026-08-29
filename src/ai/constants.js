@@ -6,8 +6,10 @@
  * Text length limits for different tasks.
  */
 export const LIMITS = {
-  /** Max post text length for ranking */
-  RANK_TEXT: 2000,
+  /** Max post text length for ranking — relevance is decided by the opening, not the full post */
+  RANK_TEXT: 500,
+  /** Token budget for a single ranking request */
+  RANK_BATCH_TOKENS: 6000,
   /** Max post text length for summary */
   SUMMARY_TEXT: 1500,
   /** Max text length for channel analysis */
