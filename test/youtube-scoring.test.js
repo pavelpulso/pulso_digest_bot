@@ -26,3 +26,8 @@ test("views below the norm never push a fresh video down", () => {
 test("a missing norm is treated as no signal", () => {
 	assert.equal(computeBoost(5000, 0, 10), 0)
 })
+
+test("a count that is not a number is treated as no history, not as a passing gate", () => {
+	assert.equal(computeBoost(100000, 1000, NaN), 0)
+	assert.equal(computeBoost(100000, 1000, undefined), 0)
+})

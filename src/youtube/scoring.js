@@ -14,7 +14,7 @@ export function median(values) {
  * недельному и «топ за 7 дней» станет «топом прошлой недели».
  */
 export function computeBoost(views, medianViews, maturedCount) {
-  if (maturedCount < MIN_MATURED_VIDEOS) return 0
+  if (!(maturedCount >= MIN_MATURED_VIDEOS)) return 0
   if (!medianViews || medianViews <= 0) return 0
   if (!views || views <= 0) return 0
   const ratio = views / medianViews
