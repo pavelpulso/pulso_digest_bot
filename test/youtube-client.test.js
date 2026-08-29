@@ -199,3 +199,49 @@ test("the uploads playlist stops at the first page that falls outside the window
 		}
 	)
 })
+
+test("listLatestPlaylistVideo issues exactly one request and does not page", async () => {
+	let requestCount = 0
+
+	await withServer(
+		(req, res) => {
+			const url = new URL(req.url, "http://x")
+			if (url.pathname.endsWith("/token")) {
+				res.writeHead(200, { "Content-Type": "application/json" })
+				return res.end(JSON.stringify({ access_token: "at", expires_in: 3600 }))
+			}
+			requestCount++
+			assert.equal(url.searchParams.get("maxResults"), "1")
+			res.writeHead(200, { "Content-Type": "application/json" })
+			res.end(JSON.stringify({
+				nextPageToken: "page2",
+				items: [{ contentDetails: { videoId: "vidLatest", videoPublishedAt: "2026-08-29T00:00:00Z" } }]
+			}))
+		},
+		async (url) => {
+			const client = makeClient(url)
+			const result = await client.listLatestPlaylistVideo("UU1")
+			assert.equal(requestCount, 1, "no paging even though the server offers a nextPageToken")
+			assert.deepEqual(result, { videoId: "vidLatest", publishedAt: "2026-08-29T00:00:00Z" })
+		}
+	)
+})
+
+test("listLatestPlaylistVideo returns null for an empty playlist", async () => {
+	await withServer(
+		(req, res) => {
+			const url = new URL(req.url, "http://x")
+			if (url.pathname.endsWith("/token")) {
+				res.writeHead(200, { "Content-Type": "application/json" })
+				return res.end(JSON.stringify({ access_token: "at", expires_in: 3600 }))
+			}
+			res.writeHead(200, { "Content-Type": "application/json" })
+			res.end(JSON.stringify({ items: [] }))
+		},
+		async (url) => {
+			const client = makeClient(url)
+			const result = await client.listLatestPlaylistVideo("UUempty")
+			assert.equal(result, null)
+		}
+	)
+})

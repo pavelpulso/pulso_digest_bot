@@ -135,6 +135,14 @@ if (!channelCols.includes("unsubscribed_at")) {
   addColumn("ALTER TABLE channels ADD COLUMN unsubscribed_at TEXT")
 }
 
+// Migration: channels.last_video_at / channels.last_checked_at — activity filter for YouTube polling
+if (!channelCols.includes("last_video_at")) {
+  addColumn("ALTER TABLE channels ADD COLUMN last_video_at TEXT")
+}
+if (!channelCols.includes("last_checked_at")) {
+  addColumn("ALTER TABLE channels ADD COLUMN last_checked_at TEXT")
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS digest_shown (
     user_id INTEGER NOT NULL,
@@ -335,6 +343,51 @@ export function markChannelUnsubscribed(username) {
   db.prepare(
     "UPDATE channels SET unsubscribed_at = datetime('now') WHERE username = ? AND source = 'yt'"
   ).run(username)
+}
+
+/**
+ * Channels recently active, plus genuinely new subscriptions (never polled at all) —
+ * the daily poll set. A channel that WAS polled and found nothing (last_video_at still
+ * NULL but last_checked_at set) is not "new" anymore — it falls to the dormant set below.
+ */
+export function getActiveYouTubeChannels(activeDays) {
+  const since = new Date(Date.now() - activeDays * 86400_000).toISOString()
+  return db.prepare(
+    `SELECT username, external_id FROM channels
+     WHERE source = 'yt' AND unsubscribed_at IS NULL
+       AND (last_video_at >= ? OR (last_video_at IS NULL AND last_checked_at IS NULL))`
+  ).all(since)
+}
+
+/**
+ * Dormant channels — old last_video_at, or checked at least once and still nothing found —
+ * that haven't been rechecked in a while. Mutually exclusive with getActiveYouTubeChannels.
+ */
+export function getDormantYouTubeChannelsDueForRecheck(activeDays, recheckDays) {
+  const activeSince = new Date(Date.now() - activeDays * 86400_000).toISOString()
+  const recheckSince = new Date(Date.now() - recheckDays * 86400_000).toISOString()
+  return db.prepare(
+    `SELECT username, external_id FROM channels
+     WHERE source = 'yt' AND unsubscribed_at IS NULL
+       AND (last_video_at < ? OR (last_video_at IS NULL AND last_checked_at IS NOT NULL))
+       AND (last_checked_at < ? OR last_checked_at IS NULL)`
+  ).all(activeSince, recheckSince)
+}
+
+/** Records a poll: last_checked_at always moves; last_video_at only ever moves forward. */
+export function updateChannelActivity(username, { lastVideoAt } = {}) {
+  const now = new Date().toISOString()
+  if (lastVideoAt) {
+    db.prepare(
+      `UPDATE channels SET last_checked_at = ?,
+         last_video_at = CASE WHEN last_video_at IS NULL OR ? > last_video_at THEN ? ELSE last_video_at END
+       WHERE username = ? AND source = 'yt'`
+    ).run(now, lastVideoAt, lastVideoAt, username)
+  } else {
+    db.prepare(
+      "UPDATE channels SET last_checked_at = ? WHERE username = ? AND source = 'yt'"
+    ).run(now, username)
+  }
 }
 
 export function getVideosInWindow(sinceIso) {

@@ -5,10 +5,15 @@ import {
   getYouTubeChannels,
   upsertYouTubeChannel,
   markChannelUnsubscribed,
-  upsertVideo
+  upsertVideo,
+  getActiveYouTubeChannels,
+  getDormantYouTubeChannelsDueForRecheck,
+  updateChannelActivity
 } from "../db.js"
 
 const WINDOW_DAYS = 7
+const ACTIVE_DAYS = 180
+const RECHECK_DAYS = 7
 
 /**
  * Собирает видео с подписок за окно. Список подписок синхронизируется каждый
@@ -31,7 +36,10 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
     if (e instanceof QuotaExceededError) return { collected: 0, errors, perChannel }
   }
 
-  const channels = getYouTubeChannels()
+  const channels = [
+    ...getActiveYouTubeChannels(ACTIVE_DAYS),
+    ...getDormantYouTubeChannelsDueForRecheck(ACTIVE_DAYS, RECHECK_DAYS)
+  ]
   if (channels.length === 0) {
     return { collected: 0, errors, perChannel }
   }
@@ -45,9 +53,12 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
       const videos = await client.listPlaylistVideos(ch.external_id, sinceIso)
       for (const v of videos) pending.push({ ...v, channel: ch.username })
       perChannel.push({ channel: ch.username, count: videos.length })
+      const newest = videos.reduce((max, v) => (!max || v.publishedAt > max ? v.publishedAt : max), null)
+      updateChannelActivity(ch.username, { lastVideoAt: newest })
     } catch (e) {
       errors.push(`${ch.username}: ${e.message}`)
       perChannel.push({ channel: ch.username, count: 0, error: e.message })
+      updateChannelActivity(ch.username, {})
       // Квота ушла на весь день — дальше по каналам гонять нет смысла, только время сожжём.
       // Но то, что уже собрано в pending, стоило реальных запросов — не выбрасываем.
       if (e instanceof QuotaExceededError) break
@@ -87,6 +98,28 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
 
   console.log(`[collectYouTubeVideos] Finished. Total: ${collected} videos, ${errors.length} errors.`)
   return { collected, errors, perChannel }
+}
+
+/**
+ * Ручной прогон для классификации накопленных подписок: по одному запросу на канал
+ * узнаём дату последнего видео, без выкачивания истории. Безопасно перезапускать.
+ */
+export async function backfillChannelActivity({ client } = {}) {
+  const results = []
+  if (!client || !client.isReady()) return results
+
+  for (const ch of getYouTubeChannels()) {
+    if (!ch.external_id) continue
+    try {
+      const latest = await client.listLatestPlaylistVideo(ch.external_id)
+      updateChannelActivity(ch.username, { lastVideoAt: latest?.publishedAt })
+      results.push({ channel: ch.username, lastVideoAt: latest?.publishedAt || null })
+    } catch (e) {
+      updateChannelActivity(ch.username, {})
+      results.push({ channel: ch.username, error: e.message })
+    }
+  }
+  return results
 }
 
 async function syncSubscriptions(client, addedBy, errors) {
