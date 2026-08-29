@@ -19,6 +19,7 @@ export class BaseAI {
     this.name = name
     this.requestBudgetTokens = budgets.requestBudgetTokens ?? LIMITS.RANK_BATCH_TOKENS
     this.completionTokensPerPost = budgets.completionTokensPerPost ?? LIMITS.COMPLETION_TOKENS_PER_POST
+    this.completionTokensPerBlock = budgets.completionTokensPerBlock ?? LIMITS.COMPLETION_TOKENS_PER_BLOCK
   }
 
   async isReady() {
@@ -266,7 +267,7 @@ export class BaseAI {
     const prompt = buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt || null)
 
     if (typeof onProgress === "function") onProgress(50)
-    const maxTokens = maxBlocks * LIMITS.COMPLETION_TOKENS_PER_BLOCK + 300
+    const maxTokens = maxBlocks * this.completionTokensPerBlock + 300
     const raw = await this._callAPI(prompt, { type: "json_object", maxTokens })
     if (typeof onProgress === "function") onProgress(75)
 

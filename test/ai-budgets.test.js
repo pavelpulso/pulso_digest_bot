@@ -85,3 +85,20 @@ test("building the digest text reserves a completion budget too", async () => {
 		assert.ok(options.maxTokens > 0, "the summary request must state how much answer it needs")
 	}
 })
+
+test("a provider that spends tokens on thinking reserves more per digest block", async () => {
+	const lean = new RecordingAI()
+	const thinky = new RecordingAI({ completionTokensPerBlock: 700 })
+
+	await lean.generateSummaryBlocks(posts.slice(0, 14), "29 августа", "профиль", 7)
+	await thinky.generateSummaryBlocks(posts.slice(0, 14), "29 августа", "профиль", 7)
+
+	assert.ok(
+		thinky.calls[0].options.maxTokens > lean.calls[0].options.maxTokens,
+		"the block reserve must follow the provider, not one global constant"
+	)
+	assert.ok(
+		new GeminiAI({ baseUrl: "http://x", apiKey: "k" }).completionTokensPerBlock > new GroqAI({ apiKey: "k" }).completionTokensPerBlock,
+		"Gemini burns reasoning tokens from the same ceiling and needs the larger reserve"
+	)
+})

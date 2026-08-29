@@ -6,7 +6,7 @@ import { postJson } from "./http.js"
  */
 export class GeminiAI extends BaseAI {
   constructor(config = {}) {
-    super("Gemini", { requestBudgetTokens: 60000, completionTokensPerPost: 400 })
+    super("Gemini", { requestBudgetTokens: 60000, completionTokensPerPost: 400, completionTokensPerBlock: 700 })
     this.proxyUrl = (config.proxyUrl ?? process.env.GEMINI_PROXY_URL ?? "").replace(/\/$/, "")
     this.baseUrl = config.baseUrl ?? process.env.GEMINI_BASE_URL ?? ""
     this.apiKey = config.apiKey ?? process.env.GEMINI_API_KEY ?? ""
