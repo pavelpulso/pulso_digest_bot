@@ -26,6 +26,38 @@ test("marking the same video twice does not throw", () => {
 	assert.ok(db.getShownPostIds(42).has("v1"))
 })
 
+test("the same video is not offered twice", async () => {
+	// Медиана канала: 5 созревших видео по 1000 просмотров
+	for (let i = 0; i < 5; i++) {
+		db.upsertVideo(`m${i}`, "yt:@c", `mature${i}`, "старое", "https://youtube.com/watch?v=x", 1000, 600,
+			new Date(Date.now() - (10 + i) * 86400_000).toISOString())
+	}
+	db.upsertVideo("fresh1", "yt:@c", "freshA", "свежее А", "https://youtube.com/watch?v=a", 20000, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertVideo("fresh2", "yt:@c", "freshB", "свежее Б", "https://youtube.com/watch?v=b", 15000, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const first = db.getVideoCandidates(7, new Set())
+	assert.equal(first.length, 2, "both fresh videos are candidates, matured ones are outside the window")
+
+	const second = db.getVideoCandidates(7, new Set(["fresh1"]))
+	assert.ok(!second.some((v) => v.id === "fresh1"), "a shown video drops out of the pool")
+})
+
+test("the channel norm comes from matured videos only", () => {
+	const norms = db.getChannelViewNorms(7, 90)
+	const norm = norms.get("yt:@c")
+	assert.ok(norm, "the channel has a norm")
+	assert.equal(norm.maturedCount, 5)
+	assert.equal(norm.medianViews, 1000, "fresh 20k and 15k videos must not drag the norm up")
+})
+
+test("a user with no hidden channels and an empty shown set still gets candidates", () => {
+	db.getOrCreateUser(45)
+	const candidates = db.getVideoCandidates(7, new Set(), 45)
+	assert.ok(candidates.some((v) => v.id === "fresh1"), "no hidden channels means nothing is excluded")
+})
+
 test("videos do not leak into the telegram post selection", () => {
 	db.upsertVideo("v9", "yt:@chan", "abc123", "заголовок", "https://youtube.com/watch?v=abc123", 1000, 600, "2026-08-29T10:00:00.000Z")
 	const dayPosts = db.getPostsForCalendarDay("2026-08-29")
@@ -62,6 +94,8 @@ test("durations and views read as a human would write them", async () => {
 	assert.equal(UIFormatter.formatViews(999), "999")
 	assert.equal(UIFormatter.formatViews(47000), "47k")
 	assert.equal(UIFormatter.formatViews(1500000), "1.5M")
+	assert.equal(UIFormatter.formatViews(999500), "1.0M")
+	assert.equal(UIFormatter.formatViews(999999), "1.0M")
 })
 
 test("no tail means no button", async () => {

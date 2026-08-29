@@ -38,7 +38,7 @@ export class UIFormatter {
 		return header.trim()
 	}
 
-	/** Map id -> {channel, postUrl} */
+	/** Map id -> {channel, postUrl, date, duration_sec, views} */
 	static buildPostById(posts) {
 		return Object.fromEntries(
 			posts.map((p) => {
@@ -112,7 +112,7 @@ export class UIFormatter {
 	static formatViews(views) {
 		if (!views || views <= 0) return ""
 		if (views < 1000) return String(views)
-		if (views < 1_000_000) return `${Math.round(views / 1000)}k`
+		if (views < 999_500) return `${Math.round(views / 1000)}k`
 		return `${(views / 1_000_000).toFixed(1)}M`
 	}
 
