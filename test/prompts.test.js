@@ -39,6 +39,37 @@ test("the reserved completion covers the reason the prompt asks for", async () =
 	)
 })
 
+test("the rank prompt asks for a topic label alongside score and reason", () => {
+	const prompt = buildRankPrompt(posts, "профиль", "", [], [], null)
+
+	assert.match(prompt, /"topic"/, "the output contract must include a topic field")
+	assert.match(prompt, /one or two words naming the subject area/i, "the prompt must explain what topic means")
+})
+
+test("the summary prompt carries a grounding rule only when the flag is set", () => {
+	const list = [{ id: "1", channel: "c", text: "текст", link: "l" }]
+
+	const grounded = buildSummaryPrompt(list, "29 августа", "профиль", 5, null, true, true)
+	const ungrounded = buildSummaryPrompt(list, "29 августа", "профиль", 5, null, true, false)
+
+	assert.match(grounded, /have not watched it/i, "the grounding rule must be present when the flag is set")
+	assert.ok(!/have not watched it/i.test(ungrounded), "the grounding rule must not appear when the flag is off")
+})
+
+test("the grounding flag is independent of compact", () => {
+	const list = [{ id: "1", channel: "c", text: "текст", link: "l" }]
+
+	const compactGrounded = buildSummaryPrompt(list, "29 августа", "профиль", 5, null, true, true)
+	const fullGrounded = buildSummaryPrompt(list, "29 августа", "профиль", 5, null, false, true)
+	const compactUngrounded = buildSummaryPrompt(list, "29 августа", "профиль", 5, null, true, false)
+	const fullUngrounded = buildSummaryPrompt(list, "29 августа", "профиль", 5, null, false, false)
+
+	assert.match(compactGrounded, /have not watched it/i)
+	assert.match(fullGrounded, /have not watched it/i)
+	assert.ok(!/have not watched it/i.test(compactUngrounded))
+	assert.ok(!/have not watched it/i.test(fullUngrounded))
+})
+
 test("the summary prompt bans news filler instead of demanding complete sentences", () => {
 	const prompt = buildSummaryPrompt(
 		[{ id: "1", channel: "c", text: "текст", link: "l" }],

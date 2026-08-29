@@ -245,14 +245,15 @@ export class BaseAI {
     return parsed.map((item) => ({
       post_id: String(item.post_id || item.id),
       score: Number(item.score) || 0,
-      reason: String(item.reason || "")
+      reason: String(item.reason || ""),
+      topic: item.topic ? String(item.topic).trim() : null
     }))
   }
 
   async generateSummaryBlocks(posts, dateLabel, userProfile = "", maxItems = 10, _options = {}) {
     if (posts.length === 0) return { teaser: null, blocks: [] }
 
-    const { onProgress, systemPrompt, compact = false } = _options
+    const { onProgress, systemPrompt, compact = false, groundedOnly = false } = _options
     if (typeof onProgress === "function") onProgress(10)
 
     const list = posts.map((p) => ({
@@ -264,7 +265,7 @@ export class BaseAI {
     }))
 
     const maxBlocks = Math.min(LIMITS.MAX_BLOCKS, Math.max(LIMITS.MIN_BLOCKS, maxItems))
-    const prompt = buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt || null, compact)
+    const prompt = buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt || null, compact, groundedOnly)
 
     if (typeof onProgress === "function") onProgress(50)
     const maxTokens = maxBlocks * this.completionTokensPerBlock + 300
