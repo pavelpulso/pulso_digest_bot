@@ -397,19 +397,33 @@ export function getVideosInWindow(sinceIso) {
   ).all(sinceIso)
 }
 
-/** Видео за окно, не скрытые пользователем. Показанные отсеиваются вызывающим. */
+/** Минимальная длительность видео-кандидата — отсекает трейлеры и клипы. */
+const MIN_VIDEO_SECONDS = 300
+
+/**
+ * Видео за окно, не скрытые пользователем, максимум два на канал — самое просматриваемое
+ * и самое длинное (если это одно и то же видео, канал даёт только одну строку).
+ * duration_sec IS NULL сортируется SQLite последним в ORDER BY ... DESC, поэтому видео с
+ * неизвестной длительностью выигрывает слот "самое длинное" только если больше ничего нет.
+ * Показанные отсеиваются вызывающим.
+ */
 export function getVideoCandidates(windowDays, shownIds, userId = null) {
   const since = new Date(Date.now() - windowDays * 86400_000).toISOString()
   const rows = db.prepare(
-    `SELECT p.id, p.channel, p.post_id, p.text, p.link, p.views, p.date, p.source, p.duration_sec
-     FROM posts p
-     WHERE p.source = 'yt' AND p.date >= ?
-       AND (? IS NULL OR NOT EXISTS (
-         SELECT 1 FROM user_channel_settings ucs
-         WHERE ucs.user_id = ? AND ucs.channel = p.channel AND ucs.hidden = 1
-       ))
-     ORDER BY p.date DESC`
-  ).all(since, userId, userId)
+    `SELECT id, channel, post_id, text, link, views, date, source, duration_sec FROM (
+       SELECT p.*,
+         ROW_NUMBER() OVER (PARTITION BY p.channel ORDER BY p.views DESC, p.date DESC, p.id) AS rn_views,
+         ROW_NUMBER() OVER (PARTITION BY p.channel ORDER BY p.duration_sec DESC, p.date DESC, p.id) AS rn_duration
+       FROM posts p
+       WHERE p.source = 'yt' AND p.date >= ?
+         AND (p.duration_sec IS NULL OR p.duration_sec >= ?)
+         AND (? IS NULL OR NOT EXISTS (
+           SELECT 1 FROM user_channel_settings ucs
+           WHERE ucs.user_id = ? AND ucs.channel = p.channel AND ucs.hidden = 1
+         ))
+     ) WHERE rn_views = 1 OR rn_duration = 1
+     ORDER BY date DESC`
+  ).all(since, MIN_VIDEO_SECONDS, userId, userId)
   return rows.filter((r) => !shownIds.has(r.id))
 }
 

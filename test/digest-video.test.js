@@ -39,7 +39,7 @@ test("the same video is not offered twice", async () => {
 	}
 	db.upsertVideo("fresh1", "yt:@c", "freshA", "свежее А", "https://youtube.com/watch?v=a", 20000, 600,
 		new Date(Date.now() - 86400_000).toISOString())
-	db.upsertVideo("fresh2", "yt:@c", "freshB", "свежее Б", "https://youtube.com/watch?v=b", 15000, 600,
+	db.upsertVideo("fresh2", "yt:@c2", "freshB", "свежее Б", "https://youtube.com/watch?v=b", 15000, 600,
 		new Date(Date.now() - 86400_000).toISOString())
 
 	const first = db.getVideoCandidates(7, new Set())
@@ -99,7 +99,7 @@ test("more candidates than the daily cap keep only the cap, remaining reflects t
 	db.markDigestShown(userId, existing.map((v) => v.id))
 
 	for (let i = 0; i < 12; i++) {
-		db.upsertVideo(`cap${i}`, "yt:@capchan", `capvid${i}`, `видео ${i}`, `https://youtube.com/watch?v=cap${i}`, 100, 600,
+		db.upsertVideo(`cap${i}`, `yt:@capchan${i}`, `capvid${i}`, `видео ${i}`, `https://youtube.com/watch?v=cap${i}`, 100, 600,
 			new Date(Date.now() - 86400_000).toISOString())
 	}
 
@@ -118,9 +118,9 @@ test("fewer candidates than the daily cap leave nothing remaining", async () => 
 	const existing = db.getVideoCandidates(7, new Set())
 	db.markDigestShown(userId, existing.map((v) => v.id))
 
-	db.upsertVideo("two1", "yt:@twochan", "twov1", "видео 1", "https://youtube.com/watch?v=two1", 100, 600,
+	db.upsertVideo("two1", "yt:@twochan1", "twov1", "видео 1", "https://youtube.com/watch?v=two1", 100, 600,
 		new Date(Date.now() - 86400_000).toISOString())
-	db.upsertVideo("two2", "yt:@twochan", "twov2", "видео 2", "https://youtube.com/watch?v=two2", 100, 600,
+	db.upsertVideo("two2", "yt:@twochan2", "twov2", "видео 2", "https://youtube.com/watch?v=two2", 100, 600,
 		new Date(Date.now() - 86400_000).toISOString())
 
 	const service = new BotService({
@@ -370,4 +370,137 @@ test("a ranked video block carries the why button", async () => {
 
 	await service.sendVideoSection.call(service, telegram, 66, { withHeader: false })
 	assert.ok(JSON.stringify(sends[0].extra).includes("why:why1"), "📌 Почему is offered on a video with a reason")
+})
+
+test("a channel with three eligible videos yields the most-viewed and the longest", () => {
+	const userId = 70
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	db.upsertVideo("cap-low", "yt:@capcap", "capv-low", "видео", "https://youtube.com/watch?v=capv-low", 100, 400,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertVideo("cap-high-views", "yt:@capcap", "capv-high-views", "видео", "https://youtube.com/watch?v=capv-high-views", 900, 500,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertVideo("cap-longest", "yt:@capcap", "capv-longest", "видео", "https://youtube.com/watch?v=capv-longest", 300, 4200,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const candidates = db.getVideoCandidates(7, new Set(), userId)
+	const fromChannel = candidates.filter((v) => v.channel === "yt:@capcap")
+	assert.equal(fromChannel.length, 2, "at most two videos per channel")
+	assert.ok(fromChannel.some((v) => v.id === "cap-high-views"), "the most-viewed video is one of them")
+	assert.ok(fromChannel.some((v) => v.id === "cap-longest"), "the longest video is the other")
+	assert.ok(!fromChannel.some((v) => v.id === "cap-low"), "the video that is neither is dropped")
+})
+
+test("a channel whose most-viewed video is also its longest contributes only one row", () => {
+	const userId = 75
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	db.upsertVideo("same-winner", "yt:@samewinchan", "samewinv1", "видео", "https://youtube.com/watch?v=samewinv1", 900, 4200,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertVideo("same-other", "yt:@samewinchan", "samewinv2", "видео", "https://youtube.com/watch?v=samewinv2", 300, 400,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const candidates = db.getVideoCandidates(7, new Set(), userId)
+	const fromChannel = candidates.filter((v) => v.channel === "yt:@samewinchan")
+	assert.equal(fromChannel.length, 1, "the same video winning both slots is not duplicated")
+	assert.equal(fromChannel[0].id, "same-winner")
+})
+
+test("a channel whose videos are all under the minimum duration contributes nothing", () => {
+	const userId = 76
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	db.upsertVideo("allshort-top", "yt:@allshortchan", "allshortv1", "видео", "https://youtube.com/watch?v=allshortv1", 900, 200,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertVideo("allshort-other", "yt:@allshortchan", "allshortv2", "видео", "https://youtube.com/watch?v=allshortv2", 300, 100,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const candidates = db.getVideoCandidates(7, new Set(), userId)
+	assert.ok(!candidates.some((v) => v.channel === "yt:@allshortchan"),
+		"even the channel's most-viewed video is excluded once it is too short")
+})
+
+test("the per-channel cap does not remove videos from other channels", () => {
+	const userId = 71
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	db.upsertVideo("multi-a", "yt:@multia", "multiv-a", "видео", "https://youtube.com/watch?v=multiv-a", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertVideo("multi-b", "yt:@multib", "multiv-b", "видео", "https://youtube.com/watch?v=multiv-b", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const candidates = db.getVideoCandidates(7, new Set(), userId)
+	assert.ok(candidates.some((v) => v.id === "multi-a"), "channel A's video is kept")
+	assert.ok(candidates.some((v) => v.id === "multi-b"), "channel B's video is kept")
+})
+
+test("a video shorter than the minimum duration is dropped, a longer one is kept", () => {
+	const userId = 72
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	db.upsertVideo("short1", "yt:@shortchan", "shortv1", "видео", "https://youtube.com/watch?v=shortv1", 100, 200,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertVideo("long1", "yt:@longchan", "longv1", "видео", "https://youtube.com/watch?v=longv1", 100, 400,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const candidates = db.getVideoCandidates(7, new Set(), userId)
+	assert.ok(!candidates.some((v) => v.id === "short1"), "a 200-second video is too short")
+	assert.ok(candidates.some((v) => v.id === "long1"), "a 400-second video is kept")
+})
+
+test("a video with unknown duration is kept, not dropped", () => {
+	const userId = 73
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	db.upsertVideo("nulldur1", "yt:@nulldurchan", "nulldurv1", "видео", "https://youtube.com/watch?v=nulldurv1", 100, null,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const candidates = db.getVideoCandidates(7, new Set(), userId)
+	assert.ok(candidates.some((v) => v.id === "nulldur1"), "a missing duration must not be treated as a short video")
+})
+
+test("NULL duration wins the longest slot only when nothing else on the channel is longer", () => {
+	const userId = 77
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	// alone on its channel: NULL duration is the only candidate, so it must win the longest slot
+	db.upsertVideo("nulldur-alone", "yt:@nulldural", "nulldurv3", "видео", "https://youtube.com/watch?v=nulldurv3", 100, null,
+		new Date(Date.now() - 86400_000).toISOString())
+	const alone = db.getVideoCandidates(7, new Set(), userId).filter((v) => v.channel === "yt:@nulldural")
+	assert.equal(alone.length, 1)
+	assert.equal(alone[0].id, "nulldur-alone", "with no competing duration, NULL still wins the only slot available")
+
+	// alongside a video with a known, longer duration: SQLite sorts NULL last in ORDER BY duration_sec DESC,
+	// so the known-duration video takes the longest slot and the NULL-duration one only survives via views
+	db.upsertVideo("nulldur-vs-known-null", "yt:@nulldurvs", "nulldurv4", "видео", "https://youtube.com/watch?v=nulldurv4", 900, null,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertVideo("nulldur-vs-known-long", "yt:@nulldurvs", "nulldurv5", "видео", "https://youtube.com/watch?v=nulldurv5", 100, 4200,
+		new Date(Date.now() - 86400_000).toISOString())
+	const versus = db.getVideoCandidates(7, new Set(), userId).filter((v) => v.channel === "yt:@nulldurvs")
+	assert.equal(versus.length, 2, "both survive: NULL one via views, the other via duration")
+	assert.ok(versus.some((v) => v.id === "nulldur-vs-known-null"), "the NULL-duration video wins via views, not duration")
+	assert.ok(versus.some((v) => v.id === "nulldur-vs-known-long"), "the known-duration video takes the longest slot")
+})
+
+test("both the most-viewed and the longest picks are stable across repeated calls when tied", () => {
+	const userId = 74
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	db.upsertVideo("tie-a", "yt:@tiechan", "tiev-a", "видео", "https://youtube.com/watch?v=tiev-a", 500, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertVideo("tie-b", "yt:@tiechan", "tiev-b", "видео", "https://youtube.com/watch?v=tiev-b", 500, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const first = db.getVideoCandidates(7, new Set(), userId).filter((v) => v.channel === "yt:@tiechan").map((v) => v.id).sort()
+	const second = db.getVideoCandidates(7, new Set(), userId).filter((v) => v.channel === "yt:@tiechan").map((v) => v.id).sort()
+	assert.deepEqual(first, second, "the same tie-break winners are returned on repeated calls")
+	assert.equal(first.length, 1, "a full tie on both views and duration still collapses to one row")
 })
