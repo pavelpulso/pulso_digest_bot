@@ -147,6 +147,15 @@ export class YouTubeClient {
     return out
   }
 
+  /** Newest video in the uploads playlist, or null if it's empty. One request, no paging. */
+  async listLatestPlaylistVideo(playlistId) {
+    const json = await this.#get("playlistItems", { part: "contentDetails", playlistId, maxResults: "1" })
+    const it = (json.items || [])[0]
+    const videoId = it?.contentDetails?.videoId
+    const publishedAt = it?.contentDetails?.videoPublishedAt
+    return videoId && publishedAt ? { videoId, publishedAt } : null
+  }
+
   async listVideoDetails(videoIds) {
     const out = []
     for (let i = 0; i < videoIds.length; i += BATCH_SIZE) {
