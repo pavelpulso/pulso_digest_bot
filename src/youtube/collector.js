@@ -115,6 +115,7 @@ export async function backfillChannelActivity({ client } = {}) {
       updateChannelActivity(ch.username, { lastVideoAt: latest?.publishedAt })
       results.push({ channel: ch.username, lastVideoAt: latest?.publishedAt || null })
     } catch (e) {
+      updateChannelActivity(ch.username, {})
       results.push({ channel: ch.username, error: e.message })
     }
   }
