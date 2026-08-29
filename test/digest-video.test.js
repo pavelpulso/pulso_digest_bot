@@ -31,3 +31,11 @@ test("videos do not leak into the telegram post selection", () => {
 	const dayPosts = db.getPostsForCalendarDay("2026-08-29")
 	assert.ok(!dayPosts.some((p) => p.id === "v9"), "a video must not appear among text posts")
 })
+
+test("a ranked video does not leak into getRankedPostIds", () => {
+	db.getOrCreateUser(44)
+	db.upsertVideo("v10", "yt:@chan2", "def456", "заголовок2", "https://youtube.com/watch?v=def456", 500, 300, "2026-08-29T11:00:00.000Z")
+	db.insertRankings(44, "2026-08-29", [{ id: "rank-v10", post_id: "v10", score: 0.9, reason: "r" }])
+	const ids = db.getRankedPostIds(44, "2026-08-29")
+	assert.ok(!ids.includes("v10"), "a video must not appear among ranked telegram posts")
+})

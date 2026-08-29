@@ -292,6 +292,8 @@ export function getPostsByIds(ids) {
 }
 
 export function upsertVideo(id, channel, videoId, text, link, views, durationSec, date) {
+  // date is not in the UPDATE SET (unlike upsertPost): publish date is immutable,
+  // and overwriting it would shift the video inside the selection window on every collection run.
   db.prepare(
     `INSERT INTO posts (id, channel, post_id, text, link, views, date, source, duration_sec)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'yt', ?)
@@ -371,7 +373,7 @@ export function getRankedPostIds(userId, date, limit = 10, offset = 0) {
   const rows = db.prepare(
     `SELECT r.post_id FROM rankings r
      JOIN posts p ON r.post_id = p.id
-     WHERE r.user_id = ? AND r.date = ?
+     WHERE r.user_id = ? AND r.date = ? AND p.source = 'tg'
        AND NOT EXISTS (
          SELECT 1 FROM user_channel_settings ucs
          WHERE ucs.user_id = ? AND ucs.channel = p.channel AND ucs.hidden = 1
@@ -688,7 +690,7 @@ export function clearUserSystemPrompt(userId) {
 
 export function getPostsForDateRange(since, until) {
   return db.prepare(
-    "SELECT id, channel, post_id, text, link, views, date FROM posts WHERE date >= ? AND date < ? ORDER BY date DESC"
+    "SELECT id, channel, post_id, text, link, views, date FROM posts WHERE date >= ? AND date < ? AND source = 'tg' ORDER BY date DESC"
   ).all(since, until)
 }
 
