@@ -23,6 +23,8 @@ export const LIMITS = {
   ANALYZE_TEXT: 1000,
   /** Max text length for audit */
   AUDIT_TEXT: 500,
+  /** Completion tokens one digest block needs */
+  COMPLETION_TOKENS_PER_BLOCK: 220,
   /** Max blocks in digest */
   MAX_BLOCKS: 20,
   /** Min blocks in digest */

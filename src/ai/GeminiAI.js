@@ -6,7 +6,7 @@ import { postJson } from "./http.js"
  */
 export class GeminiAI extends BaseAI {
   constructor(config = {}) {
-    super("Gemini")
+    super("Gemini", { requestBudgetTokens: 60000, completionTokensPerPost: 400 })
     this.proxyUrl = (config.proxyUrl ?? process.env.GEMINI_PROXY_URL ?? "").replace(/\/$/, "")
     this.baseUrl = config.baseUrl ?? process.env.GEMINI_BASE_URL ?? ""
     this.apiKey = config.apiKey ?? process.env.GEMINI_API_KEY ?? ""
@@ -32,7 +32,8 @@ export class GeminiAI extends BaseAI {
       model: this.model,
       messages: [{ role: "user", content: prompt }],
       temperature: options.temperature ?? 0,
-      stream: false
+      stream: false,
+      reasoning_effort: "none"
     }
     if (options.maxTokens) body.max_tokens = options.maxTokens
 

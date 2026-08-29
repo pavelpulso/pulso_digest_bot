@@ -12,11 +12,13 @@ import {
 import { LIMITS, JSON_ARRAY_KEYS, VERDICTS } from "./constants.js"
 
 export class BaseAI {
-  constructor(name) {
+  constructor(name, budgets = {}) {
     if (new.target === BaseAI) {
       throw new Error("BaseAI is abstract and cannot be instantiated directly")
     }
     this.name = name
+    this.requestBudgetTokens = budgets.requestBudgetTokens ?? LIMITS.RANK_BATCH_TOKENS
+    this.completionTokensPerPost = budgets.completionTokensPerPost ?? LIMITS.COMPLETION_TOKENS_PER_POST
   }
 
   async isReady() {
@@ -175,10 +177,10 @@ export class BaseAI {
    * @private
    */
   #splitIntoBatches(list, buildPrompt) {
-    const budgetTokens = LIMITS.RANK_BATCH_TOKENS
+    const budgetTokens = this.requestBudgetTokens
     const overhead = buildPrompt([]).length / LIMITS.CHARS_PER_TOKEN
     const costOf = (item) =>
-      JSON.stringify(item).length / LIMITS.CHARS_PER_TOKEN + LIMITS.COMPLETION_TOKENS_PER_POST
+      JSON.stringify(item).length / LIMITS.CHARS_PER_TOKEN + this.completionTokensPerPost
 
     const batches = []
     let current = []
@@ -229,7 +231,7 @@ export class BaseAI {
 
     const parsed = []
     for (let i = 0; i < batches.length; i++) {
-      const maxTokens = batches[i].length * LIMITS.COMPLETION_TOKENS_PER_POST + 200
+      const maxTokens = batches[i].length * this.completionTokensPerPost + 200
       const raw = await this._callAPI(buildPrompt(batches[i]), { type: "json_object", maxTokens })
       parsed.push(...this.#parseJSONArray(raw))
       if (typeof onProgress === "function") {
@@ -264,7 +266,8 @@ export class BaseAI {
     const prompt = buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt || null)
 
     if (typeof onProgress === "function") onProgress(50)
-    const raw = await this._callAPI(prompt, { type: "json_object" })
+    const maxTokens = maxBlocks * LIMITS.COMPLETION_TOKENS_PER_BLOCK + 300
+    const raw = await this._callAPI(prompt, { type: "json_object", maxTokens })
     if (typeof onProgress === "function") onProgress(75)
 
     const parsed = this.#parseJSONObject(raw)
