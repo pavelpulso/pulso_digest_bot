@@ -1,6 +1,7 @@
 const DEFAULT_BASE_URL = "https://www.youtube.com/"
 const DEFAULT_TIMEOUT_MS = 15_000
 const DEFAULT_CONCURRENCY = 15
+export const FEED_ENTRY_CAP = 15
 
 const ENTITIES = {
   "&amp;": "&",
@@ -19,6 +20,11 @@ function extract(block, regex) {
   return m ? m[1] : null
 }
 
+/** A CDN interstitial or truncated body is a 200 with no relation to the feed we asked for. */
+function looksLikeFeed(xml) {
+  return typeof xml === "string" && /<feed[\s>]/.test(xml) && xml.includes("www.w3.org/2005/Atom")
+}
+
 /** Free public per-channel feed, no key/OAuth/quota. Newest-first, up to 15 videos, no duration. */
 export function parseChannelFeed(xml) {
   try {
@@ -32,12 +38,13 @@ export function parseChannelFeed(xml) {
       const title = extract(entry, /<media:title>([^<]*)<\/media:title>/)
       const description = extract(entry, /<media:description>([\s\S]*?)<\/media:description>/)
       const viewsStr = extract(entry, /<media:statistics\s+views="([^"]*)"/)
+      const parsedViews = viewsStr === null ? NaN : parseInt(viewsStr, 10)
       videos.push({
         videoId,
         publishedAt,
         title: decodeEntities(title || ""),
         description: decodeEntities(description || ""),
-        views: parseInt(viewsStr, 10) || 0
+        views: Number.isNaN(parsedViews) ? null : parsedViews
       })
     }
     return videos
@@ -67,7 +74,11 @@ export async function fetchChannelFeed(channelId, { baseUrl = DEFAULT_BASE_URL, 
   if (!res.ok) {
     throw new Error(`YouTube RSS ${channelId} ${res.status}`)
   }
-  return parseChannelFeed(await res.text())
+  const xml = await res.text()
+  if (!looksLikeFeed(xml)) {
+    throw new Error(`YouTube RSS ${channelId}: response does not look like an Atom feed (interstitial or truncated body?)`)
+  }
+  return parseChannelFeed(xml)
 }
 
 /** Bounded-concurrency worker pool over 845 channels — never a single Promise.all. */

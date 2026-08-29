@@ -100,6 +100,37 @@ test("videos outside the 7-day window are dropped before the details call", asyn
 	assert.ok(!stored.some((v) => v.post_id === "stale1"))
 })
 
+test("a feed returning 15 entries all inside the window is flagged as possibly truncated", async () => {
+	const client = fakeClient()
+	const fifteenFresh = Array.from({ length: 15 }, (_, i) => ({
+		videoId: `fresh${i}`,
+		publishedAt: "2026-08-29T08:00:00Z"
+	}))
+	const fetchFeeds = fakeFetchFeeds({ UC1: fifteenFresh })
+
+	const result = await collectYouTubeVideos({ client, fetchFeeds, now: new Date("2026-08-29T12:00:00Z") })
+	assert.ok(
+		result.errors.some((e) => e.includes("@chan1") && /truncated/i.test(e)),
+		"a full 15-entry feed entirely inside the window is called out, not silently accepted"
+	)
+})
+
+test("a feed returning 15 entries where the oldest falls outside the window is NOT flagged as truncated", async () => {
+	const client = fakeClient()
+	const fourteenFresh = Array.from({ length: 14 }, (_, i) => ({
+		videoId: `fresh${i}`,
+		publishedAt: "2026-08-29T08:00:00Z"
+	}))
+	const oneStale = { videoId: "stale0", publishedAt: "2026-08-01T08:00:00Z" }
+	const fetchFeeds = fakeFetchFeeds({ UC1: [...fourteenFresh, oneStale] })
+
+	const result = await collectYouTubeVideos({ client, fetchFeeds, now: new Date("2026-08-29T12:00:00Z") })
+	assert.ok(
+		!result.errors.some((e) => /truncated/i.test(e)),
+		"the oldest entry falling outside the window proves the feed already covered the whole week"
+	)
+})
+
 test("one failing channel does not abort the rest", async () => {
 	const client = fakeClient({
 		listSubscriptions: async () => [

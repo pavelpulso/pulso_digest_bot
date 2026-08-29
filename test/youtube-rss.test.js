@@ -102,6 +102,77 @@ test("fetchFeeds fetches all channels with no more than `concurrency` requests i
 	)
 })
 
+test("fetchChannelFeed treats a garbled 200 response as an error, not an empty feed", async () => {
+	await withServer(
+		(req, res) => {
+			res.writeHead(200, { "Content-Type": "text/html" })
+			res.end("<html><body>Please solve this CAPTCHA to continue</body></html>")
+		},
+		async (url) => {
+			await assert.rejects(
+				() => fetchChannelFeed("UC1", { baseUrl: url, timeoutMs: 2000 }),
+				/does not look like an Atom feed/
+			)
+		}
+	)
+})
+
+test("fetchFeeds surfaces a garbled 200 as an error, and a truncated body never reaches errors as an empty feed silently", async () => {
+	await withServer(
+		(req, res) => {
+			res.writeHead(200, { "Content-Type": "text/html" })
+			res.end("<html>not a feed</html>")
+		},
+		async (url) => {
+			const { byChannel, errors } = await fetchFeeds(["UC1"], { baseUrl: url, timeoutMs: 2000 })
+			assert.equal(byChannel.size, 0, "the channel must not be recorded as successfully checked")
+			assert.equal(errors.length, 1)
+			assert.equal(errors[0].channelId, "UC1")
+		}
+	)
+})
+
+test("a well-formed feed with zero entries returns [] with no error", async () => {
+	const EMPTY_FEED = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+	<id>yt:channel:UC1</id>
+	<yt:channelId>UC1</yt:channelId>
+	<title>Test Channel</title>
+</feed>`
+
+	await withServer(
+		(req, res) => {
+			res.writeHead(200, { "Content-Type": "application/xml" })
+			res.end(EMPTY_FEED)
+		},
+		async (url) => {
+			const videos = await fetchChannelFeed("UC1", { baseUrl: url, timeoutMs: 2000 })
+			assert.deepEqual(videos, [])
+
+			const { byChannel, errors } = await fetchFeeds(["UC1"], { baseUrl: url, timeoutMs: 2000 })
+			assert.deepEqual(byChannel.get("UC1"), [])
+			assert.deepEqual(errors, [])
+		}
+	)
+})
+
+test("parseChannelFeed returns null views for a missing or unparseable views attribute, not 0", () => {
+	const FEED_NO_VIEWS = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+	<entry>
+		<yt:videoId>vidNoViews</yt:videoId>
+		<published>2026-08-29T10:00:00+00:00</published>
+		<media:group>
+			<media:title>No views attribute</media:title>
+			<media:description>d</media:description>
+		</media:group>
+	</entry>
+</feed>`
+	const videos = parseChannelFeed(FEED_NO_VIEWS)
+	assert.equal(videos.length, 1)
+	assert.equal(videos[0].views, null)
+})
+
 test("fetchFeeds isolates one channel's 404 without failing the batch", async () => {
 	await withServer(
 		(req, res) => {

@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from "uuid"
 import { isShort } from "./duration.js"
 import { QuotaExceededError } from "./client.js"
-import { fetchFeeds as defaultFetchFeeds } from "./rss.js"
+import { fetchFeeds as defaultFetchFeeds, FEED_ENTRY_CAP } from "./rss.js"
 import {
   getYouTubeChannels,
   upsertYouTubeChannel,
@@ -60,7 +60,11 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
       updateChannelActivity(ch.username, {})
       continue
     }
-    const videos = (byChannel.get(ch.external_id) || []).filter((v) => v.publishedAt >= sinceIso)
+    const feed = byChannel.get(ch.external_id) || []
+    const videos = feed.filter((v) => v.publishedAt >= sinceIso)
+    if (feed.length === FEED_ENTRY_CAP && videos.length === FEED_ENTRY_CAP) {
+      errors.push(`${ch.username}: feed returned ${FEED_ENTRY_CAP} entries, all inside the window — may be truncated, older in-window videos could be missing`)
+    }
     for (const v of videos) pending.push({ ...v, channel: ch.username })
     perChannel.push({ channel: ch.username, count: videos.length })
     const newest = videos.reduce((max, v) => (!max || v.publishedAt > max ? v.publishedAt : max), null)

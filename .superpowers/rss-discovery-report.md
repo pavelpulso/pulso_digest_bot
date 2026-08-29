@@ -53,3 +53,60 @@ Before: 82 passing. Removed 3 (dead playlist-method tests), added 8 (5 in `youtu
 
 - `backfillChannelActivity` is not currently called from anywhere in the codebase (checked cron-job.js and grepped for a caller) — it's a manual/ad-hoc tool per its docstring, unchanged in that respect. Confirmed it still compiles and its tests pass with the new `fetchFeeds` seam.
 - Real YouTube RSS feeds are Atom XML with a `<media:group>` wrapper around `media:title`/`media:description`/`media:community/media:statistics`; the parser doesn't require that structure explicitly (it just scans the whole `<entry>` block with regex), so it will keep working even if a future feed nests things slightly differently — but this also means it can't distinguish a same-named tag appearing outside the intended element. Low risk given the format's stability, but noting it since I didn't cross-check against a live feed fetch (no network in this environment).
+
+## Fix round 1 (review follow-up)
+
+### Known tradeoff: the 15-entry feed cap
+
+`fetchChannelFeed`/`fetchFeeds` cannot see past the 15 most recent entries YouTube's RSS
+feed exposes. A channel publishing more than 15 videos inside the 7-day window will lose
+its earliest ones with no API error — this is an accepted tradeoff of moving off
+`playlistItems.list`, not a bug, and it is not being fixed by reintroducing the API path.
+What changed: it is no longer invisible. In `collectYouTubeVideos`
+(`src/youtube/collector.js`), when a channel's feed returns exactly `FEED_ENTRY_CAP` (15)
+entries and every one of them falls inside the window, that channel may have been
+truncated, so a message is pushed into `errors` naming the channel — surfacing in the cron
+log and admin alert the same way any other collection problem does. When the oldest of
+the 15 falls outside the window, the feed is provably complete (there was a boundary
+within the 15) and no warning fires. Tests: "a feed returning 15 entries all inside the
+window is flagged as possibly truncated" / "...where the oldest falls outside the window
+is NOT flagged" in `test/youtube-collector.test.js`.
+
+### Garbled 200 responses no longer look like an empty feed
+
+`fetchChannelFeed` (`src/youtube/rss.js`) now checks the response body for a `<feed`
+root element plus the Atom namespace (`www.w3.org/2005/Atom`) before treating it as
+a real feed. A CDN interstitial, CAPTCHA page, or truncated body still returns HTTP 200
+but fails that check and throws, which `fetchFeeds` catches into its `errors` array like
+any other per-channel failure. In the collector, a channel with a feed error takes the
+existing error branch (`updateChannelActivity(ch.username, {})`), so it is stamped
+checked-but-`lastVideoAt` untouched, not `lastVideoAt: null` as if genuinely empty — that
+branch already existed for other feed errors, this just routes garbled 200s into it
+instead of down the "0 entries" path. A well-formed feed with zero `<entry>` blocks still
+passes the root check and returns `[]` with no error, unaffected.
+Tests added to `test/youtube-rss.test.js`: "fetchChannelFeed treats a garbled 200 response
+as an error, not an empty feed", "fetchFeeds surfaces a garbled 200 as an error...", and
+"a well-formed feed with zero entries returns [] with no error".
+
+### Minor: `views` — null instead of 0 on missing/unparseable
+
+Checked `computeBoost` in `src/youtube/scoring.js` first: `if (!views || views <= 0) return 0`
+treats `null` exactly like `0` or a missing value (both are falsy) — no different code path
+needed, safe to switch. `parseChannelFeed` now returns `views: null` when the
+`media:statistics views="…"` attribute is absent or fails `parseInt`, instead of coercing
+to `0`, so a genuinely unwatched video (`views: 0`) is distinguishable from "couldn't read
+it" (`views: null`). Test: "parseChannelFeed returns null views for a missing or
+unparseable views attribute, not 0".
+
+### Test results
+
+```
+npm test
+```
+```
+ℹ tests 93
+ℹ pass 93
+ℹ fail 0
+```
+87 → 93 (+6: two collector truncation tests, three rss.js garbled/empty-feed tests, one
+null-views test).
