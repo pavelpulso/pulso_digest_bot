@@ -678,14 +678,20 @@ export class ActionHandler extends BaseHandler {
 
 	async handleVideoMore(ctx) {
 		await ctx.answerCbQuery()
-		const userId = ctx.from.id
+		const userId = ctx.from?.id
+		if (!userId) return
+
+		// Снимаем клавиатуру ДО асинхронной работы: markDigestShown коммитится
+		// только после AI-запроса, поэтому двойной тап успевает прочитать один
+		// и тот же набор непоказанных видео и отправить хвост дважды.
+		try {
+			await ctx.editMessageReplyMarkup({ inline_keyboard: [] })
+		} catch {}
+
 		const sent = await this.mgr.service.sendVideoSection(ctx.telegram, userId, {
 			limit: VIDEO_TAIL_COUNT,
 			withHeader: false
 		})
 		if (sent === 0) await ctx.reply("Больше видео за неделю нет.")
-		try {
-			await ctx.editMessageReplyMarkup({ inline_keyboard: [] })
-		} catch {}
 	}
 }

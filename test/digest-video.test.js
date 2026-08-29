@@ -207,3 +207,40 @@ test("a failing video section leaves the text digest sent", async () => {
 	assert.equal(count, 0, "the section reports nothing sent")
 	assert.equal(sent.length, 0, "and sends nothing, rather than throwing into the caller")
 })
+
+test("a telegram send that fails mid-section does not throw, and reports what actually went out", async () => {
+	db.getOrCreateUser(60)
+	const videos = [
+		{ id: "sv1", channel: "yt:@sendfail", post_id: "sv1", link: null, date: "2026-08-01T00:00:00.000Z", duration_sec: 100, views: 10 },
+		{ id: "sv2", channel: "yt:@sendfail", post_id: "sv2", link: null, date: "2026-08-01T00:00:00.000Z", duration_sec: 100, views: 10 }
+	]
+
+	let calls = 0
+	const telegram = {
+		sendMessage: async () => {
+			calls += 1
+			if (calls === 2) throw new Error("Telegram rejected the message")
+			return { message_id: calls }
+		}
+	}
+
+	const service = {
+		selectVideosForDigest: async () => ({ videos, remaining: 0 }),
+		mgr: {
+			ai: {
+				generateSummaryBlocks: async () => ({
+					blocks: [{ ids: ["sv1"], essence: "e1", emoji: "🎬" }, { ids: ["sv2"], essence: "e2", emoji: "🎬" }]
+				})
+			}
+		},
+		sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
+	}
+
+	let count
+	await assert.doesNotReject(async () => {
+		count = await service.sendVideoSection.call(service, telegram, 60, { withHeader: false })
+	})
+	assert.equal(count, 1, "only the video sent before the failure is reported")
+	assert.ok(db.getShownPostIds(60).has("sv1"), "the delivered video is marked shown")
+	assert.ok(!db.getShownPostIds(60).has("sv2"), "the video whose send failed is not marked shown")
+})

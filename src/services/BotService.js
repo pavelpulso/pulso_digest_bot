@@ -105,32 +105,39 @@ export class BotService {
 
 		if (!result.blocks?.length) return 0
 
-		if (withHeader) {
-			await telegram.sendMessage(userId, "📺 <b>Посмотреть</b>", { parse_mode: "HTML" })
-		}
-
 		const postById = UIFormatter.buildPostById(picked.videos)
 		const shownIds = []
 
-		for (const block of result.blocks) {
-			const postId = block.ids.length === 1 ? block.ids[0] : null
-			const text = UIFormatter.formatVideoBlockText(block, postById)
-			const kb = KeyboardProvider.blockKeyboard(postId, false, false, postById[postId]?.channel)
-			await telegram.sendMessage(userId, text, {
-				parse_mode: "HTML",
-				disable_web_page_preview: true,
-				...kb
-			})
-			// Помечаем после успешной отправки: упавшая рассылка не должна съесть
-			// видео, которых пользователь не видел.
-			if (postId) shownIds.push(postId)
-		}
+		// Отправка тоже под защитой: Telegram может отклонить любое сообщение
+		// (рейт-лимит, заблокированный бот, удалённый чат), и это не должно
+		// прорваться в вызывающий код после того, как текстовый дайджест уже ушёл.
+		try {
+			if (withHeader) {
+				await telegram.sendMessage(userId, "📺 <b>Посмотреть</b>", { parse_mode: "HTML" })
+			}
 
-		markDigestShown(userId, shownIds)
+			for (const block of result.blocks) {
+				const postId = block.ids.length === 1 ? block.ids[0] : null
+				const text = UIFormatter.formatVideoBlockText(block, postById)
+				const kb = KeyboardProvider.blockKeyboard(postId, false, false, postById[postId]?.channel)
+				await telegram.sendMessage(userId, text, {
+					parse_mode: "HTML",
+					disable_web_page_preview: true,
+					...kb
+				})
+				// Помечаем сразу после успешной отправки: упавшая рассылка не должна
+				// съесть видео, которых пользователь не видел, а слитый блок должен
+				// пометить все свои id, а не только единственный.
+				markDigestShown(userId, block.ids)
+				shownIds.push(...block.ids)
+			}
 
-		const moreKb = KeyboardProvider.videoMoreKeyboard(picked.remaining)
-		if (moreKb) {
-			await telegram.sendMessage(userId, "…", { parse_mode: "HTML", ...moreKb })
+			const moreKb = KeyboardProvider.videoMoreKeyboard(picked.remaining)
+			if (moreKb) {
+				await telegram.sendMessage(userId, "…", { parse_mode: "HTML", ...moreKb })
+			}
+		} catch (e) {
+			console.error("[video section] send failed for user", userId, e.message)
 		}
 
 		return shownIds.length
