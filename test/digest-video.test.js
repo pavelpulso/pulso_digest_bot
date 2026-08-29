@@ -11,6 +11,8 @@ test("a post defaults to the telegram source, so existing rows keep working", ()
 })
 
 test("shown videos are remembered per user", () => {
+	db.getOrCreateUser(42)
+	db.getOrCreateUser(43)
 	db.markDigestShown(42, ["v1", "v2"])
 	const shown = db.getShownPostIds(42)
 	assert.ok(shown.has("v1"))

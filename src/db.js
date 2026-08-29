@@ -130,7 +130,8 @@ db.exec(`
     user_id INTEGER NOT NULL,
     post_id TEXT NOT NULL,
     shown_at TEXT DEFAULT (datetime('now')),
-    PRIMARY KEY (user_id, post_id)
+    PRIMARY KEY (user_id, post_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
   );
   CREATE INDEX IF NOT EXISTS idx_posts_source_date ON posts(source, date);
 `)
