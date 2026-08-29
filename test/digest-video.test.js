@@ -26,6 +26,11 @@ test("marking the same video twice does not throw", () => {
 	assert.ok(db.getShownPostIds(42).has("v1"))
 })
 
+// Video tests below share one in-memory DB and getVideoCandidates has no channel
+// scoping — a test appended at the end with yt-source rows dated today pollutes the
+// 7-day window counts of earlier tests. Snapshot/hide/mark-shown defensively instead
+// of relying on position in the file.
+
 test("the same video is not offered twice", async () => {
 	// Медиана канала: 5 созревших видео по 1000 просмотров
 	for (let i = 0; i < 5; i++) {
@@ -56,6 +61,88 @@ test("a user with no hidden channels and an empty shown set still gets candidate
 	db.getOrCreateUser(45)
 	const candidates = db.getVideoCandidates(7, new Set(), 45)
 	assert.ok(candidates.some((v) => v.id === "fresh1"), "no hidden channels means nothing is excluded")
+})
+
+test("getVideoCandidates excludes videos from a channel the user hid", () => {
+	db.getOrCreateUser(50)
+	db.upsertVideo("hid1", "yt:@hidechan", "hidv1", "скрытое видео", "https://youtube.com/watch?v=hid1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.setUserChannelHidden(50, "yt:@hidechan", true)
+
+	const candidates = db.getVideoCandidates(7, new Set(), 50)
+	assert.ok(!candidates.some((v) => v.id === "hid1"), "a hidden channel's video is excluded")
+})
+
+test("selectVideosForDigest never calls the AI when there are no candidates", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 47
+	db.getOrCreateUser(userId)
+	const existing = db.getVideoCandidates(7, new Set())
+	db.markDigestShown(userId, existing.map((v) => v.id))
+
+	let called = false
+	const service = new BotService({
+		ai: { rankPosts: async () => { called = true; throw new Error("must not be called") } }
+	})
+	const result = await service.selectVideosForDigest(userId)
+
+	assert.deepEqual(result, { videos: [], remaining: 0 })
+	assert.equal(called, false, "an empty candidate list must not spend an AI call")
+})
+
+test("more candidates than the daily cap keep only the cap, remaining reflects the excess", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 48
+	db.getOrCreateUser(userId)
+	const existing = db.getVideoCandidates(7, new Set())
+	db.markDigestShown(userId, existing.map((v) => v.id))
+
+	for (let i = 0; i < 12; i++) {
+		db.upsertVideo(`cap${i}`, "yt:@capchan", `capvid${i}`, `видео ${i}`, `https://youtube.com/watch?v=cap${i}`, 100, 600,
+			new Date(Date.now() - 86400_000).toISOString())
+	}
+
+	const service = new BotService({
+		ai: { rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1 })) }
+	})
+	const result = await service.selectVideosForDigest(userId)
+	assert.equal(result.videos.length, 3, "lead count is 3")
+	assert.equal(result.remaining, 7, "cap 10 minus lead 3")
+})
+
+test("fewer candidates than the daily cap leave nothing remaining", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 49
+	db.getOrCreateUser(userId)
+	const existing = db.getVideoCandidates(7, new Set())
+	db.markDigestShown(userId, existing.map((v) => v.id))
+
+	db.upsertVideo("two1", "yt:@twochan", "twov1", "видео 1", "https://youtube.com/watch?v=two1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertVideo("two2", "yt:@twochan", "twov2", "видео 2", "https://youtube.com/watch?v=two2", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const service = new BotService({
+		ai: { rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1 })) }
+	})
+	const result = await service.selectVideosForDigest(userId)
+	assert.equal(result.videos.length, 2)
+	assert.equal(result.remaining, 0, "not negative")
+})
+
+test("hidden channels are excluded end-to-end from selectVideosForDigest", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 51
+	db.getOrCreateUser(userId)
+	db.upsertVideo("hidden1", "yt:@hiddenchan", "hidv2", "скрытое", "https://youtube.com/watch?v=hidden1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.setUserChannelHidden(userId, "yt:@hiddenchan", true)
+
+	const service = new BotService({
+		ai: { rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: p.id === "hidden1" ? 999 : 0.1 })) }
+	})
+	const result = await service.selectVideosForDigest(userId)
+	assert.ok(!result.videos.some((v) => v.id === "hidden1"), "hidden channel's video never reaches the digest")
 })
 
 test("videos do not leak into the telegram post selection", () => {
