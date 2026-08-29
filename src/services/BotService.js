@@ -75,6 +75,67 @@ export class BotService {
 		}
 	}
 
+	/**
+	 * Видео-секция изолирована от текстовой: её падение не должно отменять дайджест,
+	 * который уже собран и отправлен.
+	 */
+	async sendVideoSection(telegram, userId, { limit = VIDEO_LEAD_COUNT, withHeader = true } = {}) {
+		let picked
+		try {
+			picked = await this.selectVideosForDigest(userId, { limit })
+		} catch (e) {
+			console.error("[video section] user", userId, e.message)
+			return 0
+		}
+
+		if (picked.videos.length === 0) return 0
+
+		const user = getOrCreateUser(userId)
+		const label = formatDateLabel(new Date())
+		let result
+		try {
+			result = await this.mgr.ai.generateSummaryBlocks(
+				picked.videos, label, user.profile || "", picked.videos.length,
+				{ compact: true }
+			)
+		} catch (e) {
+			console.error("[video section] blocks failed for user", userId, e.message)
+			return 0
+		}
+
+		if (!result.blocks?.length) return 0
+
+		if (withHeader) {
+			await telegram.sendMessage(userId, "📺 <b>Посмотреть</b>", { parse_mode: "HTML" })
+		}
+
+		const postById = UIFormatter.buildPostById(picked.videos)
+		const shownIds = []
+
+		for (const block of result.blocks) {
+			const postId = block.ids.length === 1 ? block.ids[0] : null
+			const text = UIFormatter.formatVideoBlockText(block, postById)
+			const kb = KeyboardProvider.blockKeyboard(postId, false, false, postById[postId]?.channel)
+			await telegram.sendMessage(userId, text, {
+				parse_mode: "HTML",
+				disable_web_page_preview: true,
+				...kb
+			})
+			// Помечаем после успешной отправки: упавшая рассылка не должна съесть
+			// видео, которых пользователь не видел.
+			if (postId) shownIds.push(postId)
+		}
+
+		markDigestShown(userId, shownIds)
+
+		const moreKb = KeyboardProvider.videoMoreKeyboard(picked.remaining)
+		if (moreKb) {
+			await telegram.sendMessage(userId, "…", { parse_mode: "HTML", ...moreKb })
+		}
+
+		return shownIds.length
+	}
+
 	hasRankings(userId, date) {
 		return getRankedPostIds(userId, date, 1).length > 0
 	}
@@ -668,6 +729,8 @@ export class BotService {
 					})
 					if (postId) this.mgr.cache.setBlock(postId, { normalText: blockText, block, postById: payload.postById, reason })
 				}
+
+				await this.sendVideoSection(botInstance.telegram, u.user_id)
 
 				// Add digest feedback buttons
 				const feedbackKeyboard = {

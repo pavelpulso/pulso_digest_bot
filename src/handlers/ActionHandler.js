@@ -23,6 +23,8 @@ import {
 import { formatDateLabel, formatChannelList } from "../utils.js"
 import { collectChannelPosts, fetchRecentPostsFromChannel } from "../gramjs.js"
 
+const VIDEO_TAIL_COUNT = 7
+
 export class ActionHandler extends BaseHandler {
 	async handleMore(ctx) {
 		const offset = parseInt(ctx.match[1], 10)
@@ -672,5 +674,18 @@ export class ActionHandler extends BaseHandler {
 
 		await this.safeAnswerCbQuery(ctx)
 		return this.mgr.handlers.command.handleStats(ctx)
+	}
+
+	async handleVideoMore(ctx) {
+		await ctx.answerCbQuery()
+		const userId = ctx.from.id
+		const sent = await this.mgr.service.sendVideoSection(ctx.telegram, userId, {
+			limit: VIDEO_TAIL_COUNT,
+			withHeader: false
+		})
+		if (sent === 0) await ctx.reply("Больше видео за неделю нет.")
+		try {
+			await ctx.editMessageReplyMarkup({ inline_keyboard: [] })
+		} catch {}
 	}
 }

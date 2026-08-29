@@ -104,3 +104,19 @@ test("no tail means no button", async () => {
 	const kb = KeyboardProvider.videoMoreKeyboard(7)
 	assert.match(kb.reply_markup.inline_keyboard[0][0].text, /Ещё 7/)
 })
+
+test("a failing video section leaves the text digest sent", async () => {
+	const sent = []
+	const telegram = {
+		sendMessage: async (chatId, text) => { sent.push(text); return { message_id: sent.length } }
+	}
+
+	const service = {
+		selectVideosForDigest: async () => { throw new Error("AI down") },
+		sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
+	}
+
+	const count = await service.sendVideoSection.call(service, telegram, 42, {})
+	assert.equal(count, 0, "the section reports nothing sent")
+	assert.equal(sent.length, 0, "and sends nothing, rather than throwing into the caller")
+})
