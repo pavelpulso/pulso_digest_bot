@@ -94,6 +94,62 @@ test("an exhausted quota is not retried", async () => {
 	)
 })
 
+test("subscriptions are paged until nextPageToken runs out", async () => {
+	await withServer(
+		(req, res) => {
+			const url = new URL(req.url, "http://x")
+			if (url.pathname.endsWith("/token")) {
+				res.writeHead(200, { "Content-Type": "application/json" })
+				return res.end(JSON.stringify({ access_token: "at", expires_in: 3600 }))
+			}
+			const pageToken = url.searchParams.get("pageToken")
+			res.writeHead(200, { "Content-Type": "application/json" })
+			if (!pageToken) {
+				return res.end(JSON.stringify({
+					nextPageToken: "page2",
+					items: [{ snippet: { resourceId: { channelId: "c1" }, title: "Channel 1" } }]
+				}))
+			}
+			res.end(JSON.stringify({
+				items: [{ snippet: { resourceId: { channelId: "c2" }, title: "Channel 2" } }]
+			}))
+		},
+		async (url) => {
+			const client = makeClient(url)
+			const subs = await client.listSubscriptions()
+			assert.deepEqual(subs, [
+				{ channelId: "c1", title: "Channel 1" },
+				{ channelId: "c2", title: "Channel 2" }
+			])
+		}
+	)
+})
+
+test("a nextPageToken that never changes fails instead of hanging", async () => {
+	let calls = 0
+
+	await withServer(
+		(req, res) => {
+			const url = new URL(req.url, "http://x")
+			if (url.pathname.endsWith("/token")) {
+				res.writeHead(200, { "Content-Type": "application/json" })
+				return res.end(JSON.stringify({ access_token: "at", expires_in: 3600 }))
+			}
+			calls++
+			res.writeHead(200, { "Content-Type": "application/json" })
+			res.end(JSON.stringify({
+				nextPageToken: "stuck",
+				items: [{ snippet: { resourceId: { channelId: "c1" }, title: "Channel 1" } }]
+			}))
+		},
+		async (url) => {
+			const client = makeClient(url)
+			await assert.rejects(() => client.listSubscriptions(), /repeated/i)
+			assert.ok(calls <= 3, "a repeated token must be caught on the first repeat, not after many pages")
+		}
+	)
+})
+
 test("a revoked refresh token fails loudly", async () => {
 	await withServer(
 		(req, res) => {

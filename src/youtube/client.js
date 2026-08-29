@@ -4,6 +4,7 @@ const DEFAULT_BASE_URL = "https://www.googleapis.com/youtube/v3/"
 const DEFAULT_OAUTH_URL = "https://oauth2.googleapis.com/token"
 const BATCH_SIZE = 50
 const DEFAULT_TIMEOUT_MS = 30_000
+const MAX_PAGES = 50
 
 export class QuotaExceededError extends Error {}
 
@@ -52,6 +53,11 @@ export class YouTubeClient {
     const timer = setTimeout(() => controller.abort(), this.timeoutMs)
     try {
       return await fetch(url, { ...init, signal: controller.signal })
+    } catch (e) {
+      if (e.name === "AbortError" || e.name === "TimeoutError") {
+        throw new Error(`Request to ${url} timed out after ${this.timeoutMs}ms`)
+      }
+      throw e
     } finally {
       clearTimeout(timer)
     }
@@ -79,10 +85,22 @@ export class YouTubeClient {
 
   async #paged(path, params, onPage) {
     let pageToken = ""
+    const seenTokens = new Set()
+    let pages = 0
     do {
       const json = await this.#get(path, pageToken ? { ...params, pageToken } : params)
       onPage(json.items || [])
       pageToken = json.nextPageToken || ""
+      pages++
+      if (pageToken) {
+        if (seenTokens.has(pageToken)) {
+          throw new Error(`YouTube ${path}: nextPageToken repeated, aborting pagination`)
+        }
+        seenTokens.add(pageToken)
+        if (pages >= MAX_PAGES) {
+          throw new Error(`YouTube ${path}: exceeded ${MAX_PAGES} pages, aborting pagination`)
+        }
+      }
     } while (pageToken)
   }
 
