@@ -489,6 +489,75 @@ test("NULL duration wins the longest slot only when nothing else on the channel 
 	assert.ok(versus.some((v) => v.id === "nulldur-vs-known-long"), "the known-duration video takes the longest slot")
 })
 
+test("leads are diversified by topic instead of taking the two highest scores", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 80
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	const items = [
+		{ id: "div-a1", topic: "AI", score: 0.95 },
+		{ id: "div-a2", topic: "AI", score: 0.9 },
+		{ id: "div-a3", topic: "AI", score: 0.85 },
+		{ id: "div-b1", topic: "политика", score: 0.5 },
+		{ id: "div-c1", topic: "здоровье", score: 0.4 }
+	]
+	for (const it of items) {
+		db.upsertVideo(it.id, `yt:@divchan-${it.id}`, it.id, "видео", `https://youtube.com/watch?v=${it.id}`, 100, 600,
+			new Date(Date.now() - 86400_000).toISOString())
+	}
+
+	const service = new BotService({
+		ai: { rankPosts: async (posts) => posts.map((p) => {
+			const it = items.find((i) => i.id === p.id)
+			return { post_id: p.id, score: it.score, topic: it.topic }
+		}) }
+	})
+	const result = await service.selectVideosForDigest(userId)
+	const topics = result.videos.map((v) => items.find((i) => i.id === v.id).topic)
+	assert.equal(new Set(topics).size, topics.length, "no two leads share a topic")
+	assert.ok(topics.includes("политика"), "a lower-scoring but distinct topic must be picked over a same-topic duplicate")
+	assert.ok(topics.includes("здоровье"))
+})
+
+test("when every candidate shares one topic, the lead is still filled to the limit", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 81
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	const ids = ["mono1", "mono2", "mono3", "mono4"]
+	for (const id of ids) {
+		db.upsertVideo(id, `yt:@monochan-${id}`, id, "видео", `https://youtube.com/watch?v=${id}`, 100, 600,
+			new Date(Date.now() - 86400_000).toISOString())
+	}
+
+	const service = new BotService({
+		ai: { rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1, topic: "один и тот же" })) }
+	})
+	const result = await service.selectVideosForDigest(userId)
+	assert.equal(result.videos.length, 3, "diversity must not shrink the section when topics are not available")
+})
+
+test("items missing a topic field do not break selection", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 82
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	const ids = ["notopic1", "notopic2", "notopic3"]
+	for (const id of ids) {
+		db.upsertVideo(id, `yt:@notopicchan-${id}`, id, "видео", `https://youtube.com/watch?v=${id}`, 100, 600,
+			new Date(Date.now() - 86400_000).toISOString())
+	}
+
+	const service = new BotService({
+		ai: { rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1 })) }
+	})
+	const result = await service.selectVideosForDigest(userId)
+	assert.equal(result.videos.length, 3, "missing topics still fill the lead")
+})
+
 test("both the most-viewed and the longest picks are stable across repeated calls when tied", () => {
 	const userId = 74
 	db.getOrCreateUser(userId)

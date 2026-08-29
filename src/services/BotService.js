@@ -64,18 +64,41 @@ export class BotService {
 		const ranked = await this.mgr.ai.rankPosts(candidates, user.profile || "", { channelPriorities: priorities, feedback, systemPrompt })
 		const scoreById = new Map(ranked.map((r) => [String(r.post_id), Number(r.score) || 0]))
 		const reasonById = new Map(ranked.map((r) => [String(r.post_id), r.reason || null]))
+		const topicById = new Map(ranked.map((r) => [String(r.post_id), r.topic || null]))
 		const norms = getChannelViewNorms(VIDEO_NORM_MIN_AGE_DAYS, VIDEO_NORM_MAX_AGE_DAYS)
 
 		const scored = candidates.map((v) => {
 			const norm = norms.get(v.channel) || { medianViews: 0, maturedCount: 0 }
 			const boost = computeBoost(v.views, norm.medianViews, norm.maturedCount)
-			return { video: v, score: (scoreById.get(v.id) || 0) * (1 + boost) }
+			return { video: v, score: (scoreById.get(v.id) || 0) * (1 + boost), topic: topicById.get(v.id) || null }
 		}).sort((a, b) => b.score - a.score)
 
 		const capped = scored.slice(0, VIDEO_DAILY_CAP)
+
+		// Ranking alone picks near-duplicates when the reader's profile leans on one
+		// subject: three highest scores can all be the same topic. Diversify the lead
+		// by taking at most one video per topic, then backfill by score if that leaves gaps.
+		const leadPool = capped.slice()
+		const leads = []
+		const usedTopics = new Set()
+		for (const s of leadPool) {
+			if (leads.length >= limit) break
+			if (s.topic && usedTopics.has(s.topic)) continue
+			leads.push(s)
+			if (s.topic) usedTopics.add(s.topic)
+		}
+		if (leads.length < limit) {
+			for (const s of leadPool) {
+				if (leads.length >= limit) break
+				if (leads.includes(s)) continue
+				leads.push(s)
+			}
+		}
+
+		const leadIds = new Set(leads.map((s) => s.video.id))
 		return {
-			videos: capped.slice(0, limit).map((s) => s.video),
-			remaining: Math.max(0, capped.length - limit),
+			videos: leads.map((s) => s.video),
+			remaining: Math.max(0, capped.length - leadIds.size),
 			reasonById
 		}
 	}
@@ -101,7 +124,7 @@ export class BotService {
 		try {
 			result = await this.mgr.ai.generateSummaryBlocks(
 				picked.videos, label, user.profile || "", picked.videos.length,
-				{ compact: true }
+				{ compact: true, groundedOnly: true }
 			)
 		} catch (e) {
 			console.error("[video section] blocks failed for user", userId, e.message)

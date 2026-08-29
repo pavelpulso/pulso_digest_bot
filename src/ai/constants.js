@@ -13,8 +13,8 @@ export const LIMITS = {
   RANK_BATCH_TOKENS: 5000,
   /** Max words in a ranking reason — the reserve below is derived from this */
   RANK_REASON_WORDS: 8,
-  /** Completion tokens one scored post needs: id, score and an 8-word Cyrillic reason */
-  COMPLETION_TOKENS_PER_POST: 120,
+  /** Completion tokens one scored post needs: id, score, an 8-word Cyrillic reason and a 1-2 word topic */
+  COMPLETION_TOKENS_PER_POST: 135,
   /** Cyrillic costs ~2.5 chars per token; English ~4. Assume the expensive case. */
   CHARS_PER_TOKEN: 2.5,
   /** Max post text length for summary */
