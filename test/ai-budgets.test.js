@@ -102,3 +102,15 @@ test("a provider that spends tokens on thinking reserves more per digest block",
 		"Gemini burns reasoning tokens from the same ceiling and needs the larger reserve"
 	)
 })
+
+test("compact digests do not pay for fields their rendering throws away", async () => {
+	const full = new RecordingAI()
+	const compact = new RecordingAI()
+
+	await full.generateSummaryBlocks(posts.slice(0, 4), "29 августа", "профиль", 4)
+	await compact.generateSummaryBlocks(posts.slice(0, 4), "29 августа", "профиль", 4, { compact: true })
+
+	assert.ok(full.calls[0].prompt.includes("potential"), "the full format still asks for potential")
+	assert.ok(!compact.calls[0].prompt.includes("• potential"), "compact must not ask for a field it never renders")
+	assert.ok(!compact.calls[0].prompt.includes("• action"), "compact must not ask for an action it never renders")
+})

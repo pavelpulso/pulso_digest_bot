@@ -321,7 +321,8 @@ export class BotService {
 					status.percent("⏳ <b>Generating digest blocks...</b>", progress)
 				}
 			},
-			systemPrompt
+			systemPrompt,
+			compact: getDigestFormat(userId) === "compact"
 		})
 
 		console.log("[digestReply] result.blocks.length:", result.blocks.length)
@@ -370,11 +371,11 @@ export class BotService {
 			})
 		}
 
-		for (const block of result.blocks) {
+		for (const [index, block] of result.blocks.entries()) {
 			const postId = block.ids.length === 1 ? block.ids[0] : null
 			const reason = postId ? rankMap[postId]?.reason : null
 			const channel = postId && postById[postId] ? postById[postId].channel : null
-			const blockText = UIFormatter.formatBlockText(block, postById, { compact })
+			const blockText = UIFormatter.formatBlockText(block, postById, { compact, isTop: index === 0 })
 			const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false, channel)
 
 			await ctx.telegram.sendMessage(ctx.chat.id, blockText, {
@@ -389,13 +390,13 @@ export class BotService {
 		const feedbackKeyboard = {
 			inline_keyboard: [
 				[
-					{ text: "👍 Useful", callback_data: `digest_fb:${date}:1` },
-					{ text: "😐 So-so", callback_data: `digest_fb:${date}:0` },
-					{ text: "👎 Irrelevant", callback_data: `digest_fb:${date}:-1` }
+					{ text: "👍 Полезно", callback_data: `digest_fb:${date}:1` },
+					{ text: "😐 Так себе", callback_data: `digest_fb:${date}:0` },
+					{ text: "👎 Мимо", callback_data: `digest_fb:${date}:-1` }
 				]
 			]
 		}
-		await ctx.telegram.sendMessage(ctx.chat.id, "📊 <b>How useful was this digest?</b>", {
+		await ctx.telegram.sendMessage(ctx.chat.id, "📊 <b>Насколько полезен дайджест?</b>", {
 			parse_mode: "HTML",
 			reply_markup: feedbackKeyboard
 		})
@@ -425,7 +426,7 @@ export class BotService {
 		const systemPrompt = await getUserSystemPrompt(user)
 
 		// Generate blocks for filtered posts
-		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", limit, { systemPrompt })
+		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", limit, { systemPrompt, compact: getDigestFormat(userId) === "compact" })
 
 		if (!result.blocks?.length) {
 			return ctx.reply("⚠️ Failed to generate blocks for filtered posts.", { parse_mode: "HTML" })
@@ -440,11 +441,11 @@ export class BotService {
 		const rankMap = getRankingsMap(userId, date)
 		const compact = getDigestFormat(userId) === "compact"
 
-		for (const block of result.blocks) {
+		for (const [index, block] of result.blocks.entries()) {
 			const postId = block.ids.length === 1 ? block.ids[0] : null
 			const reason = postId ? rankMap[postId]?.reason : null
 			const channel = postId && postById[postId] ? postById[postId].channel : null
-			const blockText = UIFormatter.formatBlockText(block, postById, { compact })
+			const blockText = UIFormatter.formatBlockText(block, postById, { compact, isTop: index === 0 })
 			const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false, channel)
 
 			await ctx.telegram.sendMessage(ctx.chat.id, blockText, {
@@ -459,14 +460,14 @@ export class BotService {
 		const backKeyboard = {
 			inline_keyboard: [[{ text: "📰 Back to digest", callback_data: "digest" }]]
 		}
-		await ctx.reply("📊 <b>How useful was this digest?</b>", {
+		await ctx.reply("📊 <b>Насколько полезен дайджест?</b>", {
 			parse_mode: "HTML",
 			reply_markup: {
 				inline_keyboard: [
 					[
-						{ text: "👍 Useful", callback_data: `digest_fb:${date}:1` },
-						{ text: "😐 So-so", callback_data: `digest_fb:${date}:0` },
-						{ text: "👎 Irrelevant", callback_data: `digest_fb:${date}:-1` }
+						{ text: "👍 Полезно", callback_data: `digest_fb:${date}:1` },
+						{ text: "😐 Так себе", callback_data: `digest_fb:${date}:0` },
+						{ text: "👎 Мимо", callback_data: `digest_fb:${date}:-1` }
 					],
 					[{ text: "📰 Back to digest", callback_data: "digest" }]
 				]
@@ -550,7 +551,8 @@ export class BotService {
 					options.status.percent("⏳ <b>Generating blocks...</b>", progress)
 				}
 			},
-			systemPrompt
+			systemPrompt,
+			compact: getDigestFormat(userId) === "compact"
 		})
 		const postById = UIFormatter.buildPostById(rankedPosts)
 		const rankMap = getRankingsMap(userId, dateStr)
@@ -569,11 +571,11 @@ export class BotService {
 			disable_web_page_preview: true,
 			reply_markup: { inline_keyboard: [row] } 
 		})
-		for (const block of result.blocks) {
+		for (const [index, block] of result.blocks.entries()) {
 			const postId = block.ids.length === 1 ? block.ids[0] : null
 			const reason = postId ? rankMap[postId]?.reason : null
 			const channel = postId && postById[postId] ? postById[postId].channel : null
-			const blockText = UIFormatter.formatBlockText(block, postById, { compact })
+			const blockText = UIFormatter.formatBlockText(block, postById, { compact, isTop: index === 0 })
 			const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false, channel)
 			await ctx.telegram.sendMessage(chatId, blockText, {
 				parse_mode: "HTML",
@@ -593,6 +595,7 @@ export class BotService {
 		const digestDateObj = new Date(digestDate)
 		digestDateObj.setDate(digestDateObj.getDate() - 1)
 		const digestDateStr = digestDateObj.toISOString().slice(0, 10)
+		const failures = []
 
 		for (const u of users) {
 			try {
@@ -601,12 +604,12 @@ export class BotService {
 				if (!payload) continue
 
 				const teaserText = payload.teaser
-					? `☀️ <b>Yesterday's highlights:</b> ${UIFormatter.escapeHtml(payload.teaser)}\n\n<i>Open digest — full breakdown below.</i>`
-					: "☀️ <b>Yesterday's digest is ready</b>. Open below."
+					? `☀️ <b>Вчера главное:</b> ${UIFormatter.escapeHtml(payload.teaser)}\n\n<i>Разбор ниже.</i>`
+					: "☀️ <b>Вчерашний дайджест готов</b>. Смотри ниже."
 
 				await botInstance.telegram.sendMessage(u.user_id, teaserText, {
 					parse_mode: "HTML",
-					reply_markup: { inline_keyboard: [[{ text: "📰 Open digest", callback_data: "digest" }]] },
+					reply_markup: { inline_keyboard: [[{ text: "📰 Открыть дайджест", callback_data: "digest" }]] },
 					disable_web_page_preview: true
 				})
 
@@ -614,11 +617,11 @@ export class BotService {
 				await botInstance.telegram.sendMessage(u.user_id, "<b>Top picks for you:</b>", { parse_mode: "HTML", disable_web_page_preview: true })
 
 				const compact = getDigestFormat(u.user_id) === "compact"
-				for (const block of payload.blocks) {
+				for (const [index, block] of payload.blocks.entries()) {
 					const postId = block.ids.length === 1 ? block.ids[0] : null
 					const reason = postId ? payload.rankMap[postId]?.reason : null
 					const channel = postId && payload.postById[postId] ? payload.postById[postId].channel : null
-					const blockText = UIFormatter.formatBlockText(block, payload.postById, { compact })
+					const blockText = UIFormatter.formatBlockText(block, payload.postById, { compact, isTop: index === 0 })
 					const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false, channel)
 					await botInstance.telegram.sendMessage(u.user_id, blockText, {
 						parse_mode: "HTML",
@@ -632,13 +635,13 @@ export class BotService {
 				const feedbackKeyboard = {
 					inline_keyboard: [
 						[
-							{ text: "👍 Useful", callback_data: `digest_fb:${digestDateStr}:1` },
-							{ text: "😐 So-so", callback_data: `digest_fb:${digestDateStr}:0` },
-							{ text: "👎 Irrelevant", callback_data: `digest_fb:${digestDateStr}:-1` }
+							{ text: "👍 Полезно", callback_data: `digest_fb:${digestDateStr}:1` },
+							{ text: "😐 Так себе", callback_data: `digest_fb:${digestDateStr}:0` },
+							{ text: "👎 Мимо", callback_data: `digest_fb:${digestDateStr}:-1` }
 						]
 					]
 				}
-				await botInstance.telegram.sendMessage(u.user_id, "📊 <b>How useful was this digest?</b>", {
+				await botInstance.telegram.sendMessage(u.user_id, "📊 <b>Насколько полезен дайджест?</b>", {
 					parse_mode: "HTML",
 					reply_markup: feedbackKeyboard
 				})
@@ -647,13 +650,42 @@ export class BotService {
 				upsertUserStat(u.user_id, digestDateStr, { digest_opened: 1, posts_read: payload.blocks.length })
 			} catch (e) {
 				console.error("[morning digest] user", u.user_id, e)
+				failures.push({ userId: u.user_id, message: e.message })
 				try {
 					await botInstance.telegram.sendMessage(u.user_id,
-						"⚠️ <b>Digest unavailable today</b>\n\nAI ranking failed. Posts were collected — open /digest to browse manually.",
+						"⚠️ <b>Дайджест сегодня недоступен</b>\n\nРанжирование не отработало. Посты собраны — открой /digest и посмотри вручную.",
 						{ parse_mode: "HTML" }
 					)
 				} catch {}
 			}
+		}
+
+		await this.#reportDigestFailures(botInstance, failures, users.length, digestDateStr)
+	}
+
+	/**
+	 * A silent morning digest is indistinguishable from a working one, so a failed run
+	 * has to reach the admin — the last outage went unnoticed for three weeks.
+	 */
+	async #reportDigestFailures(botInstance, failures, totalUsers, digestDateStr) {
+		if (failures.length === 0) return
+
+		const adminId = parseInt(process.env.ADMIN_ID, 10) || 0
+		if (!adminId) return
+
+		const detail = failures
+			.slice(0, 5)
+			.map((f) => `• <code>${f.userId}</code>: ${UIFormatter.escapeHtml(String(f.message).slice(0, 200))}`)
+			.join("\n")
+		const more = failures.length > 5 ? `\n…и ещё ${failures.length - 5}` : ""
+
+		try {
+			await botInstance.telegram.sendMessage(adminId,
+				`🚨 <b>Дайджест за ${digestDateStr} не ушёл</b>\n\nУпало ${failures.length} из ${totalUsers}.\n\n${detail}${more}`,
+				{ parse_mode: "HTML", disable_web_page_preview: true }
+			)
+		} catch (e) {
+			console.error("[morning digest] admin alert failed:", e.message)
 		}
 	}
 
@@ -669,7 +701,7 @@ export class BotService {
 		const user = getOrCreateUser(userId)
 		const label = formatDateLabel(date)
 		const systemPrompt = await getUserSystemPrompt(user)
-		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", user.digest_max_items, { systemPrompt })
+		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", user.digest_max_items, { systemPrompt, compact: getDigestFormat(userId) === "compact" })
 		if (!result.blocks?.length) return null
 
 		// Get total collected posts count for stats
@@ -695,7 +727,7 @@ export class BotService {
 		const user = getOrCreateUser(userId)
 		const label = formatDateLabel(date)
 		const systemPrompt = await getUserSystemPrompt(user)
-		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", user.digest_max_items, { systemPrompt })
+		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", user.digest_max_items, { systemPrompt, compact: getDigestFormat(userId) === "compact" })
 		if (!result.blocks?.length) return null
 
 		// Get total collected posts count for stats

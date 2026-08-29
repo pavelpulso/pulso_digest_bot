@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { buildRankPrompt } from "../src/ai/prompts.js"
+import { buildRankPrompt, buildSummaryPrompt } from "../src/ai/prompts.js"
 
 const posts = [{ id: "p1", channel: "somechannel", text: "Пост про найм первого сотрудника" }]
 
@@ -37,4 +37,17 @@ test("the reserved completion covers the reason the prompt asks for", async () =
 		LIMITS.COMPLETION_TOKENS_PER_POST >= needed,
 		`reserving ${LIMITS.COMPLETION_TOKENS_PER_POST} tokens per post cannot hold a ${LIMITS.RANK_REASON_WORDS} word reason (needs ~${needed})`
 	)
+})
+
+test("the summary prompt bans news filler instead of demanding complete sentences", () => {
+	const prompt = buildSummaryPrompt(
+		[{ id: "1", channel: "c", text: "текст", link: "l" }],
+		"29 августа",
+		"профиль",
+		5
+	)
+
+	assert.ok(!/don't cut thoughts short/i.test(prompt), "the old instruction padded every block")
+	assert.ok(/never with a news filler verb/i.test(prompt), "the prompt must forbid opening with a filler verb")
+	assert.match(prompt, /essence: the fact itself, 8-14 words/)
 })

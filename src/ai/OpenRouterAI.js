@@ -11,7 +11,7 @@ export class OpenRouterAI extends BaseAI {
   constructor(config = {}) {
     super("OpenRouter")
     this.apiKey = config.apiKey ?? process.env.OPENROUTER_API_KEY ?? ""
-    this.model = config.model ?? process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.3-70b-instruct:free"
+    this.model = config.model ?? process.env.OPENROUTER_MODEL ?? "google/gemma-4-31b-it:free"
     this.baseUrl = config.baseUrl ?? OPENROUTER_URL
     this.timeoutMs = config.timeoutMs
     this.siteUrl = config.siteUrl ?? process.env.OPENROUTER_SITE_URL ?? ""

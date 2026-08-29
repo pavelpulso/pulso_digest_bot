@@ -2,13 +2,11 @@ import { test } from "node:test"
 import assert from "node:assert/strict"
 import { GroqAI } from "../src/ai/GroqAI.js"
 import { OpenRouterAI } from "../src/ai/OpenRouterAI.js"
-import { QwenWorkerAI } from "../src/ai/QwenWorkerAI.js"
 import { withServer } from "./helpers.js"
 
 const providers = [
 	["Groq", (url) => new GroqAI({ apiKey: "k", baseUrl: url, timeoutMs: 150 })],
-	["OpenRouter", (url) => new OpenRouterAI({ apiKey: "k", baseUrl: url, timeoutMs: 150 })],
-	["QwenWorker", (url) => new QwenWorkerAI({ baseUrl: url, timeoutMs: 150 })]
+	["OpenRouter", (url) => new OpenRouterAI({ apiKey: "k", baseUrl: url, timeoutMs: 150 })]
 ]
 
 for (const [name, build] of providers) {

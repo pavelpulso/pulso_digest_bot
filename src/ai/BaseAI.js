@@ -205,7 +205,7 @@ export class BaseAI {
   async rankPosts(posts, userProfile = "", _options = {}) {
     if (posts.length === 0) return []
 
-    const { onProgress, systemPrompt } = _options
+    const { onProgress, systemPrompt, compact = false } = _options
     if (typeof onProgress === "function") onProgress(10)
 
     const list = posts.map((p) => ({
@@ -252,7 +252,7 @@ export class BaseAI {
   async generateSummaryBlocks(posts, dateLabel, userProfile = "", maxItems = 10, _options = {}) {
     if (posts.length === 0) return { teaser: null, blocks: [] }
 
-    const { onProgress, systemPrompt } = _options
+    const { onProgress, systemPrompt, compact = false } = _options
     if (typeof onProgress === "function") onProgress(10)
 
     const list = posts.map((p) => ({
@@ -264,7 +264,7 @@ export class BaseAI {
     }))
 
     const maxBlocks = Math.min(LIMITS.MAX_BLOCKS, Math.max(LIMITS.MIN_BLOCKS, maxItems))
-    const prompt = buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt || null)
+    const prompt = buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt || null, compact)
 
     if (typeof onProgress === "function") onProgress(50)
     const maxTokens = maxBlocks * this.completionTokensPerBlock + 300

@@ -44,14 +44,26 @@ export class UIFormatter {
 			posts.map((p) => {
 				const postUrl =
 					p.link && String(p.link).endsWith("/" + p.post_id) ? p.link : `https://t.me/${p.channel}/${p.post_id}`
-				return [p.id, { channel: p.channel, postUrl }]
+				return [p.id, { channel: p.channel, postUrl, date: p.date }]
 			})
 		)
 	}
 
+	/** Publication time in Moscow, the reader's timezone — empty when the post carries no date. */
+	static formatPostTime(date) {
+		if (!date) return ""
+		const d = new Date(date)
+		if (Number.isNaN(d.getTime())) return ""
+		return new Intl.DateTimeFormat("ru-RU", {
+			timeZone: "Europe/Moscow",
+			hour: "2-digit",
+			minute: "2-digit"
+		}).format(d)
+	}
+
 	/** Block format: essence → action → potential → links. */
 	static formatBlockText(block, postById, options = {}) {
-		const { compact = false } = options
+		const { compact = false, isTop = false } = options
 		const e = this.escapeHtml.bind(this)
 		const essence = e(block.essence)
 		const potential = e(block.potential)
@@ -59,9 +71,10 @@ export class UIFormatter {
 
 		let linksLine
 		if (block.ids.length === 1) {
-			const { channel, postUrl } = postById[block.ids[0]] || { channel: "channel", postUrl: "#" }
+			const { channel, postUrl, date } = postById[block.ids[0]] || { channel: "channel", postUrl: "#" }
 			const safeUrl = postUrl.replace(/&/g, "&amp;")
-			linksLine = `<a href="${safeUrl}">↗ @${this.escapeHtml(channel)}</a>`
+			const time = this.formatPostTime(date)
+			linksLine = `<a href="${safeUrl}">↗ @${this.escapeHtml(channel)}</a>${time ? ` · ${time}` : ""}`
 		} else {
 			const parts = block.ids.map((id) => {
 				const { channel, postUrl } = postById[id] || { channel: "channel", postUrl: "#" }
@@ -71,14 +84,16 @@ export class UIFormatter {
 			linksLine = parts.join(" · ")
 		}
 
+		const headline = isTop ? `🔥 <b>${essence}</b>` : `${block.emoji} ${essence}`
+
 		if (compact) {
-			const text = `${block.emoji} ${essence}\n\n${linksLine}`
+			const text = `${headline}\n\n${linksLine}`
 			return text.length > MAX_MESSAGE_LEN ? text.slice(0, MAX_MESSAGE_LEN - 1) + "…" : text
 		}
 
 		const actionLine = action ? `⚡ <b>${action}</b>` : null
 		const lines = [
-			`${block.emoji} ${essence}`,
+			headline,
 			...(actionLine ? [actionLine] : []),
 			...(potential ? [`💡 ${potential}`] : []),
 			linksLine

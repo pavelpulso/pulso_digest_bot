@@ -106,7 +106,7 @@ function getLanguageInstruction(lang) {
 /**
  * Prompt for generating digest blocks.
  */
-export function buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt = null) {
+export function buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt = null, compact = false) {
   const readerContext = getReaderContext(systemPrompt, userProfile)
   const lang = detectLanguage(list)
   const langInstruction = getLanguageInstruction(lang)
@@ -128,15 +128,22 @@ Rules:
 - JSON with teaser and blocks (max ${maxBlocks}).
 - teaser: up to 12 words, catchy essence — what's the main point of this digest. Write teaser in ${lang}.
 - IMPORTANT: Create ONE block for EACH post in the list above. Do NOT skip or filter posts — they are already pre-selected by relevance.
-- blocks: transform each post into a useful block with essence, potential, and action. Write all fields (essence, potential, action) in ${lang}.
+- blocks: transform each post into a useful block. ${compact ? `Write essence in ${lang}.` : `Write all fields (essence, potential, action) in ${lang}.`}
 - IMPORTANT: Only combine posts if they are DUPLICATES — same news/event posted by different channels. Do NOT merge different posts on similar topics — each unique post gets its own block.
 - Each block:
   • ids: array of post IDs (multiple IDs only for duplicates from different channels)
-  • essence: main idea (15-20 words) — what happened, what problem they solve, what discovery they made. Write complete sentences, don't cut thoughts short.
-  • potential: benefit for the reader (10-12 words) — how to apply this to themselves, what it will give them personally.
-  • emoji: 1-2 characters by topic (📊 for data, 💡 for insights, 🛠 for tools, 🔍 for analysis).
-  • action: concrete action (5-15 words) — what to do right now on this topic.
-- Don't cut thoughts short — give complete, clear formulations.
+  • essence: the fact itself, 8-14 words — who did what, or what the discovery is.${compact ? "" : `
+  • potential: benefit for the reader (up to 10 words) — what it gives them personally.`}
+  • emoji: 1-2 characters by topic (📊 for data, 💡 for insights, 🛠 for tools, 🔍 for analysis).${compact ? "" : `
+  • action: concrete action (up to 10 words) — what to do right now on this topic.`}
+
+Write in plain, dense prose. Every word must carry a fact:
+- Open with the subject, never with a news filler verb. Write "Tiny Engineer: robot on ESP32 repeats your AI assistant's actions", not "An open-source project called Tiny Engineer has been released, which repeats...".
+- Cut evaluative adjectives and adverbs that state no fact: powerful, unique, revolutionary, truly, simply, quite, very.
+- Cut hedges and throat-clearing: it is worth noting, it turns out, as it happens, in general, actually.
+- Prefer verbs to verbal nouns: "they launched" beats "a launch was carried out".
+- Active voice, not passive. Concrete numbers and names, not "many" or "some".
+- One fact per sentence. If a clause can be deleted without losing a fact, delete it.
 - No special characters * _ \` [ ].
 
 Return JSON.`

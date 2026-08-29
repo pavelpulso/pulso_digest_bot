@@ -150,15 +150,16 @@ export class KeyboardProvider {
 	static blockKeyboard(postId, hasWhy = false, expanded = false, channel = null, isHidden = false) {
 		if (!postId) return undefined
 		const feedbackRow = [
-			{ text: "👍 Relevant", callback_data: `fb:${postId}:1` },
-			{ text: "👎 Irrelevant", callback_data: `fb:${postId}:-1` }
+			{ text: "👍", callback_data: `fb:${postId}:1` },
+			{ text: "👎", callback_data: `fb:${postId}:-1` }
 		]
-		const actionRow = []
 
-		// Channel action buttons
+		// Hiding a channel is rare and destructive — it lives one tap in, behind Details,
+		// so a stray thumb on the digest cannot silently drop a source.
+		const actionRow = []
 		if (channel) {
 			actionRow.push({
-				text: isHidden ? "👁 Show channel" : "🙈 Hide channel",
+				text: isHidden ? "👁 Вернуть канал" : "🙈 Скрыть канал",
 				callback_data: `toggle_hidden:${channel}`
 			})
 		}
@@ -169,19 +170,16 @@ export class KeyboardProvider {
 					inline_keyboard: [
 						feedbackRow,
 						actionRow,
-						[{ text: "↩ Collapse", callback_data: `why_collapse:${postId}` }]
+						[{ text: "↩ Свернуть", callback_data: `why_collapse:${postId}` }]
 					]
 				}
 			}
 		}
-		if (hasWhy) feedbackRow.push({ text: "📌 Details", callback_data: `why:${postId}` })
-		
-		const keyboard = [feedbackRow]
-		if (actionRow.length > 0) keyboard.push(actionRow)
-		
+		if (hasWhy) feedbackRow.push({ text: "📌 Почему", callback_data: `why:${postId}` })
+
 		return {
 			reply_markup: {
-				inline_keyboard: keyboard
+				inline_keyboard: [feedbackRow]
 			}
 		}
 	}

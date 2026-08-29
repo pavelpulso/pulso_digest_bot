@@ -11,7 +11,7 @@ export class GroqAI extends BaseAI {
   constructor(config = {}) {
     super("Groq", { requestBudgetTokens: 5000, completionTokensPerPost: 120 })
     this.apiKey = config.apiKey ?? process.env.GROQ_API_KEY ?? ""
-    this.model = config.model ?? process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile"
+    this.model = config.model ?? process.env.GROQ_MODEL ?? "openai/gpt-oss-120b"
     this.baseUrl = config.baseUrl ?? GROQ_URL
     this.timeoutMs = config.timeoutMs
   }

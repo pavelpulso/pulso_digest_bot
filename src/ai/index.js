@@ -1,14 +1,13 @@
 import { GeminiAI } from "./GeminiAI.js"
 import { GroqAI } from "./GroqAI.js"
 import { OpenRouterAI } from "./OpenRouterAI.js"
-import { QwenWorkerAI } from "./QwenWorkerAI.js"
 
 const AI_PROVIDER = (process.env.AI_PROVIDER || "auto").toLowerCase()
 const COOLDOWN_MS = parseInt(process.env.AI_COOLDOWN_MS, 10) || 15 * 60 * 1000
 
 /**
  * AI router with automatic fallback.
- * Provider order: Gemini → QwenWorker → Groq → OpenRouter
+ * Provider order: Gemini → Groq → OpenRouter
  */
 export class AIRouter {
   constructor(options = {}) {
@@ -30,12 +29,11 @@ export class AIRouter {
   }
 
   #initProviders() {
-    const all = [new GeminiAI(), new QwenWorkerAI(), new GroqAI(), new OpenRouterAI()]
+    const all = [new GeminiAI(), new GroqAI(), new OpenRouterAI()]
     if (AI_PROVIDER === "auto") return all
     if (AI_PROVIDER === "gemini") return [new GeminiAI()]
     if (AI_PROVIDER === "groq") return [new GroqAI()]
     if (AI_PROVIDER === "openrouter") return [new OpenRouterAI()]
-    if (AI_PROVIDER === "qwen-worker") return [new QwenWorkerAI()]
     console.warn(`[AI] Unknown AI_PROVIDER="${AI_PROVIDER}", using auto fallback`)
     return all
   }
@@ -59,10 +57,10 @@ export class AIRouter {
     throw new Error("No AI providers available. Set API keys in .env")
   }
 
-  async #executeWithFallback(methodName, args, taskType = null, startWithQwen = false) {
+  async #executeWithFallback(methodName, args, taskType = null) {
     if (!this.initialized) await this.init()
 
-    const providersToTry = this.#getProvidersOrder(taskType, startWithQwen)
+    const providersToTry = this.#getProvidersOrder(taskType)
     const failures = []
     const tried = new Set()
 
@@ -78,13 +76,7 @@ export class AIRouter {
     throw new Error(`All AI providers failed for ${methodName} — ${detail}`)
   }
 
-  #getProvidersOrder(taskType, startWithQwen = false) {
-    // For audit, start with Qwen (more stable with JSON arrays)
-    if (startWithQwen) {
-      const qwen = this.providers.find(p => p.toString() === "QwenWorker")
-      const others = this.providers.filter(p => p.toString() !== "QwenWorker")
-      return qwen ? [qwen, ...others] : this.providers
-    }
+  #getProvidersOrder(taskType) {
     const ordered = this.currentProvider
       ? [this.currentProvider, ...this.providers.filter(p => p !== this.currentProvider)]
       : this.providers
