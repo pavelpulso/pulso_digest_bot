@@ -42,8 +42,10 @@ export class UIFormatter {
 	static buildPostById(posts) {
 		return Object.fromEntries(
 			posts.map((p) => {
-				const postUrl =
-					p.link && String(p.link).endsWith("/" + p.post_id) ? p.link : `https://t.me/${p.channel}/${p.post_id}`
+				// У видео ссылка своей формы (?v=<id>), и telegram-фолбэк дал бы несуществующий адрес.
+				const postUrl = p.source === "yt"
+					? p.link
+					: p.link && String(p.link).endsWith("/" + p.post_id) ? p.link : `https://t.me/${p.channel}/${p.post_id}`
 				return [p.id, { channel: p.channel, postUrl, date: p.date, duration_sec: p.duration_sec, views: p.views }]
 			})
 		)

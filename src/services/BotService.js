@@ -54,12 +54,16 @@ export class BotService {
 	 */
 	async selectVideosForDigest(userId, { limit = VIDEO_LEAD_COUNT } = {}) {
 		const shown = getShownPostIds(userId)
-		const candidates = getVideoCandidates(VIDEO_WINDOW_DAYS, shown, userId)
-		if (candidates.length === 0) return { videos: [], remaining: 0 }
+		const candidates = this.filterPostsForUser(getVideoCandidates(VIDEO_WINDOW_DAYS, shown, userId), userId)
+		if (candidates.length === 0) return { videos: [], remaining: 0, reasonById: new Map() }
 
 		const user = getOrCreateUser(userId)
-		const ranked = await this.mgr.ai.rankPosts(candidates, user.profile || "")
+		const priorities = getUserChannelPriorities(userId)
+		const feedback = getPostFeedbackForRanking(userId)
+		const systemPrompt = await getUserSystemPrompt(user)
+		const ranked = await this.mgr.ai.rankPosts(candidates, user.profile || "", { channelPriorities: priorities, feedback, systemPrompt })
 		const scoreById = new Map(ranked.map((r) => [String(r.post_id), Number(r.score) || 0]))
+		const reasonById = new Map(ranked.map((r) => [String(r.post_id), r.reason || null]))
 		const norms = getChannelViewNorms(VIDEO_NORM_MIN_AGE_DAYS, VIDEO_NORM_MAX_AGE_DAYS)
 
 		const scored = candidates.map((v) => {
@@ -71,7 +75,8 @@ export class BotService {
 		const capped = scored.slice(0, VIDEO_DAILY_CAP)
 		return {
 			videos: capped.slice(0, limit).map((s) => s.video),
-			remaining: Math.max(0, capped.length - limit)
+			remaining: Math.max(0, capped.length - limit),
+			reasonById
 		}
 	}
 
@@ -79,7 +84,7 @@ export class BotService {
 	 * Видео-секция изолирована от текстовой: её падение не должно отменять дайджест,
 	 * который уже собран и отправлен.
 	 */
-	async sendVideoSection(telegram, userId, { limit = VIDEO_LEAD_COUNT, withHeader = true } = {}) {
+	async sendVideoSection(telegram, userId, { limit = VIDEO_LEAD_COUNT, withHeader = true, withMore = true } = {}) {
 		let picked
 		try {
 			picked = await this.selectVideosForDigest(userId, { limit })
@@ -118,8 +123,10 @@ export class BotService {
 
 			for (const block of result.blocks) {
 				const postId = block.ids.length === 1 ? block.ids[0] : null
+				const reason = postId ? picked.reasonById?.get(postId) : null
 				const text = UIFormatter.formatVideoBlockText(block, postById)
-				const kb = KeyboardProvider.blockKeyboard(postId, false, false, postById[postId]?.channel)
+				const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false, postById[postId]?.channel)
+				if (postId) this.mgr.cache?.setBlock(postId, { normalText: text, block, postById, reason, isVideo: true })
 				await telegram.sendMessage(userId, text, {
 					parse_mode: "HTML",
 					disable_web_page_preview: true,
@@ -132,7 +139,9 @@ export class BotService {
 				shownIds.push(...block.ids)
 			}
 
-			const moreKb = KeyboardProvider.videoMoreKeyboard(picked.remaining)
+			// Кнопка живёт только на ведущей отправке: на хвосте она бы предлагала
+			// следующую порцию и переезжала бы дневной лимит бесконечно.
+			const moreKb = withMore ? KeyboardProvider.videoMoreKeyboard(picked.remaining) : undefined
 			if (moreKb) {
 				await telegram.sendMessage(userId, "…", { parse_mode: "HTML", ...moreKb })
 			}

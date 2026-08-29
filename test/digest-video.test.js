@@ -86,7 +86,8 @@ test("selectVideosForDigest never calls the AI when there are no candidates", as
 	})
 	const result = await service.selectVideosForDigest(userId)
 
-	assert.deepEqual(result, { videos: [], remaining: 0 })
+	assert.deepEqual(result.videos, [])
+	assert.equal(result.remaining, 0)
 	assert.equal(called, false, "an empty candidate list must not spend an AI call")
 })
 
@@ -243,4 +244,130 @@ test("a telegram send that fails mid-section does not throw, and reports what ac
 	assert.equal(count, 1, "only the video sent before the failure is reported")
 	assert.ok(db.getShownPostIds(60).has("sv1"), "the delivered video is marked shown")
 	assert.ok(!db.getShownPostIds(60).has("sv2"), "the video whose send failed is not marked shown")
+})
+
+test("a video link survives the trip from the db row to the rendered block", async () => {
+	const { UIFormatter } = await import("../src/ui/UIFormatter.js")
+	db.getOrCreateUser(61)
+	db.upsertVideo("link1", "yt:@linkchan", "vidLink1", "видео со ссылкой",
+		"https://www.youtube.com/watch?v=vidLink1", 100, 600, new Date(Date.now() - 86400_000).toISOString())
+
+	const candidates = db.getVideoCandidates(7, new Set(), 61).filter((v) => v.id === "link1")
+	assert.equal(candidates.length, 1)
+
+	const postById = UIFormatter.buildPostById(candidates)
+	assert.ok(postById.link1.postUrl.startsWith("https://www.youtube.com/watch"),
+		`a video must keep its own url, got ${postById.link1.postUrl}`)
+
+	const text = UIFormatter.formatVideoBlockText({ ids: ["link1"], essence: "суть", emoji: "🎬" }, postById)
+	assert.ok(!text.includes("t.me"), "no fabricated telegram link reaches the message")
+})
+
+test("the tail send offers no further button", async () => {
+	const sends = []
+	const telegram = {
+		sendMessage: async (chatId, text, extra) => { sends.push({ text, extra }); return { message_id: sends.length } }
+	}
+
+	const videos = [
+		{ id: "tail1", channel: "yt:@tailchan", post_id: "tv1", source: "yt", link: "https://www.youtube.com/watch?v=tv1", date: "2026-08-01T00:00:00.000Z", duration_sec: 600, views: 10 }
+	]
+	const service = {
+		selectVideosForDigest: async () => ({ videos, remaining: 5, reasonById: new Map() }),
+		mgr: { ai: { generateSummaryBlocks: async () => ({ blocks: [{ ids: ["tail1"], essence: "e", emoji: "🎬" }] }) } },
+		sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
+	}
+	db.getOrCreateUser(62)
+
+	await service.sendVideoSection.call(service, telegram, 62, { withHeader: false, withMore: false })
+	assert.equal(sends.length, 1, "only the video block goes out")
+	assert.ok(!sends.some((s) => JSON.stringify(s.extra || {}).includes("video_more")),
+		"the tail must not re-render the more button")
+})
+
+test("the lead send still offers the tail button", async () => {
+	const sends = []
+	const telegram = {
+		sendMessage: async (chatId, text, extra) => { sends.push({ text, extra }); return { message_id: sends.length } }
+	}
+
+	const videos = [
+		{ id: "lead1", channel: "yt:@leadchan", post_id: "lv1", source: "yt", link: "https://www.youtube.com/watch?v=lv1", date: "2026-08-01T00:00:00.000Z", duration_sec: 600, views: 10 }
+	]
+	const service = {
+		selectVideosForDigest: async () => ({ videos, remaining: 5, reasonById: new Map() }),
+		mgr: { ai: { generateSummaryBlocks: async () => ({ blocks: [{ ids: ["lead1"], essence: "e", emoji: "🎬" }] }) } },
+		sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
+	}
+	db.getOrCreateUser(63)
+
+	await service.sendVideoSection.call(service, telegram, 63, { withHeader: false })
+	assert.ok(sends.some((s) => JSON.stringify(s.extra || {}).includes("video_more")), "the lead send carries the button")
+})
+
+test("video ranking gets the same signal as the text path", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 64
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+	db.upsertVideo("sig1", "yt:@sigchan", "sigv1", "видео про рынок", "https://www.youtube.com/watch?v=sigv1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.setUserChannelPriority(userId, "yt:@sigchan", 2)
+	db.upsertPostFeedback(userId, "sig1", 1)
+
+	let seenOpts = null
+	const service = new BotService({
+		ai: {
+			rankPosts: async (posts, profile, opts) => {
+				seenOpts = opts
+				return posts.map((p) => ({ post_id: p.id, score: 1, reason: "потому что" }))
+			}
+		}
+	})
+	const result = await service.selectVideosForDigest(userId)
+
+	assert.ok(seenOpts, "options are passed at all")
+	assert.ok(seenOpts.channelPriorities, "channel priorities reach the video ranking")
+	assert.ok(seenOpts.feedback, "feedback reaches the video ranking")
+	assert.ok("systemPrompt" in seenOpts, "the system prompt reaches the video ranking")
+	assert.equal(result.reasonById.get("sig1"), "потому что", "the reason is kept so 📌 Почему can render")
+})
+
+test("a minus-keyword drops a video before it is ranked", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 65
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+	db.upsertVideo("mk1", "yt:@mkchan", "mkv1", "обзор крипты на неделю", "https://www.youtube.com/watch?v=mkv1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.updateUserMinusKeywords(userId, "крипт")
+
+	const service = new BotService({
+		ai: { rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1 })) }
+	})
+	const result = await service.selectVideosForDigest(userId)
+	assert.ok(!result.videos.some((v) => v.id === "mk1"), "a minus-keyword filters videos as it filters posts")
+})
+
+test("a ranked video block carries the why button", async () => {
+	const sends = []
+	const telegram = {
+		sendMessage: async (chatId, text, extra) => { sends.push({ text, extra }); return { message_id: sends.length } }
+	}
+
+	const videos = [
+		{ id: "why1", channel: "yt:@whychan", post_id: "wv1", source: "yt", link: "https://www.youtube.com/watch?v=wv1", date: "2026-08-01T00:00:00.000Z", duration_sec: 600, views: 10 }
+	]
+	const service = {
+		selectVideosForDigest: async () => ({ videos, remaining: 0, reasonById: new Map([["why1", "совпадает с профилем"]]) }),
+		mgr: {
+			cache: { setBlock: () => {} },
+			ai: { generateSummaryBlocks: async () => ({ blocks: [{ ids: ["why1"], essence: "e", emoji: "🎬" }] }) }
+		},
+		sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
+	}
+	db.getOrCreateUser(66)
+
+	await service.sendVideoSection.call(service, telegram, 66, { withHeader: false })
+	assert.ok(JSON.stringify(sends[0].extra).includes("why:why1"), "📌 Почему is offered on a video with a reason")
 })

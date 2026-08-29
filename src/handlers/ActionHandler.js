@@ -60,7 +60,9 @@ export class ActionHandler extends BaseHandler {
 
 		await this.safeAnswerCbQuery(ctx)
 		const { block, postById, reason } = cached
-		const fullText = UIFormatter.formatBlockText(block, postById, { compact: false })
+		const fullText = cached.isVideo
+			? cached.normalText
+			: UIFormatter.formatBlockText(block, postById, { compact: false })
 		const expanded = fullText + (reason ? `\n\n📌 <b>Why in digest:</b>\n${UIFormatter.escapeHtml(reason)}` : "")
 
 		// Get channel and hidden status
@@ -677,9 +679,9 @@ export class ActionHandler extends BaseHandler {
 	}
 
 	async handleVideoMore(ctx) {
-		await ctx.answerCbQuery()
 		const userId = ctx.from?.id
-		if (!userId) return
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+		await this.safeAnswerCbQuery(ctx)
 
 		// Снимаем клавиатуру ДО асинхронной работы: markDigestShown коммитится
 		// только после AI-запроса, поэтому двойной тап успевает прочитать один
@@ -690,7 +692,8 @@ export class ActionHandler extends BaseHandler {
 
 		const sent = await this.mgr.service.sendVideoSection(ctx.telegram, userId, {
 			limit: VIDEO_TAIL_COUNT,
-			withHeader: false
+			withHeader: false,
+			withMore: false
 		})
 		if (sent === 0) await ctx.reply("Больше видео за неделю нет.")
 	}
