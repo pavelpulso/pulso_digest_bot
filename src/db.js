@@ -392,17 +392,26 @@ export function upsertPostFeedback(userId, postId, rating) {
   return r
 }
 
-/** Returns { liked: string[], disliked: string[] } for last 90 days (for ranking prompt). */
+const FEEDBACK_EXAMPLES_PER_SIDE = 8
+const FEEDBACK_EXCERPT_CHARS = 140
+
+/** Returns { liked: string[], disliked: string[] } excerpts for last 90 days (for ranking prompt). */
 export function getPostFeedbackForRanking(userId) {
   const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()
   const rows = db.prepare(
-    "SELECT post_id, rating FROM post_feedback WHERE user_id = ? AND created_at >= ?"
+    `SELECT f.rating, p.text
+     FROM post_feedback f
+     JOIN posts p ON p.id = f.post_id
+     WHERE f.user_id = ? AND f.created_at >= ? AND p.text IS NOT NULL AND p.text != ''
+     ORDER BY f.created_at DESC`
   ).all(userId, since)
+
   const liked = []
   const disliked = []
   for (const r of rows) {
-    if (r.rating === 1) liked.push(r.post_id)
-    else disliked.push(r.post_id)
+    const target = r.rating === 1 ? liked : disliked
+    if (target.length >= FEEDBACK_EXAMPLES_PER_SIDE) continue
+    target.push(r.text.replace(/\s+/g, " ").trim().slice(0, FEEDBACK_EXCERPT_CHARS))
   }
   return { liked, disliked }
 }
