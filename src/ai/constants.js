@@ -8,8 +8,11 @@
 export const LIMITS = {
   /** Max post text length for ranking — relevance is decided by the opening, not the full post */
   RANK_TEXT: 500,
-  /** Token budget for a single ranking request, kept under the 8000 TPM free tier */
+  /** Total token budget per ranking request — prompt AND reserved completion, which
+   *  providers bill together against the per-minute limit */
   RANK_BATCH_TOKENS: 5000,
+  /** Completion tokens one scored post needs: {post_id, score, reason} */
+  COMPLETION_TOKENS_PER_POST: 60,
   /** Cyrillic costs ~2.5 chars per token; English ~4. Assume the expensive case. */
   CHARS_PER_TOKEN: 2.5,
   /** Max post text length for summary */

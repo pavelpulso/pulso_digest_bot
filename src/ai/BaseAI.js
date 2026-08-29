@@ -171,13 +171,14 @@ export class BaseAI {
   }
 
   /**
-   * Splits posts into batches whose rendered prompt stays within the token budget.
+   * Splits posts into batches whose prompt plus reserved completion fits the budget.
    * @private
    */
   #splitIntoBatches(list, buildPrompt) {
-    const budgetChars = LIMITS.RANK_BATCH_TOKENS * LIMITS.CHARS_PER_TOKEN
-    const overhead = buildPrompt([]).length
-    const costOf = (item) => JSON.stringify(item).length + 2
+    const budgetTokens = LIMITS.RANK_BATCH_TOKENS
+    const overhead = buildPrompt([]).length / LIMITS.CHARS_PER_TOKEN
+    const costOf = (item) =>
+      JSON.stringify(item).length / LIMITS.CHARS_PER_TOKEN + LIMITS.COMPLETION_TOKENS_PER_POST
 
     const batches = []
     let current = []
@@ -185,7 +186,7 @@ export class BaseAI {
 
     for (const item of list) {
       const cost = costOf(item)
-      if (current.length > 0 && size + cost > budgetChars) {
+      if (current.length > 0 && size + cost > budgetTokens) {
         batches.push(current)
         current = []
         size = overhead
@@ -228,7 +229,8 @@ export class BaseAI {
 
     const parsed = []
     for (let i = 0; i < batches.length; i++) {
-      const raw = await this._callAPI(buildPrompt(batches[i]), { type: "json_object", maxTokens: 16384 })
+      const maxTokens = batches[i].length * LIMITS.COMPLETION_TOKENS_PER_POST + 200
+      const raw = await this._callAPI(buildPrompt(batches[i]), { type: "json_object", maxTokens })
       parsed.push(...this.#parseJSONArray(raw))
       if (typeof onProgress === "function") {
         onProgress(Math.round(((i + 1) / batches.length) * 100))
