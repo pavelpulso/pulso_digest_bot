@@ -20,13 +20,24 @@ import {
 	toggleUserChannelHidden,
 	getUserChannelSettings,
 	getUser,
-	upsertUserStat
+	upsertUserStat,
+	getShownPostIds,
+	markDigestShown,
+	getVideoCandidates,
+	getChannelViewNorms
 } from "../db.js"
 import { getUserSystemPrompt } from "./SystemPromptLoader.js"
 import { formatDateLabel, MIN_DIGEST_SCORE, DIGEST_PAGE_SIZE, getDigestDate } from "../utils.js"
 import { UIFormatter } from "../ui/UIFormatter.js"
 import { KeyboardProvider } from "../ui/KeyboardProvider.js"
 import { collectChannelPosts } from "../gramjs.js"
+import { computeBoost } from "../youtube/scoring.js"
+
+const VIDEO_WINDOW_DAYS = 7
+const VIDEO_LEAD_COUNT = 3
+const VIDEO_DAILY_CAP = 10
+const VIDEO_NORM_MIN_AGE_DAYS = 7
+const VIDEO_NORM_MAX_AGE_DAYS = 90
 
 export class BotService {
 	constructor(botManager) {
@@ -35,6 +46,33 @@ export class BotService {
 
 	digestDate() {
 		return getDigestDate()
+	}
+
+	/**
+	 * Топ видео за скользящее окно. Показанные лежат в digest_shown, поэтому
+	 * повторный вызов естественно отдаёт следующие — хвост нигде не хранится.
+	 */
+	async selectVideosForDigest(userId, { limit = VIDEO_LEAD_COUNT } = {}) {
+		const shown = getShownPostIds(userId)
+		const candidates = getVideoCandidates(VIDEO_WINDOW_DAYS, shown, userId)
+		if (candidates.length === 0) return { videos: [], remaining: 0 }
+
+		const user = getOrCreateUser(userId)
+		const ranked = await this.mgr.ai.rankPosts(candidates, user.profile || "")
+		const scoreById = new Map(ranked.map((r) => [String(r.post_id), Number(r.score) || 0]))
+		const norms = getChannelViewNorms(VIDEO_NORM_MIN_AGE_DAYS, VIDEO_NORM_MAX_AGE_DAYS)
+
+		const scored = candidates.map((v) => {
+			const norm = norms.get(v.channel) || { medianViews: 0, maturedCount: 0 }
+			const boost = computeBoost(v.views, norm.medianViews, norm.maturedCount)
+			return { video: v, score: (scoreById.get(v.id) || 0) * (1 + boost) }
+		}).sort((a, b) => b.score - a.score)
+
+		const capped = scored.slice(0, VIDEO_DAILY_CAP)
+		return {
+			videos: capped.slice(0, limit).map((s) => s.video),
+			remaining: Math.max(0, capped.length - limit)
+		}
 	}
 
 	hasRankings(userId, date) {

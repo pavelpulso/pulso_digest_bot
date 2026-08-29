@@ -334,6 +334,49 @@ export function getVideosInWindow(sinceIso) {
   ).all(sinceIso)
 }
 
+/** Видео за окно, не скрытые пользователем. Показанные отсеиваются вызывающим. */
+export function getVideoCandidates(windowDays, shownIds, userId = null) {
+  const since = new Date(Date.now() - windowDays * 86400_000).toISOString()
+  const rows = db.prepare(
+    `SELECT p.id, p.channel, p.post_id, p.text, p.link, p.views, p.date, p.source, p.duration_sec
+     FROM posts p
+     WHERE p.source = 'yt' AND p.date >= ?
+       AND (? IS NULL OR NOT EXISTS (
+         SELECT 1 FROM user_channel_settings ucs
+         WHERE ucs.user_id = ? AND ucs.channel = p.channel AND ucs.hidden = 1
+       ))
+     ORDER BY p.date DESC`
+  ).all(since, userId, userId)
+  return rows.filter((r) => !shownIds.has(r.id))
+}
+
+/** Медиана просмотров по созревшим видео каждого канала — норма для boost. */
+export function getChannelViewNorms(minAgeDays, maxAgeDays) {
+  const newest = new Date(Date.now() - minAgeDays * 86400_000).toISOString()
+  const oldest = new Date(Date.now() - maxAgeDays * 86400_000).toISOString()
+  const rows = db.prepare(
+    `SELECT channel, views FROM posts
+     WHERE source = 'yt' AND date <= ? AND date >= ?`
+  ).all(newest, oldest)
+
+  const byChannel = new Map()
+  for (const r of rows) {
+    if (!byChannel.has(r.channel)) byChannel.set(r.channel, [])
+    byChannel.get(r.channel).push(r.views || 0)
+  }
+
+  const norms = new Map()
+  for (const [channel, views] of byChannel) {
+    const sorted = [...views].sort((a, b) => a - b)
+    const mid = Math.floor(sorted.length / 2)
+    const medianViews = sorted.length % 2 === 0
+      ? (sorted[mid - 1] + sorted[mid]) / 2
+      : sorted[mid]
+    norms.set(channel, { medianViews, maturedCount: sorted.length })
+  }
+  return norms
+}
+
 /** Returns last N posts for a channel (newest first). */
 export function getRecentPostsByChannel(channel, limit = 20) {
   const norm = channel.replace(/^@/, "").toLowerCase()
