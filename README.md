@@ -1,6 +1,6 @@
 # Pulso Digest Bot
 
-Telegram bot that aggregates posts from tracked channels and delivers personalized digests using AI for ranking and summarization.
+Telegram bot that aggregates posts from tracked channels and YouTube subscriptions, delivering personalized digests using AI for ranking and summarization.
 
 ## Stack
 
@@ -121,6 +121,9 @@ crontab -e
 | `CHANNELS` | Initial channels, comma-separated, without @ | No |
 | `DB_PATH` | SQLite file path (default: `./data/db.sqlite`) | No |
 | `DEBUG_AI` | Set to `1` or `true` to enable AI debug logging | No |
+| `YOUTUBE_CLIENT_ID` | OAuth client ID (Desktop app) | Yes (if using YouTube) |
+| `YOUTUBE_CLIENT_SECRET` | OAuth client secret | Yes (if using YouTube) |
+| `YOUTUBE_REFRESH_TOKEN` | Refresh token from `npm run auth:youtube` | Yes (if using YouTube) |
 
 **Note:** GramJS session is stored in the database (`settings.gramjs_session`), not in `.env`.
 

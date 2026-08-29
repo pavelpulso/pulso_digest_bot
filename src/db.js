@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
 import { mkdirSync, existsSync } from "fs"
 import { dirname } from "path"
+import { median } from "./youtube/scoring.js"
 
 const dbPath = process.env.DB_PATH || "./data/db.sqlite"
 
@@ -66,43 +67,84 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_rankings_user_date ON rankings(user_id, date);
 `)
 
+/** Два процесса могут стартовать на одном деплое: проигравший гонки видит колонку уже добавленной. */
+function addColumn(sql) {
+  try {
+    db.prepare(sql).run()
+  } catch (e) {
+    if (!/duplicate column/i.test(e.message)) throw e
+  }
+}
+
 // Migration: digest_max_items (default 10)
 const userCols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name)
 if (!userCols.includes("digest_max_items")) {
-  db.prepare("ALTER TABLE users ADD COLUMN digest_max_items INTEGER DEFAULT 10").run()
+  addColumn("ALTER TABLE users ADD COLUMN digest_max_items INTEGER DEFAULT 10")
 }
 if (!userCols.includes("minus_keywords")) {
-  db.prepare("ALTER TABLE users ADD COLUMN minus_keywords TEXT").run()
+  addColumn("ALTER TABLE users ADD COLUMN minus_keywords TEXT")
 }
 if (!userCols.includes("digest_format")) {
-  db.prepare("ALTER TABLE users ADD COLUMN digest_format TEXT DEFAULT 'full'").run()
+  addColumn("ALTER TABLE users ADD COLUMN digest_format TEXT DEFAULT 'full'")
 }
 
 // Migration: system_prompt_url, system_prompt_cached, system_prompt_cached_at
 if (!userCols.includes("system_prompt_url")) {
-  db.prepare("ALTER TABLE users ADD COLUMN system_prompt_url TEXT").run()
+  addColumn("ALTER TABLE users ADD COLUMN system_prompt_url TEXT")
 }
 if (!userCols.includes("system_prompt_cached")) {
-  db.prepare("ALTER TABLE users ADD COLUMN system_prompt_cached TEXT").run()
+  addColumn("ALTER TABLE users ADD COLUMN system_prompt_cached TEXT")
 }
 if (!userCols.includes("system_prompt_cached_at")) {
-  db.prepare("ALTER TABLE users ADD COLUMN system_prompt_cached_at TEXT").run()
+  addColumn("ALTER TABLE users ADD COLUMN system_prompt_cached_at TEXT")
 }
 
 // Migration: digest_pause_until — pause morning digest until date (ISO string)
 if (!userCols.includes("digest_pause_until")) {
-  db.prepare("ALTER TABLE users ADD COLUMN digest_pause_until TEXT").run()
+  addColumn("ALTER TABLE users ADD COLUMN digest_pause_until TEXT")
 }
 
 // Migration: digest_pause_weekends — pause morning digest on Sat/Sun (0/1)
 if (!userCols.includes("digest_pause_weekends")) {
-  db.prepare("ALTER TABLE users ADD COLUMN digest_pause_weekends INTEGER DEFAULT 0").run()
+  addColumn("ALTER TABLE users ADD COLUMN digest_pause_weekends INTEGER DEFAULT 0")
 }
 
 // Migration: onboarding_completed — whether user completed onboarding tour
 if (!userCols.includes("onboarding_completed")) {
-  db.prepare("ALTER TABLE users ADD COLUMN onboarding_completed INTEGER DEFAULT 0").run()
+  addColumn("ALTER TABLE users ADD COLUMN onboarding_completed INTEGER DEFAULT 0")
 }
+
+// Migration: posts.source / posts.duration_sec — split telegram posts from videos
+const postCols = db.prepare("PRAGMA table_info(posts)").all().map((c) => c.name)
+if (!postCols.includes("source")) {
+  addColumn("ALTER TABLE posts ADD COLUMN source TEXT NOT NULL DEFAULT 'tg'")
+}
+if (!postCols.includes("duration_sec")) {
+  addColumn("ALTER TABLE posts ADD COLUMN duration_sec INTEGER")
+}
+
+// Migration: channels.source / channels.external_id / channels.unsubscribed_at
+const channelCols = db.prepare("PRAGMA table_info(channels)").all().map((c) => c.name)
+if (!channelCols.includes("source")) {
+  addColumn("ALTER TABLE channels ADD COLUMN source TEXT NOT NULL DEFAULT 'tg'")
+}
+if (!channelCols.includes("external_id")) {
+  addColumn("ALTER TABLE channels ADD COLUMN external_id TEXT")
+}
+if (!channelCols.includes("unsubscribed_at")) {
+  addColumn("ALTER TABLE channels ADD COLUMN unsubscribed_at TEXT")
+}
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS digest_shown (
+    user_id INTEGER NOT NULL,
+    post_id TEXT NOT NULL,
+    shown_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (user_id, post_id),
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_posts_source_date ON posts(source, date);
+`)
 
 // user_channel_settings: per-user hide-in-digest and priority (1=normal, 2=important)
 db.exec(`
@@ -178,11 +220,11 @@ export function setBotOpen(open) {
 
 // Channels
 export function getChannels() {
-  return db.prepare("SELECT id, username, added_by, added_at FROM channels ORDER BY username").all()
+  return db.prepare("SELECT id, username, added_by, added_at FROM channels WHERE source = 'tg' ORDER BY username").all()
 }
 
 export function getChannelUsernames() {
-  return db.prepare("SELECT username FROM channels").all().map((r) => r.username)
+  return db.prepare("SELECT username FROM channels WHERE source = 'tg'").all().map((r) => r.username)
 }
 
 export function addChannel(username, addedBy) {
@@ -230,7 +272,7 @@ export function upsertPost(id, channel, postId, text, link, views, date) {
 export function getPostsLast24h() {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
   return db.prepare(
-    "SELECT id, channel, post_id, text, link, views, date FROM posts WHERE date >= ? ORDER BY date DESC"
+    "SELECT id, channel, post_id, text, link, views, date, source, duration_sec FROM posts WHERE date >= ? AND source = 'tg' ORDER BY date DESC"
   ).all(since)
 }
 
@@ -241,22 +283,103 @@ export function getPostsForCalendarDay(dateStr) {
   const moscowDate = new Date(dateStr + "T00:00:00+03:00") // 00:00 MSK
   const since = moscowDate.toISOString() // Convert to UTC
   const until = new Date(moscowDate.getTime() + 24 * 60 * 60 * 1000).toISOString() // Next day 00:00 MSK in UTC
-  
+
   return db.prepare(
-    "SELECT id, channel, post_id, text, link, views, date FROM posts WHERE date >= ? AND date < ? ORDER BY date DESC"
+    "SELECT id, channel, post_id, text, link, views, date, source, duration_sec FROM posts WHERE date >= ? AND date < ? AND source = 'tg' ORDER BY date DESC"
   ).all(since, until)
 }
 
 export function getPostById(id) {
-  return db.prepare("SELECT id, channel, post_id, text, link, views, date FROM posts WHERE id = ?").get(id)
+  return db.prepare("SELECT id, channel, post_id, text, link, views, date, source, duration_sec FROM posts WHERE id = ?").get(id)
 }
 
 export function getPostsByIds(ids) {
   if (ids.length === 0) return []
   const placeholders = ids.map(() => "?").join(",")
   return db.prepare(
-    `SELECT id, channel, post_id, text, link, views, date FROM posts WHERE id IN (${placeholders})`
+    `SELECT id, channel, post_id, text, link, views, date, source, duration_sec FROM posts WHERE id IN (${placeholders})`
   ).all(...ids)
+}
+
+export function upsertVideo(id, channel, videoId, text, link, views, durationSec, date) {
+  // date is not in the UPDATE SET (unlike upsertPost): publish date is immutable,
+  // and overwriting it would shift the video inside the selection window on every collection run.
+  db.prepare(
+    `INSERT INTO posts (id, channel, post_id, text, link, views, date, source, duration_sec)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'yt', ?)
+     ON CONFLICT(channel, post_id) DO UPDATE SET
+       text = excluded.text,
+       link = excluded.link,
+       views = excluded.views,
+       duration_sec = excluded.duration_sec`
+  ).run(id, channel, videoId, text || "", link || "", views || 0, date, durationSec || null)
+}
+
+export function getYouTubeChannels() {
+  return db.prepare(
+    "SELECT username, external_id FROM channels WHERE source = 'yt' AND unsubscribed_at IS NULL"
+  ).all()
+}
+
+export function upsertYouTubeChannel(username, externalId, addedBy) {
+  db.prepare(
+    `INSERT INTO channels (username, added_by, source, external_id)
+     VALUES (?, ?, 'yt', ?)
+     ON CONFLICT(username) DO UPDATE SET
+       external_id = excluded.external_id,
+       unsubscribed_at = NULL`
+  ).run(username, addedBy || 0, externalId)
+}
+
+export function markChannelUnsubscribed(username) {
+  db.prepare(
+    "UPDATE channels SET unsubscribed_at = datetime('now') WHERE username = ? AND source = 'yt'"
+  ).run(username)
+}
+
+export function getVideosInWindow(sinceIso) {
+  return db.prepare(
+    `SELECT id, channel, post_id, text, link, views, date, source, duration_sec
+     FROM posts WHERE source = 'yt' AND date >= ? ORDER BY date DESC`
+  ).all(sinceIso)
+}
+
+/** Видео за окно, не скрытые пользователем. Показанные отсеиваются вызывающим. */
+export function getVideoCandidates(windowDays, shownIds, userId = null) {
+  const since = new Date(Date.now() - windowDays * 86400_000).toISOString()
+  const rows = db.prepare(
+    `SELECT p.id, p.channel, p.post_id, p.text, p.link, p.views, p.date, p.source, p.duration_sec
+     FROM posts p
+     WHERE p.source = 'yt' AND p.date >= ?
+       AND (? IS NULL OR NOT EXISTS (
+         SELECT 1 FROM user_channel_settings ucs
+         WHERE ucs.user_id = ? AND ucs.channel = p.channel AND ucs.hidden = 1
+       ))
+     ORDER BY p.date DESC`
+  ).all(since, userId, userId)
+  return rows.filter((r) => !shownIds.has(r.id))
+}
+
+/** Медиана просмотров по созревшим видео каждого канала — норма для boost. */
+export function getChannelViewNorms(minAgeDays, maxAgeDays) {
+  const newest = new Date(Date.now() - minAgeDays * 86400_000).toISOString()
+  const oldest = new Date(Date.now() - maxAgeDays * 86400_000).toISOString()
+  const rows = db.prepare(
+    `SELECT channel, views FROM posts
+     WHERE source = 'yt' AND date <= ? AND date >= ?`
+  ).all(newest, oldest)
+
+  const byChannel = new Map()
+  for (const r of rows) {
+    if (!byChannel.has(r.channel)) byChannel.set(r.channel, [])
+    byChannel.get(r.channel).push(r.views || 0)
+  }
+
+  const norms = new Map()
+  for (const [channel, views] of byChannel) {
+    norms.set(channel, { medianViews: median(views), maturedCount: views.length })
+  }
+  return norms
 }
 
 /** Returns last N posts for a channel (newest first). */
@@ -266,6 +389,23 @@ export function getRecentPostsByChannel(channel, limit = 20) {
     `SELECT id, channel, post_id, text, link, views, date FROM posts
      WHERE channel = ? ORDER BY date DESC LIMIT ?`
   ).all(norm, limit)
+}
+
+// Digest shown history (per user)
+export function markDigestShown(userId, postIds) {
+  if (!postIds || postIds.length === 0) return
+  const stmt = db.prepare(
+    "INSERT INTO digest_shown (user_id, post_id) VALUES (?, ?) ON CONFLICT(user_id, post_id) DO NOTHING"
+  )
+  const many = db.transaction((ids) => {
+    for (const id of ids) stmt.run(userId, id)
+  })
+  many(postIds)
+}
+
+export function getShownPostIds(userId) {
+  const rows = db.prepare("SELECT post_id FROM digest_shown WHERE user_id = ?").all(userId)
+  return new Set(rows.map((r) => r.post_id))
 }
 
 // Rankings
@@ -310,7 +450,7 @@ export function getRankedPostIds(userId, date, limit = 10, offset = 0) {
   const rows = db.prepare(
     `SELECT r.post_id FROM rankings r
      JOIN posts p ON r.post_id = p.id
-     WHERE r.user_id = ? AND r.date = ?
+     WHERE r.user_id = ? AND r.date = ? AND p.source = 'tg'
        AND NOT EXISTS (
          SELECT 1 FROM user_channel_settings ucs
          WHERE ucs.user_id = ? AND ucs.channel = p.channel AND ucs.hidden = 1
@@ -326,7 +466,7 @@ export function getRankedPostIdsAboveScore(userId, date, minScore, limit = 10, o
   const rows = db.prepare(
     `SELECT r.post_id FROM rankings r
      JOIN posts p ON r.post_id = p.id
-     WHERE r.user_id = ? AND r.date = ? AND r.score >= ?
+     WHERE r.user_id = ? AND r.date = ? AND r.score >= ? AND p.source = 'tg'
        AND NOT EXISTS (
          SELECT 1 FROM user_channel_settings ucs
          WHERE ucs.user_id = ? AND ucs.channel = p.channel AND ucs.hidden = 1
@@ -341,7 +481,7 @@ export function getRankedPostIdsWithTotal(userId, date, limit = 10, offset = 0, 
   const rows = db.prepare(
     `SELECT r.post_id FROM rankings r
      JOIN posts p ON r.post_id = p.id
-     WHERE r.user_id = ? AND r.date = ? AND r.score >= ?
+     WHERE r.user_id = ? AND r.date = ? AND r.score >= ? AND p.source = 'tg'
        AND NOT EXISTS (
          SELECT 1 FROM user_channel_settings ucs
          WHERE ucs.user_id = ? AND ucs.channel = p.channel AND ucs.hidden = 1
@@ -351,7 +491,7 @@ export function getRankedPostIdsWithTotal(userId, date, limit = 10, offset = 0, 
   const totalRow = db.prepare(
     `SELECT COUNT(*) as total FROM rankings r
      JOIN posts p ON r.post_id = p.id
-     WHERE r.user_id = ? AND r.date = ? AND r.score >= ?
+     WHERE r.user_id = ? AND r.date = ? AND r.score >= ? AND p.source = 'tg'
        AND NOT EXISTS (
          SELECT 1 FROM user_channel_settings ucs
          WHERE ucs.user_id = ? AND ucs.channel = p.channel AND ucs.hidden = 1
@@ -627,7 +767,7 @@ export function clearUserSystemPrompt(userId) {
 
 export function getPostsForDateRange(since, until) {
   return db.prepare(
-    "SELECT id, channel, post_id, text, link, views, date FROM posts WHERE date >= ? AND date < ? ORDER BY date DESC"
+    "SELECT id, channel, post_id, text, link, views, date FROM posts WHERE date >= ? AND date < ? AND source = 'tg' ORDER BY date DESC"
   ).all(since, until)
 }
 

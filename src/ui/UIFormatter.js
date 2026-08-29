@@ -38,13 +38,15 @@ export class UIFormatter {
 		return header.trim()
 	}
 
-	/** Map id -> {channel, postUrl} */
+	/** Map id -> {channel, postUrl, date, duration_sec, views} */
 	static buildPostById(posts) {
 		return Object.fromEntries(
 			posts.map((p) => {
-				const postUrl =
-					p.link && String(p.link).endsWith("/" + p.post_id) ? p.link : `https://t.me/${p.channel}/${p.post_id}`
-				return [p.id, { channel: p.channel, postUrl, date: p.date }]
+				// У видео ссылка своей формы (?v=<id>), и telegram-фолбэк дал бы несуществующий адрес.
+				const postUrl = p.source === "yt"
+					? p.link
+					: p.link && String(p.link).endsWith("/" + p.post_id) ? p.link : `https://t.me/${p.channel}/${p.post_id}`
+				return [p.id, { channel: p.channel, postUrl, date: p.date, duration_sec: p.duration_sec, views: p.views }]
 			})
 		)
 	}
@@ -100,6 +102,36 @@ export class UIFormatter {
 		]
 		const text = lines.join("\n\n")
 		return text.length > MAX_MESSAGE_LEN ? text.slice(0, MAX_MESSAGE_LEN - 1) + "…" : text
+	}
+
+	static formatDuration(sec) {
+		if (!sec || sec <= 0) return ""
+		const totalMin = Math.round(sec / 60)
+		if (totalMin < 60) return `${totalMin} мин`
+		return `${Math.floor(totalMin / 60)} ч ${totalMin % 60} мин`
+	}
+
+	static formatViews(views) {
+		if (!views || views <= 0) return ""
+		if (views < 1000) return String(views)
+		if (views < 999_500) return `${Math.round(views / 1000)}k`
+		return `${(views / 1_000_000).toFixed(1)}M`
+	}
+
+	/** Как текстовый блок, но вторая строка несёт длительность и просмотры — по ним решают, открывать ли. */
+	static formatVideoBlockText(block, postById) {
+		const essence = this.escapeHtml(block.essence)
+		const meta = postById[block.ids[0]] || {}
+		const safeUrl = String(meta.postUrl || "#").replace(/&/g, "&amp;")
+		const channel = this.escapeHtml(String(meta.channel || "").replace(/^yt:/, ""))
+
+		const parts = [
+			`<a href="${safeUrl}">▶ ${channel}</a>`,
+			this.formatDuration(meta.duration_sec),
+			this.formatViews(meta.views)
+		].filter(Boolean)
+
+		return `${block.emoji || "🎬"} ${essence}\n\n${parts.join(" · ")}`
 	}
 
 	/** Verdict -> emoji and label */

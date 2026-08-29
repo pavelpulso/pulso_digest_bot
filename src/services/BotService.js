@@ -20,13 +20,24 @@ import {
 	toggleUserChannelHidden,
 	getUserChannelSettings,
 	getUser,
-	upsertUserStat
+	upsertUserStat,
+	getShownPostIds,
+	markDigestShown,
+	getVideoCandidates,
+	getChannelViewNorms
 } from "../db.js"
 import { getUserSystemPrompt } from "./SystemPromptLoader.js"
 import { formatDateLabel, MIN_DIGEST_SCORE, DIGEST_PAGE_SIZE, getDigestDate } from "../utils.js"
 import { UIFormatter } from "../ui/UIFormatter.js"
 import { KeyboardProvider } from "../ui/KeyboardProvider.js"
 import { collectChannelPosts } from "../gramjs.js"
+import { computeBoost } from "../youtube/scoring.js"
+
+const VIDEO_WINDOW_DAYS = 7
+const VIDEO_LEAD_COUNT = 3
+const VIDEO_DAILY_CAP = 10
+const VIDEO_NORM_MIN_AGE_DAYS = 7
+const VIDEO_NORM_MAX_AGE_DAYS = 90
 
 export class BotService {
 	constructor(botManager) {
@@ -35,6 +46,110 @@ export class BotService {
 
 	digestDate() {
 		return getDigestDate()
+	}
+
+	/**
+	 * Топ видео за скользящее окно. Показанные лежат в digest_shown, поэтому
+	 * повторный вызов естественно отдаёт следующие — хвост нигде не хранится.
+	 */
+	async selectVideosForDigest(userId, { limit = VIDEO_LEAD_COUNT } = {}) {
+		const shown = getShownPostIds(userId)
+		const candidates = this.filterPostsForUser(getVideoCandidates(VIDEO_WINDOW_DAYS, shown, userId), userId)
+		if (candidates.length === 0) return { videos: [], remaining: 0, reasonById: new Map() }
+
+		const user = getOrCreateUser(userId)
+		const priorities = getUserChannelPriorities(userId)
+		const feedback = getPostFeedbackForRanking(userId)
+		const systemPrompt = await getUserSystemPrompt(user)
+		const ranked = await this.mgr.ai.rankPosts(candidates, user.profile || "", { channelPriorities: priorities, feedback, systemPrompt })
+		const scoreById = new Map(ranked.map((r) => [String(r.post_id), Number(r.score) || 0]))
+		const reasonById = new Map(ranked.map((r) => [String(r.post_id), r.reason || null]))
+		const norms = getChannelViewNorms(VIDEO_NORM_MIN_AGE_DAYS, VIDEO_NORM_MAX_AGE_DAYS)
+
+		const scored = candidates.map((v) => {
+			const norm = norms.get(v.channel) || { medianViews: 0, maturedCount: 0 }
+			const boost = computeBoost(v.views, norm.medianViews, norm.maturedCount)
+			return { video: v, score: (scoreById.get(v.id) || 0) * (1 + boost) }
+		}).sort((a, b) => b.score - a.score)
+
+		const capped = scored.slice(0, VIDEO_DAILY_CAP)
+		return {
+			videos: capped.slice(0, limit).map((s) => s.video),
+			remaining: Math.max(0, capped.length - limit),
+			reasonById
+		}
+	}
+
+	/**
+	 * Видео-секция изолирована от текстовой: её падение не должно отменять дайджест,
+	 * который уже собран и отправлен.
+	 */
+	async sendVideoSection(telegram, userId, { limit = VIDEO_LEAD_COUNT, withHeader = true, withMore = true } = {}) {
+		let picked
+		try {
+			picked = await this.selectVideosForDigest(userId, { limit })
+		} catch (e) {
+			console.error("[video section] user", userId, e.message)
+			return 0
+		}
+
+		if (picked.videos.length === 0) return 0
+
+		const user = getOrCreateUser(userId)
+		const label = formatDateLabel(new Date())
+		let result
+		try {
+			result = await this.mgr.ai.generateSummaryBlocks(
+				picked.videos, label, user.profile || "", picked.videos.length,
+				{ compact: true }
+			)
+		} catch (e) {
+			console.error("[video section] blocks failed for user", userId, e.message)
+			return 0
+		}
+
+		if (!result.blocks?.length) return 0
+
+		const postById = UIFormatter.buildPostById(picked.videos)
+		const shownIds = []
+
+		// Отправка тоже под защитой: Telegram может отклонить любое сообщение
+		// (рейт-лимит, заблокированный бот, удалённый чат), и это не должно
+		// прорваться в вызывающий код после того, как текстовый дайджест уже ушёл.
+		try {
+			if (withHeader) {
+				await telegram.sendMessage(userId, "📺 <b>Посмотреть</b>", { parse_mode: "HTML" })
+			}
+
+			for (const block of result.blocks) {
+				const postId = block.ids.length === 1 ? block.ids[0] : null
+				const reason = postId ? picked.reasonById?.get(postId) : null
+				const text = UIFormatter.formatVideoBlockText(block, postById)
+				const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false, postById[postId]?.channel)
+				if (postId) this.mgr.cache?.setBlock(postId, { normalText: text, block, postById, reason, isVideo: true })
+				await telegram.sendMessage(userId, text, {
+					parse_mode: "HTML",
+					disable_web_page_preview: true,
+					...kb
+				})
+				// Помечаем сразу после успешной отправки: упавшая рассылка не должна
+				// съесть видео, которых пользователь не видел, а слитый блок должен
+				// пометить все свои id, а не только единственный.
+				markDigestShown(userId, block.ids)
+				shownIds.push(...block.ids)
+			}
+
+			// Кнопка живёт только на ведущей отправке: на хвосте она бы предлагала
+			// следующую порцию и переезжала бы дневной лимит бесконечно.
+			const moreKb = withMore ? KeyboardProvider.videoMoreKeyboard(picked.remaining) : undefined
+			if (moreKb) {
+				await telegram.sendMessage(userId, "…", { parse_mode: "HTML", ...moreKb })
+			}
+		} catch (e) {
+			console.error("[video section] send failed for user", userId, e.message)
+		}
+
+		return shownIds.length
 	}
 
 	hasRankings(userId, date) {
@@ -630,6 +745,8 @@ export class BotService {
 					})
 					if (postId) this.mgr.cache.setBlock(postId, { normalText: blockText, block, postById: payload.postById, reason })
 				}
+
+				await this.sendVideoSection(botInstance.telegram, u.user_id)
 
 				// Add digest feedback buttons
 				const feedbackKeyboard = {

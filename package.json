@@ -10,6 +10,7 @@
   "scripts": {
     "start": "node src/index.js",
     "auth": "node src/auth.js",
+    "auth:youtube": "node src/auth-youtube.js",
     "cron:collect": "node src/cron-job.js --action=collect",
     "cron:digest": "node src/cron-job.js --action=digest",
     "dev": "nodemon src/index.js",

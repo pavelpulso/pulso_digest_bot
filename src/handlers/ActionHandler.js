@@ -23,6 +23,8 @@ import {
 import { formatDateLabel, formatChannelList } from "../utils.js"
 import { collectChannelPosts, fetchRecentPostsFromChannel } from "../gramjs.js"
 
+const VIDEO_TAIL_COUNT = 7
+
 export class ActionHandler extends BaseHandler {
 	async handleMore(ctx) {
 		const offset = parseInt(ctx.match[1], 10)
@@ -58,7 +60,9 @@ export class ActionHandler extends BaseHandler {
 
 		await this.safeAnswerCbQuery(ctx)
 		const { block, postById, reason } = cached
-		const fullText = UIFormatter.formatBlockText(block, postById, { compact: false })
+		const fullText = cached.isVideo
+			? cached.normalText
+			: UIFormatter.formatBlockText(block, postById, { compact: false })
 		const expanded = fullText + (reason ? `\n\n📌 <b>Why in digest:</b>\n${UIFormatter.escapeHtml(reason)}` : "")
 
 		// Get channel and hidden status
@@ -672,5 +676,25 @@ export class ActionHandler extends BaseHandler {
 
 		await this.safeAnswerCbQuery(ctx)
 		return this.mgr.handlers.command.handleStats(ctx)
+	}
+
+	async handleVideoMore(ctx) {
+		const userId = ctx.from?.id
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+		await this.safeAnswerCbQuery(ctx)
+
+		// Снимаем клавиатуру ДО асинхронной работы: markDigestShown коммитится
+		// только после AI-запроса, поэтому двойной тап успевает прочитать один
+		// и тот же набор непоказанных видео и отправить хвост дважды.
+		try {
+			await ctx.editMessageReplyMarkup({ inline_keyboard: [] })
+		} catch {}
+
+		const sent = await this.mgr.service.sendVideoSection(ctx.telegram, userId, {
+			limit: VIDEO_TAIL_COUNT,
+			withHeader: false,
+			withMore: false
+		})
+		if (sent === 0) await ctx.reply("Больше видео за неделю нет.")
 	}
 }
