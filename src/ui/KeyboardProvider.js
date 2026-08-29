@@ -183,4 +183,15 @@ export class KeyboardProvider {
 			}
 		}
 	}
+
+	static videoMoreKeyboard(remaining) {
+		if (!remaining || remaining <= 0) return undefined
+		return {
+			reply_markup: {
+				inline_keyboard: [[
+					{ text: `📺 Ещё ${remaining} видео`, callback_data: "video_more" }
+				]]
+			}
+		}
+	}
 }
