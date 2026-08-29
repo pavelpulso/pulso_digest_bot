@@ -55,7 +55,7 @@ test("Groq is budgeted for its 8000 TPM ceiling, Gemini for its far larger one",
 	)
 })
 
-test("Gemini asks for no reasoning tokens, which would eat the answer", async () => {
+test("Gemini asks for the least reasoning the model accepts, so thinking cannot eat the answer", async () => {
 	let body = null
 
 	await withServer(
@@ -71,7 +71,7 @@ test("Gemini asks for no reasoning tokens, which would eat the answer", async ()
 		async (url) => {
 			const ai = new GeminiAI({ baseUrl: url, apiKey: "k", model: "gemini-3.6-flash" })
 			await ai.rankPosts([{ id: "1", channel: "c", text: "привет" }], "профиль")
-			assert.equal(body.reasoning_effort, "none")
+			assert.equal(body.reasoning_effort, "low")
 		}
 	)
 })

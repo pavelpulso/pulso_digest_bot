@@ -10,7 +10,7 @@ export class GeminiAI extends BaseAI {
     this.proxyUrl = (config.proxyUrl ?? process.env.GEMINI_PROXY_URL ?? "").replace(/\/$/, "")
     this.baseUrl = config.baseUrl ?? process.env.GEMINI_BASE_URL ?? ""
     this.apiKey = config.apiKey ?? process.env.GEMINI_API_KEY ?? ""
-    this.model = config.model ?? process.env.GEMINI_MODEL ?? "gemini-2.5-flash"
+    this.model = config.model ?? process.env.GEMINI_MODEL ?? "gemini-3.6-flash"
     this.timeoutMs = config.timeoutMs
   }
 
@@ -33,7 +33,7 @@ export class GeminiAI extends BaseAI {
       messages: [{ role: "user", content: prompt }],
       temperature: options.temperature ?? 0,
       stream: false,
-      reasoning_effort: "none"
+      reasoning_effort: "low"
     }
     if (options.maxTokens) body.max_tokens = options.maxTokens
 
