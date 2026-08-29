@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from "uuid"
 import { isShort } from "./duration.js"
 import { QuotaExceededError } from "./client.js"
+import { fetchFeeds as defaultFetchFeeds, FEED_ENTRY_CAP } from "./rss.js"
 import {
   getYouTubeChannels,
   upsertYouTubeChannel,
@@ -20,7 +21,7 @@ const RECHECK_DAYS = 7
  * прогон: новые каналы добавляются, отписки помечаются, но не удаляются —
  * их прошлые видео нужны для медианы канала и для post_feedback.
  */
-export async function collectYouTubeVideos({ client, now = new Date(), addedBy = 0 } = {}) {
+export async function collectYouTubeVideos({ client, now = new Date(), addedBy = 0, fetchFeeds = defaultFetchFeeds } = {}) {
   const errors = []
   const perChannel = []
 
@@ -45,24 +46,29 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
   }
 
   const sinceIso = new Date(now.getTime() - WINDOW_DAYS * 86400_000).toISOString()
-  const pending = []
+  const channelIds = channels.filter((ch) => ch.external_id).map((ch) => ch.external_id)
+  const { byChannel, errors: feedErrors } = await fetchFeeds(channelIds)
+  const feedErrorByChannelId = new Map(feedErrors.map((fe) => [fe.channelId, fe.message]))
 
+  const pending = []
   for (const ch of channels) {
     if (!ch.external_id) continue
-    try {
-      const videos = await client.listPlaylistVideos(ch.external_id, sinceIso)
-      for (const v of videos) pending.push({ ...v, channel: ch.username })
-      perChannel.push({ channel: ch.username, count: videos.length })
-      const newest = videos.reduce((max, v) => (!max || v.publishedAt > max ? v.publishedAt : max), null)
-      updateChannelActivity(ch.username, { lastVideoAt: newest })
-    } catch (e) {
-      errors.push(`${ch.username}: ${e.message}`)
-      perChannel.push({ channel: ch.username, count: 0, error: e.message })
+    const feedError = feedErrorByChannelId.get(ch.external_id)
+    if (feedError) {
+      errors.push(`${ch.username}: ${feedError}`)
+      perChannel.push({ channel: ch.username, count: 0, error: feedError })
       updateChannelActivity(ch.username, {})
-      // Квота ушла на весь день — дальше по каналам гонять нет смысла, только время сожжём.
-      // Но то, что уже собрано в pending, стоило реальных запросов — не выбрасываем.
-      if (e instanceof QuotaExceededError) break
+      continue
     }
+    const feed = byChannel.get(ch.external_id) || []
+    const videos = feed.filter((v) => v.publishedAt >= sinceIso)
+    if (feed.length === FEED_ENTRY_CAP && videos.length === FEED_ENTRY_CAP) {
+      errors.push(`${ch.username}: feed returned ${FEED_ENTRY_CAP} entries, all inside the window — may be truncated, older in-window videos could be missing`)
+    }
+    for (const v of videos) pending.push({ ...v, channel: ch.username })
+    perChannel.push({ channel: ch.username, count: videos.length })
+    const newest = videos.reduce((max, v) => (!max || v.publishedAt > max ? v.publishedAt : max), null)
+    updateChannelActivity(ch.username, { lastVideoAt: newest })
   }
 
   if (pending.length === 0) return { collected: 0, errors, perChannel }
@@ -72,7 +78,7 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
     details = await client.listVideoDetails(pending.map((p) => p.videoId))
   } catch (e) {
     errors.push(`videos: ${e.message}`)
-    return { collected: 0, errors, perChannel }
+    details = e.partial || []
   }
 
   const channelByVideo = new Map(pending.map((p) => [p.videoId, p.channel]))
@@ -102,22 +108,27 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
 
 /**
  * Ручной прогон для классификации накопленных подписок: по одному запросу на канал
- * узнаём дату последнего видео, без выкачивания истории. Безопасно перезапускать.
+ * (RSS, бесплатно) узнаём дату последнего видео, без выкачивания истории. Безопасно перезапускать.
  */
-export async function backfillChannelActivity({ client } = {}) {
+export async function backfillChannelActivity({ client, fetchFeeds = defaultFetchFeeds } = {}) {
   const results = []
   if (!client || !client.isReady()) return results
 
-  for (const ch of getYouTubeChannels()) {
-    if (!ch.external_id) continue
-    try {
-      const latest = await client.listLatestPlaylistVideo(ch.external_id)
-      updateChannelActivity(ch.username, { lastVideoAt: latest?.publishedAt })
-      results.push({ channel: ch.username, lastVideoAt: latest?.publishedAt || null })
-    } catch (e) {
+  const channels = getYouTubeChannels().filter((ch) => ch.external_id)
+  const channelIds = channels.map((ch) => ch.external_id)
+  const { byChannel, errors: feedErrors } = await fetchFeeds(channelIds)
+  const feedErrorByChannelId = new Map(feedErrors.map((fe) => [fe.channelId, fe.message]))
+
+  for (const ch of channels) {
+    const feedError = feedErrorByChannelId.get(ch.external_id)
+    if (feedError) {
       updateChannelActivity(ch.username, {})
-      results.push({ channel: ch.username, error: e.message })
+      results.push({ channel: ch.username, error: feedError })
+      continue
     }
+    const latest = (byChannel.get(ch.external_id) || [])[0] || null
+    updateChannelActivity(ch.username, { lastVideoAt: latest?.publishedAt })
+    results.push({ channel: ch.username, lastVideoAt: latest?.publishedAt || null })
   }
   return results
 }
@@ -129,7 +140,6 @@ async function syncSubscriptions(client, addedBy, errors) {
   const known = new Map(getYouTubeChannels().map((c) => [c.username, c]))
   const seenBy = new Map() // username -> channelId первой подписки в этом прогоне
 
-  const missingPlaylists = []
   for (const s of subs) {
     const username = `yt:${s.title}`
     if (seenBy.has(username)) {
@@ -137,16 +147,8 @@ async function syncSubscriptions(client, addedBy, errors) {
       continue
     }
     seenBy.set(username, s.channelId)
-    if (!known.has(username) || !known.get(username).external_id) {
-      missingPlaylists.push({ username, channelId: s.channelId })
-    }
-  }
-
-  if (missingPlaylists.length > 0) {
-    const uploads = await client.listUploadPlaylists(missingPlaylists.map((m) => m.channelId))
-    for (const m of missingPlaylists) {
-      const playlist = uploads.get(m.channelId)
-      if (playlist) upsertYouTubeChannel(m.username, playlist, addedBy)
+    if (!known.has(username) || known.get(username).external_id !== s.channelId) {
+      upsertYouTubeChannel(username, s.channelId, addedBy)
     }
   }
 
