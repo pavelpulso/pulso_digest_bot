@@ -1,6 +1,7 @@
 import Database from "better-sqlite3"
 import { mkdirSync, existsSync } from "fs"
 import { dirname } from "path"
+import { median } from "./youtube/scoring.js"
 
 const dbPath = process.env.DB_PATH || "./data/db.sqlite"
 
@@ -66,63 +67,72 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_rankings_user_date ON rankings(user_id, date);
 `)
 
+/** Два процесса могут стартовать на одном деплое: проигравший гонки видит колонку уже добавленной. */
+function addColumn(sql) {
+  try {
+    db.prepare(sql).run()
+  } catch (e) {
+    if (!/duplicate column/i.test(e.message)) throw e
+  }
+}
+
 // Migration: digest_max_items (default 10)
 const userCols = db.prepare("PRAGMA table_info(users)").all().map((c) => c.name)
 if (!userCols.includes("digest_max_items")) {
-  db.prepare("ALTER TABLE users ADD COLUMN digest_max_items INTEGER DEFAULT 10").run()
+  addColumn("ALTER TABLE users ADD COLUMN digest_max_items INTEGER DEFAULT 10")
 }
 if (!userCols.includes("minus_keywords")) {
-  db.prepare("ALTER TABLE users ADD COLUMN minus_keywords TEXT").run()
+  addColumn("ALTER TABLE users ADD COLUMN minus_keywords TEXT")
 }
 if (!userCols.includes("digest_format")) {
-  db.prepare("ALTER TABLE users ADD COLUMN digest_format TEXT DEFAULT 'full'").run()
+  addColumn("ALTER TABLE users ADD COLUMN digest_format TEXT DEFAULT 'full'")
 }
 
 // Migration: system_prompt_url, system_prompt_cached, system_prompt_cached_at
 if (!userCols.includes("system_prompt_url")) {
-  db.prepare("ALTER TABLE users ADD COLUMN system_prompt_url TEXT").run()
+  addColumn("ALTER TABLE users ADD COLUMN system_prompt_url TEXT")
 }
 if (!userCols.includes("system_prompt_cached")) {
-  db.prepare("ALTER TABLE users ADD COLUMN system_prompt_cached TEXT").run()
+  addColumn("ALTER TABLE users ADD COLUMN system_prompt_cached TEXT")
 }
 if (!userCols.includes("system_prompt_cached_at")) {
-  db.prepare("ALTER TABLE users ADD COLUMN system_prompt_cached_at TEXT").run()
+  addColumn("ALTER TABLE users ADD COLUMN system_prompt_cached_at TEXT")
 }
 
 // Migration: digest_pause_until — pause morning digest until date (ISO string)
 if (!userCols.includes("digest_pause_until")) {
-  db.prepare("ALTER TABLE users ADD COLUMN digest_pause_until TEXT").run()
+  addColumn("ALTER TABLE users ADD COLUMN digest_pause_until TEXT")
 }
 
 // Migration: digest_pause_weekends — pause morning digest on Sat/Sun (0/1)
 if (!userCols.includes("digest_pause_weekends")) {
-  db.prepare("ALTER TABLE users ADD COLUMN digest_pause_weekends INTEGER DEFAULT 0").run()
+  addColumn("ALTER TABLE users ADD COLUMN digest_pause_weekends INTEGER DEFAULT 0")
 }
 
 // Migration: onboarding_completed — whether user completed onboarding tour
 if (!userCols.includes("onboarding_completed")) {
-  db.prepare("ALTER TABLE users ADD COLUMN onboarding_completed INTEGER DEFAULT 0").run()
+  addColumn("ALTER TABLE users ADD COLUMN onboarding_completed INTEGER DEFAULT 0")
 }
 
 // Migration: posts.source / posts.duration_sec — split telegram posts from videos
 const postCols = db.prepare("PRAGMA table_info(posts)").all().map((c) => c.name)
 if (!postCols.includes("source")) {
-  db.prepare("ALTER TABLE posts ADD COLUMN source TEXT NOT NULL DEFAULT 'tg'").run()
+  addColumn("ALTER TABLE posts ADD COLUMN source TEXT NOT NULL DEFAULT 'tg'")
 }
 if (!postCols.includes("duration_sec")) {
-  db.prepare("ALTER TABLE posts ADD COLUMN duration_sec INTEGER").run()
+  addColumn("ALTER TABLE posts ADD COLUMN duration_sec INTEGER")
 }
 
 // Migration: channels.source / channels.external_id / channels.unsubscribed_at
 const channelCols = db.prepare("PRAGMA table_info(channels)").all().map((c) => c.name)
 if (!channelCols.includes("source")) {
-  db.prepare("ALTER TABLE channels ADD COLUMN source TEXT NOT NULL DEFAULT 'tg'").run()
+  addColumn("ALTER TABLE channels ADD COLUMN source TEXT NOT NULL DEFAULT 'tg'")
 }
 if (!channelCols.includes("external_id")) {
-  db.prepare("ALTER TABLE channels ADD COLUMN external_id TEXT").run()
+  addColumn("ALTER TABLE channels ADD COLUMN external_id TEXT")
 }
 if (!channelCols.includes("unsubscribed_at")) {
-  db.prepare("ALTER TABLE channels ADD COLUMN unsubscribed_at TEXT").run()
+  addColumn("ALTER TABLE channels ADD COLUMN unsubscribed_at TEXT")
 }
 
 db.exec(`
@@ -210,7 +220,7 @@ export function setBotOpen(open) {
 
 // Channels
 export function getChannels() {
-  return db.prepare("SELECT id, username, added_by, added_at FROM channels ORDER BY username").all()
+  return db.prepare("SELECT id, username, added_by, added_at FROM channels WHERE source = 'tg' ORDER BY username").all()
 }
 
 export function getChannelUsernames() {
@@ -367,12 +377,7 @@ export function getChannelViewNorms(minAgeDays, maxAgeDays) {
 
   const norms = new Map()
   for (const [channel, views] of byChannel) {
-    const sorted = [...views].sort((a, b) => a - b)
-    const mid = Math.floor(sorted.length / 2)
-    const medianViews = sorted.length % 2 === 0
-      ? (sorted[mid - 1] + sorted[mid]) / 2
-      : sorted[mid]
-    norms.set(channel, { medianViews, maturedCount: sorted.length })
+    norms.set(channel, { medianViews: median(views), maturedCount: views.length })
   }
   return norms
 }

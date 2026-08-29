@@ -6,7 +6,9 @@ const BATCH_SIZE = 50
 const DEFAULT_TIMEOUT_MS = 30_000
 const MAX_PAGES = 50
 
-export class QuotaExceededError extends Error {}
+export class QuotaExceededError extends Error {
+  name = "QuotaExceededError"
+}
 
 export class YouTubeClient {
   constructor({ clientId, clientSecret, refreshToken, baseUrl, oauthUrl, timeoutMs } = {}) {
@@ -89,9 +91,10 @@ export class YouTubeClient {
     let pages = 0
     do {
       const json = await this.#get(path, pageToken ? { ...params, pageToken } : params)
-      onPage(json.items || [])
+      const more = onPage(json.items || [])
       pageToken = json.nextPageToken || ""
       pages++
+      if (more === false) return
       if (pageToken) {
         if (seenTokens.has(pageToken)) {
           throw new Error(`YouTube ${path}: nextPageToken repeated, aborting pagination`)
@@ -136,6 +139,10 @@ export class YouTubeClient {
         const publishedAt = it.contentDetails?.videoPublishedAt
         if (videoId && publishedAt && publishedAt >= sinceIso) out.push({ videoId, publishedAt })
       }
+      // Плейлист загрузок отсортирован от новых к старым: если последний элемент
+      // страницы уже вне окна, дальше только старее — качать всю историю незачем.
+      const last = items[items.length - 1]?.contentDetails?.videoPublishedAt
+      return !(last && last < sinceIso)
     })
     return out
   }

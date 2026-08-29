@@ -26,6 +26,17 @@ function seedChannelsFromEnv() {
   }
 }
 
+/** Отозванный refresh-токен иначе исчезает в логах, и видео просто перестают приходить. */
+async function alertAdmin(text) {
+  const adminId = parseInt(process.env.ADMIN_ID, 10) || 0
+  if (!adminId) return
+  try {
+    await bot.telegram.sendMessage(adminId, `\u26a0\ufe0f ${text}`.slice(0, 4000))
+  } catch (e) {
+    console.error("[cron-job] Admin alert failed:", e.message)
+  }
+}
+
 async function runCollection() {
   const startTime = Date.now()
   console.log("[cron-job] Starting channel post collection...")
@@ -48,10 +59,14 @@ async function runCollection() {
         client: new YouTubeClient(),
         addedBy: parseInt(process.env.ADMIN_ID, 10) || 0
       })
-      if (yt.errors.length) console.error("[cron-job] YouTube errors:", yt.errors)
+      if (yt.errors.length) {
+        console.error("[cron-job] YouTube errors:", yt.errors)
+        await alertAdmin(`YouTube: ${yt.errors.slice(0, 5).join("\n")}`)
+      }
       console.log(`[cron-job] Collected ${yt.collected} videos.`)
     } catch (e) {
       console.error("[cron-job] YouTube collection failed:", e.message)
+      await alertAdmin(`YouTube collection failed: ${e.message}`)
     }
 
     console.log("[cron-job] Completed successfully.")

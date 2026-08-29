@@ -162,3 +162,40 @@ test("a revoked refresh token fails loudly", async () => {
 		}
 	)
 })
+
+test("the uploads playlist stops at the first page that falls outside the window", async () => {
+	const pagesServed = []
+
+	await withServer(
+		(req, res) => {
+			const url = new URL(req.url, "http://x")
+			if (url.pathname.endsWith("/token")) {
+				res.writeHead(200, { "Content-Type": "application/json" })
+				return res.end(JSON.stringify({ access_token: "at", expires_in: 3600 }))
+			}
+			const pageToken = url.searchParams.get("pageToken") || "page1"
+			pagesServed.push(pageToken)
+			const item = (id, publishedAt) => ({ contentDetails: { videoId: id, videoPublishedAt: publishedAt } })
+			res.writeHead(200, { "Content-Type": "application/json" })
+			if (pageToken === "page1") {
+				return res.end(JSON.stringify({
+					nextPageToken: "page2",
+					items: [item("in1", "2026-08-28T00:00:00Z"), item("in2", "2026-08-26T00:00:00Z")]
+				}))
+			}
+			if (pageToken === "page2") {
+				return res.end(JSON.stringify({
+					nextPageToken: "page3",
+					items: [item("in3", "2026-08-24T00:00:00Z"), item("old1", "2026-07-01T00:00:00Z")]
+				}))
+			}
+			res.end(JSON.stringify({ items: [item("old2", "2026-06-01T00:00:00Z")] }))
+		},
+		async (url) => {
+			const client = makeClient(url)
+			const videos = await client.listPlaylistVideos("UU1", "2026-08-22T00:00:00.000Z")
+			assert.deepEqual(pagesServed, ["page1", "page2"], "the third page is never paid for")
+			assert.deepEqual(videos.map((v) => v.videoId), ["in1", "in2", "in3"])
+		}
+	)
+})
