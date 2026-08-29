@@ -25,7 +25,7 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
   }
 
   try {
-    await syncSubscriptions(client, addedBy)
+    await syncSubscriptions(client, addedBy, errors)
   } catch (e) {
     errors.push(`subscriptions: ${e.message}`)
     if (e instanceof QuotaExceededError) return { collected: 0, errors, perChannel }
@@ -38,7 +38,6 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
 
   const sinceIso = new Date(now.getTime() - WINDOW_DAYS * 86400_000).toISOString()
   const pending = []
-  let quotaExceeded = false
 
   for (const ch of channels) {
     if (!ch.external_id) continue
@@ -50,14 +49,12 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
       errors.push(`${ch.username}: ${e.message}`)
       perChannel.push({ channel: ch.username, count: 0, error: e.message })
       // Квота ушла на весь день — дальше по каналам гонять нет смысла, только время сожжём.
-      if (e instanceof QuotaExceededError) {
-        quotaExceeded = true
-        break
-      }
+      // Но то, что уже собрано в pending, стоило реальных запросов — не выбрасываем.
+      if (e instanceof QuotaExceededError) break
     }
   }
 
-  if (quotaExceeded || pending.length === 0) return { collected: 0, errors, perChannel }
+  if (pending.length === 0) return { collected: 0, errors, perChannel }
 
   let details = []
   try {
@@ -92,17 +89,21 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
   return { collected, errors, perChannel }
 }
 
-async function syncSubscriptions(client, addedBy) {
+async function syncSubscriptions(client, addedBy, errors) {
   const subs = await client.listSubscriptions()
   if (subs.length === 0) return
 
   const known = new Map(getYouTubeChannels().map((c) => [c.username, c]))
-  const seen = new Set()
+  const seenBy = new Map() // username -> channelId первой подписки в этом прогоне
 
   const missingPlaylists = []
   for (const s of subs) {
     const username = `yt:${s.title}`
-    seen.add(username)
+    if (seenBy.has(username)) {
+      errors.push(`subscriptions: "${s.title}" collides between channels ${seenBy.get(username)} and ${s.channelId} — only the first is collected`)
+      continue
+    }
+    seenBy.set(username, s.channelId)
     if (!known.has(username) || !known.get(username).external_id) {
       missingPlaylists.push({ username, channelId: s.channelId })
     }
@@ -117,6 +118,6 @@ async function syncSubscriptions(client, addedBy) {
   }
 
   for (const username of known.keys()) {
-    if (!seen.has(username)) markChannelUnsubscribed(username)
+    if (!seenBy.has(username)) markChannelUnsubscribed(username)
   }
 }

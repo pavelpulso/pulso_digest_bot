@@ -4,6 +4,7 @@ import assert from "node:assert/strict"
 process.env.DB_PATH = ":memory:"
 const db = await import("../src/db.js")
 const { collectYouTubeVideos } = await import("../src/youtube/collector.js")
+const { QuotaExceededError } = await import("../src/youtube/client.js")
 
 function fakeClient(overrides = {}) {
 	return {
@@ -78,6 +79,41 @@ test("one failing channel does not abort the rest", async () => {
 	const result = await collectYouTubeVideos({ client, now: new Date("2026-08-29T12:00:00Z") })
 	assert.equal(result.errors.length, 1)
 	assert.ok(result.collected >= 1, "the healthy channel still got collected")
+})
+
+test("a quota failure mid-loop keeps videos already paid for", async () => {
+	const client = fakeClient({
+		listSubscriptions: async () => [
+			{ channelId: "UC1", title: "@chan1" },
+			{ channelId: "UC2", title: "@chan2" }
+		],
+		listPlaylistVideos: async (playlistId) => {
+			if (playlistId === "UU2") throw new QuotaExceededError("YouTube daily quota exhausted")
+			return [{ videoId: "ok1", publishedAt: "2026-08-29T08:00:00Z" }]
+		}
+	})
+
+	const result = await collectYouTubeVideos({ client, now: new Date("2026-08-29T12:00:00Z") })
+	assert.equal(result.collected, 1, "the channel fetched before the quota error is still stored")
+	assert.ok(result.errors.some((e) => /quota/i.test(e)), "the quota failure is reported")
+
+	const stored = db.getVideosInWindow("2026-08-22T12:00:00.000Z")
+	assert.ok(stored.some((v) => v.post_id === "ok1"))
+})
+
+test("colliding subscription titles are reported, not silently dropped", async () => {
+	const client = fakeClient({
+		listSubscriptions: async () => [
+			{ channelId: "UC1", title: "@chan1" },
+			{ channelId: "UC2", title: "@chan1" }
+		]
+	})
+
+	const result = await collectYouTubeVideos({ client, now: new Date("2026-08-29T12:00:00Z") })
+	assert.ok(
+		result.errors.some((e) => e.includes("@chan1") && e.includes("UC1") && e.includes("UC2")),
+		"the collision names both channel ids"
+	)
 })
 
 test("an unconfigured client collects nothing and does not throw", async () => {
