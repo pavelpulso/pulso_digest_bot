@@ -8,17 +8,24 @@ export class GeminiAI extends BaseAI {
   constructor(config = {}) {
     super("Gemini")
     this.proxyUrl = (config.proxyUrl ?? process.env.GEMINI_PROXY_URL ?? "").replace(/\/$/, "")
+    this.baseUrl = config.baseUrl ?? process.env.GEMINI_BASE_URL ?? ""
     this.apiKey = config.apiKey ?? process.env.GEMINI_API_KEY ?? ""
-    this.model = config.model ?? process.env.GEMINI_MODEL ?? "gemini-2.0-flash"
+    this.model = config.model ?? process.env.GEMINI_MODEL ?? "gemini-2.5-flash"
+    this.timeoutMs = config.timeoutMs
+  }
+
+  #endpoint() {
+    return this.baseUrl || (this.proxyUrl && `${this.proxyUrl}/openai/v1/chat/completions`)
   }
 
   async isReady() {
-    return !!(this.proxyUrl && this.apiKey)
+    return !!(this.#endpoint() && this.apiKey)
   }
 
   async _callAPI(prompt, options = {}) {
-    if (!this.proxyUrl || !this.apiKey) {
-      throw new Error("GEMINI_PROXY_URL and GEMINI_API_KEY must be set")
+    const endpoint = this.#endpoint()
+    if (!endpoint || !this.apiKey) {
+      throw new Error("GEMINI_BASE_URL (or GEMINI_PROXY_URL) and GEMINI_API_KEY must be set")
     }
 
     const body = {
@@ -29,9 +36,10 @@ export class GeminiAI extends BaseAI {
     }
     if (options.maxTokens) body.max_tokens = options.maxTokens
 
-    const data = await postJson(`${this.proxyUrl}/openai/v1/chat/completions`, {
+    const data = await postJson(endpoint, {
       apiKey: this.apiKey,
-      body
+      body,
+      timeoutMs: this.timeoutMs
     })
 
     const text = data.choices?.[0]?.message?.content

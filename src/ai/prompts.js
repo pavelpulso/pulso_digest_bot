@@ -1,3 +1,5 @@
+import { LIMITS } from "./constants.js"
+
 /**
  * Prompts for AI providers.
  */
@@ -57,7 +59,7 @@ Return JSON array with EXACT structure:
   {"post_id": "POST_ID_FROM_POSTS", "score": 0.85, "reason": "why this score"},
   ...
 ]
-Use EXACT "post_id" field (not "id"). Value must match "id" from posts above. Write "reason" in the same language as posts (${lang}).`
+Use EXACT "post_id" field (not "id"). Value must match "id" from posts above. Write "reason" in the same language as posts (${lang}), at most ${LIMITS.RANK_REASON_WORDS} words. Keep the array compact so it is never truncated.`
 }
 
 /**
