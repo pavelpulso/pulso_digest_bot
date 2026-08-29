@@ -118,53 +118,21 @@ export class YouTubeClient {
     return out
   }
 
-  async listUploadPlaylists(channelIds) {
-    const map = new Map()
-    for (let i = 0; i < channelIds.length; i += BATCH_SIZE) {
-      const batch = channelIds.slice(i, i + BATCH_SIZE)
-      const json = await this.#get("channels", { part: "contentDetails", id: batch.join(","), maxResults: String(BATCH_SIZE) })
-      for (const it of json.items || []) {
-        const uploads = it.contentDetails?.relatedPlaylists?.uploads
-        if (uploads) map.set(it.id, uploads)
-      }
-    }
-    return map
-  }
-
-  async listPlaylistVideos(playlistId, sinceIso) {
-    const out = []
-    await this.#paged("playlistItems", { part: "contentDetails", playlistId, maxResults: String(BATCH_SIZE) }, (items) => {
-      for (const it of items) {
-        const videoId = it.contentDetails?.videoId
-        const publishedAt = it.contentDetails?.videoPublishedAt
-        if (videoId && publishedAt && publishedAt >= sinceIso) out.push({ videoId, publishedAt })
-      }
-      // Плейлист загрузок отсортирован от новых к старым: если последний элемент
-      // страницы уже вне окна, дальше только старее — качать всю историю незачем.
-      const last = items[items.length - 1]?.contentDetails?.videoPublishedAt
-      return !(last && last < sinceIso)
-    })
-    return out
-  }
-
-  /** Newest video in the uploads playlist, or null if it's empty. One request, no paging. */
-  async listLatestPlaylistVideo(playlistId) {
-    const json = await this.#get("playlistItems", { part: "contentDetails", playlistId, maxResults: "1" })
-    const it = (json.items || [])[0]
-    const videoId = it?.contentDetails?.videoId
-    const publishedAt = it?.contentDetails?.videoPublishedAt
-    return videoId && publishedAt ? { videoId, publishedAt } : null
-  }
-
   async listVideoDetails(videoIds) {
     const out = []
     for (let i = 0; i < videoIds.length; i += BATCH_SIZE) {
       const batch = videoIds.slice(i, i + BATCH_SIZE)
-      const json = await this.#get("videos", {
-        part: "snippet,statistics,contentDetails",
-        id: batch.join(","),
-        maxResults: String(BATCH_SIZE)
-      })
+      let json
+      try {
+        json = await this.#get("videos", {
+          part: "snippet,statistics,contentDetails",
+          id: batch.join(","),
+          maxResults: String(BATCH_SIZE)
+        })
+      } catch (e) {
+        e.partial = out
+        throw e
+      }
       for (const it of json.items || []) {
         out.push({
           videoId: it.id,

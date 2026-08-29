@@ -163,8 +163,8 @@ test("a revoked refresh token fails loudly", async () => {
 	)
 })
 
-test("the uploads playlist stops at the first page that falls outside the window", async () => {
-	const pagesServed = []
+test("a quota error mid-batch reports the videos already fetched", async () => {
+	let batches = 0
 
 	await withServer(
 		(req, res) => {
@@ -173,75 +173,33 @@ test("the uploads playlist stops at the first page that falls outside the window
 				res.writeHead(200, { "Content-Type": "application/json" })
 				return res.end(JSON.stringify({ access_token: "at", expires_in: 3600 }))
 			}
-			const pageToken = url.searchParams.get("pageToken") || "page1"
-			pagesServed.push(pageToken)
-			const item = (id, publishedAt) => ({ contentDetails: { videoId: id, videoPublishedAt: publishedAt } })
-			res.writeHead(200, { "Content-Type": "application/json" })
-			if (pageToken === "page1") {
-				return res.end(JSON.stringify({
-					nextPageToken: "page2",
-					items: [item("in1", "2026-08-28T00:00:00Z"), item("in2", "2026-08-26T00:00:00Z")]
-				}))
+			batches++
+			if (batches === 2) {
+				res.writeHead(403, { "Content-Type": "application/json" })
+				return res.end(JSON.stringify({ error: { errors: [{ reason: "quotaExceeded" }] } }))
 			}
-			if (pageToken === "page2") {
-				return res.end(JSON.stringify({
-					nextPageToken: "page3",
-					items: [item("in3", "2026-08-24T00:00:00Z"), item("old1", "2026-07-01T00:00:00Z")]
-				}))
-			}
-			res.end(JSON.stringify({ items: [item("old2", "2026-06-01T00:00:00Z")] }))
-		},
-		async (url) => {
-			const client = makeClient(url)
-			const videos = await client.listPlaylistVideos("UU1", "2026-08-22T00:00:00.000Z")
-			assert.deepEqual(pagesServed, ["page1", "page2"], "the third page is never paid for")
-			assert.deepEqual(videos.map((v) => v.videoId), ["in1", "in2", "in3"])
-		}
-	)
-})
-
-test("listLatestPlaylistVideo issues exactly one request and does not page", async () => {
-	let requestCount = 0
-
-	await withServer(
-		(req, res) => {
-			const url = new URL(req.url, "http://x")
-			if (url.pathname.endsWith("/token")) {
-				res.writeHead(200, { "Content-Type": "application/json" })
-				return res.end(JSON.stringify({ access_token: "at", expires_in: 3600 }))
-			}
-			requestCount++
-			assert.equal(url.searchParams.get("maxResults"), "1")
+			const ids = (url.searchParams.get("id") || "").split(",").filter(Boolean)
 			res.writeHead(200, { "Content-Type": "application/json" })
 			res.end(JSON.stringify({
-				nextPageToken: "page2",
-				items: [{ contentDetails: { videoId: "vidLatest", videoPublishedAt: "2026-08-29T00:00:00Z" } }]
+				items: ids.map((id) => ({
+					id,
+					snippet: { title: "t", description: "d", publishedAt: "2026-08-29T10:00:00Z", channelTitle: "c" },
+					statistics: { viewCount: "100" },
+					contentDetails: { duration: "PT10M" }
+				}))
 			}))
 		},
 		async (url) => {
 			const client = makeClient(url)
-			const result = await client.listLatestPlaylistVideo("UU1")
-			assert.equal(requestCount, 1, "no paging even though the server offers a nextPageToken")
-			assert.deepEqual(result, { videoId: "vidLatest", publishedAt: "2026-08-29T00:00:00Z" })
-		}
-	)
-})
-
-test("listLatestPlaylistVideo returns null for an empty playlist", async () => {
-	await withServer(
-		(req, res) => {
-			const url = new URL(req.url, "http://x")
-			if (url.pathname.endsWith("/token")) {
-				res.writeHead(200, { "Content-Type": "application/json" })
-				return res.end(JSON.stringify({ access_token: "at", expires_in: 3600 }))
+			const ids = Array.from({ length: 120 }, (_, i) => `video${i}`)
+			let caught
+			try {
+				await client.listVideoDetails(ids)
+			} catch (e) {
+				caught = e
 			}
-			res.writeHead(200, { "Content-Type": "application/json" })
-			res.end(JSON.stringify({ items: [] }))
-		},
-		async (url) => {
-			const client = makeClient(url)
-			const result = await client.listLatestPlaylistVideo("UUempty")
-			assert.equal(result, null)
+			assert.match(caught.message, /quota/i)
+			assert.equal(caught.partial.length, 50, "the first successful batch is preserved on the thrown error")
 		}
 	)
 })
