@@ -20,11 +20,11 @@ class RecordingAI extends BaseAI {
 	}
 }
 
-function makePosts(count, textLength) {
+function makePosts(count, textLength, char = "x") {
 	return Array.from({ length: count }, (_, i) => ({
 		id: `post-${i}`,
 		channel: "somechannel",
-		text: "x".repeat(textLength)
+		text: char.repeat(textLength)
 	}))
 }
 
@@ -48,14 +48,23 @@ test("a day too large for one request is ranked in several bounded requests", as
 	assert.equal(new Set(returnedIds).size, 200, "every post is scored exactly once")
 })
 
-test("a typical day of 60 posts fits into at most two requests", async () => {
+// Cyrillic costs roughly 2.5 characters per token, against ~4 for English.
+const CYRILLIC_CHARS_PER_TOKEN = 2.5
+const GROQ_TPM_LIMIT = 8000
+
+test("every request of a Russian-language day stays under the free-tier per-request ceiling", async () => {
 	const ai = new RecordingAI()
-	const posts = makePosts(60, 2000)
+	const posts = makePosts(60, 2000, "ы")
 
-	await ai.rankPosts(posts, "reader profile")
+	await ai.rankPosts(posts, "профиль читателя")
 
-	assert.ok(
-		ai.prompts.length <= 2,
-		`a normal day should cost at most 2 requests, took ${ai.prompts.length}`
-	)
+	assert.ok(ai.prompts.length > 1, "a full day cannot be one request")
+
+	for (const prompt of ai.prompts) {
+		const estimatedTokens = prompt.length / CYRILLIC_CHARS_PER_TOKEN
+		assert.ok(
+			estimatedTokens <= GROQ_TPM_LIMIT,
+			`a request of ~${Math.round(estimatedTokens)} tokens exceeds the ${GROQ_TPM_LIMIT} limit`
+		)
+	}
 })

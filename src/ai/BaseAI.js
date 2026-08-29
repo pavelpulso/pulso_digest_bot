@@ -175,7 +175,7 @@ export class BaseAI {
    * @private
    */
   #splitIntoBatches(list, buildPrompt) {
-    const budgetChars = LIMITS.RANK_BATCH_TOKENS * 4
+    const budgetChars = LIMITS.RANK_BATCH_TOKENS * LIMITS.CHARS_PER_TOKEN
     const overhead = buildPrompt([]).length
     const costOf = (item) => JSON.stringify(item).length + 2
 
