@@ -1,74 +1,41 @@
 import { BaseAI } from "./BaseAI.js"
-
-const GEMINI_PROXY_URL = (process.env.GEMINI_PROXY_URL || "").replace(/\/$/, "")
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ""
-const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.0-flash"
+import { postJson } from "./http.js"
 
 /**
  * Gemini AI provider via OpenAI-compatible proxy.
  */
 export class GeminiAI extends BaseAI {
-  constructor() {
+  constructor(config = {}) {
     super("Gemini")
+    this.proxyUrl = (config.proxyUrl ?? process.env.GEMINI_PROXY_URL ?? "").replace(/\/$/, "")
+    this.apiKey = config.apiKey ?? process.env.GEMINI_API_KEY ?? ""
+    this.model = config.model ?? process.env.GEMINI_MODEL ?? "gemini-2.0-flash"
   }
 
   async isReady() {
-    return !!(GEMINI_PROXY_URL && GEMINI_API_KEY)
+    return !!(this.proxyUrl && this.apiKey)
   }
 
   async _callAPI(prompt, options = {}) {
-    if (!GEMINI_PROXY_URL || !GEMINI_API_KEY) {
+    if (!this.proxyUrl || !this.apiKey) {
       throw new Error("GEMINI_PROXY_URL and GEMINI_API_KEY must be set")
     }
 
-    const url = `${GEMINI_PROXY_URL}/openai/v1/chat/completions`
     const body = {
-      model: GEMINI_MODEL,
+      model: this.model,
       messages: [{ role: "user", content: prompt }],
       temperature: options.temperature ?? 0,
       stream: false
     }
     if (options.maxTokens) body.max_tokens = options.maxTokens
-    // response_format may not be supported by some proxies for Gemini
-    // Skipping it — Gemini returns JSON with proper prompt anyway
 
-    return this.#chatWithRetry(url, GEMINI_API_KEY, body)
-  }
+    const data = await postJson(`${this.proxyUrl}/openai/v1/chat/completions`, {
+      apiKey: this.apiKey,
+      body
+    })
 
-  async #chatWithRetry(url, apiKey, body, maxRetries = 3) {
-    let lastError = null
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      try {
-        const res = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${apiKey}`
-          },
-          body: JSON.stringify(body)
-        })
-        if (res.status === 429) {
-          const waitMs = 1000 * attempt
-          console.log(`[Gemini] 429 Too Many Requests. Retry ${attempt}/${maxRetries} after ${waitMs}ms`)
-          await new Promise(r => setTimeout(r, waitMs))
-          continue
-        }
-        if (!res.ok) {
-          const errText = await res.text()
-          throw new Error(`Gemini API ${res.status}: ${errText}`)
-        }
-        const data = await res.json()
-        const text = data.choices?.[0]?.message?.content
-        if (text == null) throw new Error("Gemini API: empty response")
-        return text
-      } catch (e) {
-        if (e.message.includes("429") && attempt < maxRetries) {
-          lastError = e
-          continue
-        }
-        throw e
-      }
-    }
-    throw lastError || new Error("Gemini API: max retries exceeded")
+    const text = data.choices?.[0]?.message?.content
+    if (text == null) throw new Error("Gemini API: empty response")
+    return text
   }
 }

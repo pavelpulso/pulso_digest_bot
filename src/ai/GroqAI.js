@@ -1,29 +1,32 @@
 import { BaseAI } from "./BaseAI.js"
+import { postJson } from "./http.js"
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY || ""
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile"
+const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 
 /**
  * Groq AI provider — ultra-fast inference on LPU.
  * Free tier limits: ~500K tokens/day.
  */
 export class GroqAI extends BaseAI {
-  constructor() {
+  constructor(config = {}) {
     super("Groq")
+    this.apiKey = config.apiKey ?? process.env.GROQ_API_KEY ?? ""
+    this.model = config.model ?? process.env.GROQ_MODEL ?? "llama-3.3-70b-versatile"
+    this.baseUrl = config.baseUrl ?? GROQ_URL
+    this.timeoutMs = config.timeoutMs
   }
 
   async isReady() {
-    return !!(GROQ_API_KEY && GROQ_MODEL)
+    return !!(this.apiKey && this.model)
   }
 
   async _callAPI(prompt, options = {}) {
-    if (!GROQ_API_KEY) {
+    if (!this.apiKey) {
       throw new Error("GROQ_API_KEY must be set")
     }
 
-    const url = "https://api.groq.com/openai/v1/chat/completions"
     const body = {
-      model: GROQ_MODEL,
+      model: this.model,
       messages: [{ role: "user", content: prompt }],
       temperature: options.temperature ?? 0,
       stream: false
@@ -31,21 +34,12 @@ export class GroqAI extends BaseAI {
     if (options.maxTokens) body.max_tokens = options.maxTokens
     if (options.responseFormat) body.response_format = options.responseFormat
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${GROQ_API_KEY}`
-      },
-      body: JSON.stringify(body)
+    const data = await postJson(this.baseUrl, {
+      apiKey: this.apiKey,
+      body,
+      timeoutMs: this.timeoutMs
     })
 
-    if (!res.ok) {
-      const errText = await res.text()
-      throw new Error(`Groq API ${res.status}: ${errText}`)
-    }
-
-    const data = await res.json()
     const text = data.choices?.[0]?.message?.content
     if (text == null) throw new Error("Groq API: empty response")
     return text

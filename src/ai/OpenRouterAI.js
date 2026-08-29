@@ -1,31 +1,34 @@
 import { BaseAI } from "./BaseAI.js"
+import { postJson } from "./http.js"
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || ""
-const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "meta-llama/llama-3.3-70b-instruct:free"
-const OPENROUTER_SITE_URL = process.env.OPENROUTER_SITE_URL || ""
-const OPENROUTER_SITE_NAME = process.env.OPENROUTER_SITE_NAME || ""
+const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 /**
  * OpenRouter provider — 29+ free models.
  * Free tier limits: 200 requests/day, 20 RPM per model.
  */
 export class OpenRouterAI extends BaseAI {
-  constructor() {
+  constructor(config = {}) {
     super("OpenRouter")
+    this.apiKey = config.apiKey ?? process.env.OPENROUTER_API_KEY ?? ""
+    this.model = config.model ?? process.env.OPENROUTER_MODEL ?? "meta-llama/llama-3.3-70b-instruct:free"
+    this.baseUrl = config.baseUrl ?? OPENROUTER_URL
+    this.timeoutMs = config.timeoutMs
+    this.siteUrl = config.siteUrl ?? process.env.OPENROUTER_SITE_URL ?? ""
+    this.siteName = config.siteName ?? process.env.OPENROUTER_SITE_NAME ?? ""
   }
 
   async isReady() {
-    return !!(OPENROUTER_API_KEY && OPENROUTER_MODEL)
+    return !!(this.apiKey && this.model)
   }
 
   async _callAPI(prompt, options = {}) {
-    if (!OPENROUTER_API_KEY) {
+    if (!this.apiKey) {
       throw new Error("OPENROUTER_API_KEY must be set")
     }
 
-    const url = "https://openrouter.ai/api/v1/chat/completions"
     const body = {
-      model: OPENROUTER_MODEL,
+      model: this.model,
       messages: [{ role: "user", content: prompt }],
       temperature: options.temperature ?? 0,
       stream: false
@@ -33,25 +36,16 @@ export class OpenRouterAI extends BaseAI {
     if (options.maxTokens) body.max_tokens = options.maxTokens
     if (options.responseFormat) body.response_format = options.responseFormat
 
-    const headers = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${OPENROUTER_API_KEY}`,
-      "HTTP-Referer": OPENROUTER_SITE_URL,
-      "X-Title": OPENROUTER_SITE_NAME
-    }
-
-    const res = await fetch(url, {
-      method: "POST",
-      headers,
-      body: JSON.stringify(body)
+    const data = await postJson(this.baseUrl, {
+      apiKey: this.apiKey,
+      body,
+      timeoutMs: this.timeoutMs,
+      headers: {
+        "HTTP-Referer": this.siteUrl,
+        "X-Title": this.siteName
+      }
     })
 
-    if (!res.ok) {
-      const errText = await res.text()
-      throw new Error(`OpenRouter API ${res.status}: ${errText}`)
-    }
-
-    const data = await res.json()
     const text = data.choices?.[0]?.message?.content
     if (text == null) throw new Error("OpenRouter API: empty response")
     return text

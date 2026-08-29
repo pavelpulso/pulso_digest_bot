@@ -4,16 +4,29 @@ import { OpenRouterAI } from "./OpenRouterAI.js"
 import { QwenWorkerAI } from "./QwenWorkerAI.js"
 
 const AI_PROVIDER = (process.env.AI_PROVIDER || "auto").toLowerCase()
+const COOLDOWN_MS = parseInt(process.env.AI_COOLDOWN_MS, 10) || 15 * 60 * 1000
 
 /**
  * AI router with automatic fallback.
  * Provider order: Gemini → QwenWorker → Groq → OpenRouter
  */
-class AIRouter {
-  constructor() {
-    this.providers = this.#initProviders()
+export class AIRouter {
+  constructor(options = {}) {
+    this.providers = options.providers || this.#initProviders()
     this.currentProvider = null
     this.initialized = false
+    this.now = options.now || (() => Date.now())
+    this.cooldownMs = options.cooldownMs ?? COOLDOWN_MS
+    this.coolingUntil = new Map()
+  }
+
+  #isCooling(provider) {
+    const until = this.coolingUntil.get(provider)
+    return until != null && until > this.now()
+  }
+
+  #startCooldown(provider) {
+    this.coolingUntil.set(provider, this.now() + this.cooldownMs)
   }
 
   #initProviders() {
@@ -50,18 +63,19 @@ class AIRouter {
     if (!this.initialized) await this.init()
 
     const providersToTry = this.#getProvidersOrder(taskType, startWithQwen)
-    let lastError = null
+    const failures = []
     const tried = new Set()
 
     for (const provider of providersToTry) {
       if (tried.has(provider)) continue
       tried.add(provider)
 
-      const result = await this.#tryProvider(provider, methodName, args, taskType)
+      const result = await this.#tryProvider(provider, methodName, args, taskType, failures)
       if (result !== null) return result
     }
 
-    throw lastError || new Error("All AI providers failed")
+    const detail = failures.map((f) => `${f.provider}: ${f.message}`).join("; ")
+    throw new Error(`All AI providers failed for ${methodName} — ${detail}`)
   }
 
   #getProvidersOrder(taskType, startWithQwen = false) {
@@ -71,15 +85,25 @@ class AIRouter {
       const others = this.providers.filter(p => p.toString() !== "QwenWorker")
       return qwen ? [qwen, ...others] : this.providers
     }
-    if (!this.currentProvider) return this.providers
-    const others = this.providers.filter(p => p !== this.currentProvider)
-    return [this.currentProvider, ...others]
+    const ordered = this.currentProvider
+      ? [this.currentProvider, ...this.providers.filter(p => p !== this.currentProvider)]
+      : this.providers
+
+    const usable = ordered.filter(p => !this.#isCooling(p))
+    return usable.length > 0 ? usable : ordered
   }
 
-  async #tryProvider(provider, methodName, args, taskType) {
+  async #tryProvider(provider, methodName, args, taskType, failures = []) {
     try {
       if (!(await provider.isReady())) {
         console.warn(`[AI] Provider ${provider.toString()} not ready, skipping`)
+        failures.push({ provider: provider.toString(), message: "not ready" })
+        this.#startCooldown(provider)
+        return null
+      }
+
+      if (this.#isCooling(provider)) {
+        failures.push({ provider: provider.toString(), message: "cooling down after a recent failure" })
         return null
       }
 
@@ -90,6 +114,8 @@ class AIRouter {
 
       const result = await method.apply(provider, args)
 
+      this.coolingUntil.delete(provider)
+
       if (this.currentProvider !== provider) {
         console.log(`[AI] Switched to provider: ${provider.toString()}`)
         this.currentProvider = provider
@@ -98,6 +124,8 @@ class AIRouter {
       return result
     } catch (e) {
       console.warn(`[AI] Provider ${provider.toString()} failed:`, e.message)
+      failures.push({ provider: provider.toString(), message: e.message })
+      this.#startCooldown(provider)
       return null
     }
   }

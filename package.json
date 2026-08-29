@@ -15,7 +15,8 @@
     "dev": "nodemon src/index.js",
     "deploy": "./deploy-remote.sh",
     "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix"
+    "lint:fix": "eslint src/ --fix",
+    "test": "node --test 'test/*.test.js'"
   },
   "dependencies": {
     "better-sqlite3": "^11.6.0",
