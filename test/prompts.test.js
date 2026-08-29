@@ -48,6 +48,7 @@ test("the summary prompt bans news filler instead of demanding complete sentence
 	)
 
 	assert.ok(!/don't cut thoughts short/i.test(prompt), "the old instruction padded every block")
-	assert.ok(/never with a news filler verb/i.test(prompt), "the prompt must forbid opening with a filler verb")
+	assert.ok(/FIRST word is the subject/i.test(prompt), "the prompt must demand the subject first")
+	assert.ok(/Goldie автоматизирует/.test(prompt), "the rewrites must be shown in the language the digest is written in")
 	assert.match(prompt, /essence: the fact itself, 8-14 words/)
 })

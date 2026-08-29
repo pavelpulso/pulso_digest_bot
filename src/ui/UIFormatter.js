@@ -74,7 +74,7 @@ export class UIFormatter {
 			const { channel, postUrl, date } = postById[block.ids[0]] || { channel: "channel", postUrl: "#" }
 			const safeUrl = postUrl.replace(/&/g, "&amp;")
 			const time = this.formatPostTime(date)
-			linksLine = `<a href="${safeUrl}">↗ @${this.escapeHtml(channel)}</a>${time ? ` · ${time}` : ""}`
+			linksLine = `<a href="${safeUrl}">↗ @${this.escapeHtml(channel)}</a>${time ? ` · 🕘 ${time}` : ""}`
 		} else {
 			const parts = block.ids.map((id) => {
 				const { channel, postUrl } = postById[id] || { channel: "channel", postUrl: "#" }

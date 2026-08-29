@@ -138,13 +138,21 @@ Rules:
   • action: concrete action (up to 10 words) — what to do right now on this topic.`}
 
 Write in plain, dense prose. Every word must carry a fact:
-- Open with the subject, never with a news filler verb. Write "Tiny Engineer: robot on ESP32 repeats your AI assistant's actions", not "An open-source project called Tiny Engineer has been released, which repeats...".
+- The FIRST word is the subject — the product, company or person that acted. Never open with an adjective, a category word or a circumstance.
 - Cut evaluative adjectives and adverbs that state no fact: powerful, unique, revolutionary, truly, simply, quite, very.
 - Cut hedges and throat-clearing: it is worth noting, it turns out, as it happens, in general, actually.
-- Prefer verbs to verbal nouns: "they launched" beats "a launch was carried out".
-- Active voice, not passive. Concrete numbers and names, not "many" or "some".
+- Replace verbal nouns with verbs, and drop the prepositional chains they drag along.
+- Active voice, not passive. Concrete numbers and names, not "many" or "some". Dates as digits.
 - One fact per sentence. If a clause can be deleted without losing a fact, delete it.
+- Never repeat the same preposition twice in a row.
 - No special characters * _ \` [ ].
+
+Rewrite each of these mistakes the way the right column does:
+- "Бесплатный инструмент Goldie автоматизирует генерацию скриншотов" → "Goldie автоматизирует скриншоты приложений через агентов. Бесплатно."
+- "Открытый проект Tiny Engineer создает робота на ESP32 для физической визуализации работы агентов" → "Tiny Engineer: робот на ESP32 показывает, что делает агент. Open-source."
+- "В Барселоне шестого сентября пройдет показ фильма Лосёнок с дискуссией с режиссером" → "Кинопоказ «Лосёнок» в Барселоне 6 сентября, после — разбор с режиссёром."
+- "OpenAI тестирует дополнительный лимит Luna Reserve при израсходовании основного" → "OpenAI тестирует Luna Reserve: запасной лимит, когда основной кончился."
+- "Платформа Purple School запустила верифицируемые страницы сертификатов с детализацией навыков" → "Purple School выдаёт сертификаты с проверяемой страницей и списком навыков." 
 
 Return JSON.`
 }
