@@ -9,6 +9,8 @@ import { collectChannelPosts } from "./gramjs.js"
 import { getChannelUsernames, addChannel } from "./db.js"
 import bot from "./bot.js"
 import { sendMorningDigests } from "./bot.js"
+import { collectYouTubeVideos } from "./youtube/collector.js"
+import { YouTubeClient } from "./youtube/client.js"
 
 const ACTION = process.argv.find(a => a.startsWith("--action="))?.split("=")[1] || "collect"
 
@@ -39,7 +41,19 @@ async function runCollection() {
     if (perChannel && perChannel.length > 0) {
       console.log("[cron-job] Per channel:", perChannel.map(c => `${c.channel}:${c.count}`).join(", "))
     }
-    
+
+    // YouTube не имеет права отменить уже собранные посты, поэтому свой try/catch.
+    try {
+      const yt = await collectYouTubeVideos({
+        client: new YouTubeClient(),
+        addedBy: parseInt(process.env.ADMIN_ID, 10) || 0
+      })
+      if (yt.errors.length) console.error("[cron-job] YouTube errors:", yt.errors)
+      console.log(`[cron-job] Collected ${yt.collected} videos.`)
+    } catch (e) {
+      console.error("[cron-job] YouTube collection failed:", e.message)
+    }
+
     console.log("[cron-job] Completed successfully.")
     process.exit(0)
   } catch (err) {

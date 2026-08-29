@@ -85,3 +85,14 @@ test("an unconfigured client collects nothing and does not throw", async () => {
 	assert.equal(result.collected, 0)
 	assert.deepEqual(result.perChannel, [])
 })
+
+test("a thrown YouTube collector still returns a result envelope", async () => {
+	const client = fakeClient({
+		listSubscriptions: async () => { throw new Error("network is down") },
+		listPlaylistVideos: async () => { throw new Error("network is down") }
+	})
+
+	const result = await collectYouTubeVideos({ client, now: new Date("2026-08-29T12:00:00Z") })
+	assert.ok(result.errors.length > 0, "the failure is reported")
+	assert.equal(typeof result.collected, "number", "the caller always gets a usable envelope")
+})
