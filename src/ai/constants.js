@@ -24,13 +24,18 @@ export const LIMITS = {
   /** Max text length for audit */
   AUDIT_TEXT: 500,
   /** Completion tokens one digest block needs (non-compact: essence + potential + action).
-   *  Prompt caps: essence <=14 words, potential <=10, action <=10 → 34 words.
-   *  Using this file's own conservative word→char ratio (15 chars/word, the same
-   *  assumption behind the SUMMARY_WORDS truncation below) and Cyrillic CHARS_PER_TOKEN:
-   *    34 words * 15 chars/word = 510 chars of text
-   *    + ~90 chars of JSON structure (ids array, emoji, field names/quotes)
-   *    = 600 chars / 2.5 chars-per-token = 240 tokens */
-  COMPLETION_TOKENS_PER_BLOCK: 240,
+   *  Floor from the prompt caps: essence <=14 words, potential <=10, action <=10 → 34 words.
+   *  34 words * 15 chars/word (same conservative ratio as the SUMMARY_WORDS truncation
+   *  below) + ~90 chars of JSON structure = 600 chars / 2.5 chars-per-token = 240 tokens.
+   *  But the caps are a request, not a guarantee: OpenRouter was observed truncated at
+   *  ~350 tokens/block for a 3-block reply (and that was the CUT-OFF length, so the real
+   *  intent was longer), and a Gemini block came back with a 17-word essence against the
+   *  14-word cap. Reasoning models (Gemini's `reasoning_effort`, Groq's gpt-oss-120b,
+   *  OpenRouter's nemotron-3-super-120b) also spend part of this same ceiling on chain-of-
+   *  thought before the visible answer, which the 240 floor above doesn't budget for at all.
+   *  So set this from observed production behaviour with headroom, not the tight floor —
+   *  700 is the number already proven to stop Gemini's truncation. */
+  COMPLETION_TOKENS_PER_BLOCK: 700,
   /** Max blocks in digest */
   MAX_BLOCKS: 20,
   /** Min blocks in digest */
