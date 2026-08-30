@@ -6,7 +6,7 @@
 
 import "dotenv/config"
 import { collectChannelPosts } from "./gramjs.js"
-import { getChannelUsernames, addChannel } from "./db.js"
+import { getChannelUsernames, addChannel, setSetting } from "./db.js"
 import bot from "./bot.js"
 import { sendMorningDigests } from "./bot.js"
 import { collectYouTubeVideos } from "./youtube/collector.js"
@@ -59,6 +59,14 @@ async function runCollection() {
         client: new YouTubeClient(),
         addedBy: parseInt(process.env.ADMIN_ID, 10) || 0
       })
+      if (yt.warnings.length) {
+        console.log("[cron-job] YouTube warnings:", yt.warnings)
+      }
+      setSetting("yt_last_warnings", JSON.stringify({
+        warnings: yt.warnings,
+        collected: yt.collected,
+        ranAt: new Date().toISOString()
+      }))
       if (yt.errors.length) {
         console.error("[cron-job] YouTube errors:", yt.errors)
         await alertAdmin(`YouTube: ${yt.errors.slice(0, 5).join("\n")}`)

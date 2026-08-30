@@ -13,8 +13,8 @@ import {
 } from "../db.js"
 
 const WINDOW_DAYS = 7
-const ACTIVE_DAYS = 180
-const RECHECK_DAYS = 7
+export const ACTIVE_DAYS = 180
+export const RECHECK_DAYS = 7
 
 /**
  * Собирает видео с подписок за окно. Список подписок синхронизируется каждый
@@ -23,18 +23,19 @@ const RECHECK_DAYS = 7
  */
 export async function collectYouTubeVideos({ client, now = new Date(), addedBy = 0, fetchFeeds = defaultFetchFeeds } = {}) {
   const errors = []
+  const warnings = []
   const perChannel = []
 
   if (!client || !client.isReady()) {
     console.log("[collectYouTubeVideos] YouTube not configured, skipping.")
-    return { collected: 0, errors, perChannel }
+    return { collected: 0, errors, warnings, perChannel }
   }
 
   try {
-    await syncSubscriptions(client, addedBy, errors)
+    await syncSubscriptions(client, addedBy, errors, warnings)
   } catch (e) {
     errors.push(`subscriptions: ${e.message}`)
-    if (e instanceof QuotaExceededError) return { collected: 0, errors, perChannel }
+    if (e instanceof QuotaExceededError) return { collected: 0, errors, warnings, perChannel }
   }
 
   const channels = [
@@ -42,7 +43,7 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
     ...getDormantYouTubeChannelsDueForRecheck(ACTIVE_DAYS, RECHECK_DAYS)
   ]
   if (channels.length === 0) {
-    return { collected: 0, errors, perChannel }
+    return { collected: 0, errors, warnings, perChannel }
   }
 
   const sinceIso = new Date(now.getTime() - WINDOW_DAYS * 86400_000).toISOString()
@@ -63,7 +64,7 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
     const feed = byChannel.get(ch.external_id) || []
     const videos = feed.filter((v) => v.publishedAt >= sinceIso)
     if (feed.length === FEED_ENTRY_CAP && videos.length === FEED_ENTRY_CAP) {
-      errors.push(`${ch.username}: feed returned ${FEED_ENTRY_CAP} entries, all inside the window — may be truncated, older in-window videos could be missing`)
+      warnings.push(`${ch.username}: feed returned ${FEED_ENTRY_CAP} entries, all inside the window — may be truncated, older in-window videos could be missing`)
     }
     for (const v of videos) pending.push({ ...v, channel: ch.username })
     perChannel.push({ channel: ch.username, count: videos.length })
@@ -71,7 +72,7 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
     updateChannelActivity(ch.username, { lastVideoAt: newest })
   }
 
-  if (pending.length === 0) return { collected: 0, errors, perChannel }
+  if (pending.length === 0) return { collected: 0, errors, warnings, perChannel }
 
   let details = []
   try {
@@ -103,7 +104,7 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
   }
 
   console.log(`[collectYouTubeVideos] Finished. Total: ${collected} videos, ${errors.length} errors.`)
-  return { collected, errors, perChannel }
+  return { collected, errors, warnings, perChannel }
 }
 
 /**
@@ -133,7 +134,7 @@ export async function backfillChannelActivity({ client, fetchFeeds = defaultFetc
   return results
 }
 
-async function syncSubscriptions(client, addedBy, errors) {
+async function syncSubscriptions(client, addedBy, errors, warnings) {
   const subs = await client.listSubscriptions()
   if (subs.length === 0) return
 
@@ -143,7 +144,7 @@ async function syncSubscriptions(client, addedBy, errors) {
   for (const s of subs) {
     const username = `yt:${s.title}`
     if (seenBy.has(username)) {
-      errors.push(`subscriptions: "${s.title}" collides between channels ${seenBy.get(username)} and ${s.channelId} — only the first is collected`)
+      warnings.push(`subscriptions: "${s.title}" collides between channels ${seenBy.get(username)} and ${s.channelId} — only the first is collected`)
       continue
     }
     seenBy.set(username, s.channelId)

@@ -1,5 +1,14 @@
 import { BaseHandler } from "./BaseHandler.js"
-import { setBotOpen, getStats, banUserByUsernameOrId, unbanUserByUsernameOrId } from "../db.js"
+import {
+	setBotOpen,
+	getStats,
+	banUserByUsernameOrId,
+	unbanUserByUsernameOrId,
+	getSetting,
+	getActiveYouTubeChannels,
+	getDormantYouTubeChannelsDueForRecheck
+} from "../db.js"
+import { ACTIVE_DAYS, RECHECK_DAYS } from "../youtube/collector.js"
 
 export class AdminHandler extends BaseHandler {
 	isAdmin(userId) {
@@ -33,5 +42,28 @@ export class AdminHandler extends BaseHandler {
 		if (!this.isAdmin(ctx.from?.id)) return
 		setBotOpen(open)
 		return ctx.reply(open ? "Bot is open." : "Bot is closed.")
+	}
+
+	handleYtStatus(ctx) {
+		if (!this.isAdmin(ctx.from?.id)) return
+
+		const active = getActiveYouTubeChannels(ACTIVE_DAYS).length
+		const dormant = getDormantYouTubeChannelsDueForRecheck(ACTIVE_DAYS, RECHECK_DAYS).length
+
+		const raw = getSetting("yt_last_warnings")
+		if (!raw) {
+			return ctx.reply(`📺 YouTube status\n\nChannels: ${active} active, ${dormant} dormant\nNo collection run recorded yet.`)
+		}
+
+		const { warnings, collected, ranAt } = JSON.parse(raw)
+		const warningsText = warnings.length ? warnings.map((w) => `• ${w}`).join("\n") : "No warnings."
+
+		return ctx.reply(
+			"📺 YouTube status\n\n" +
+			`Last run: ${new Date(ranAt).toLocaleString()}\n` +
+			`Collected: ${collected}\n` +
+			`Channels: ${active} active, ${dormant} dormant\n\n` +
+			`Warnings:\n${warningsText}`
+		)
 	}
 }

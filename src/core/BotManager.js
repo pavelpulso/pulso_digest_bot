@@ -97,6 +97,7 @@ export class BotManager {
 		this.bot.command("unban", (ctx) => admin.handleUnban(ctx))
 		this.bot.command("open", (ctx) => admin.handleOpen(ctx, true))
 		this.bot.command("close", (ctx) => admin.handleOpen(ctx, false))
+		this.bot.command("yt_status", (ctx) => admin.handleYtStatus(ctx))
 	}
 
 	_registerActions() {
