@@ -203,3 +203,59 @@ test("a quota error mid-batch reports the videos already fetched", async () => {
 		}
 	)
 })
+
+test("liked videos come back newest first", async () => {
+	await withServer(
+		(req, res) => {
+			const url = new URL(req.url, "http://x")
+			if (url.pathname.endsWith("/token")) {
+				res.writeHead(200, { "Content-Type": "application/json" })
+				return res.end(JSON.stringify({ access_token: "at", expires_in: 3600 }))
+			}
+			const pageToken = url.searchParams.get("pageToken")
+			res.writeHead(200, { "Content-Type": "application/json" })
+			if (!pageToken) {
+				return res.end(JSON.stringify({
+					nextPageToken: "page2",
+					items: [{ id: "v1" }, { id: "v2" }]
+				}))
+			}
+			res.end(JSON.stringify({ items: [{ id: "v3" }] }))
+		},
+		async (url) => {
+			const client = makeClient(url)
+			const ids = await client.listLikedVideos()
+			assert.deepEqual(ids, ["v1", "v2", "v3"])
+		}
+	)
+})
+
+test("a server offering three pages of likes is only asked for two", async () => {
+	let requests = 0
+
+	await withServer(
+		(req, res) => {
+			const url = new URL(req.url, "http://x")
+			if (url.pathname.endsWith("/token")) {
+				res.writeHead(200, { "Content-Type": "application/json" })
+				return res.end(JSON.stringify({ access_token: "at", expires_in: 3600 }))
+			}
+			requests++
+			const pageToken = url.searchParams.get("pageToken")
+			res.writeHead(200, { "Content-Type": "application/json" })
+			if (!pageToken) {
+				return res.end(JSON.stringify({ nextPageToken: "page2", items: [{ id: "v1" }] }))
+			}
+			if (pageToken === "page2") {
+				return res.end(JSON.stringify({ nextPageToken: "page3", items: [{ id: "v2" }] }))
+			}
+			res.end(JSON.stringify({ items: [{ id: "v3" }] }))
+		},
+		async (url) => {
+			const client = makeClient(url)
+			const ids = await client.listLikedVideos()
+			assert.deepEqual(ids, ["v1", "v2"])
+			assert.equal(requests, 2, "the paging cap must stop at maxPages (default 2), not follow every nextPageToken")
+		}
+	)
+})
