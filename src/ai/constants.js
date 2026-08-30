@@ -23,8 +23,14 @@ export const LIMITS = {
   ANALYZE_TEXT: 1000,
   /** Max text length for audit */
   AUDIT_TEXT: 500,
-  /** Completion tokens one digest block needs */
-  COMPLETION_TOKENS_PER_BLOCK: 220,
+  /** Completion tokens one digest block needs (non-compact: essence + potential + action).
+   *  Prompt caps: essence <=14 words, potential <=10, action <=10 → 34 words.
+   *  Using this file's own conservative word→char ratio (15 chars/word, the same
+   *  assumption behind the SUMMARY_WORDS truncation below) and Cyrillic CHARS_PER_TOKEN:
+   *    34 words * 15 chars/word = 510 chars of text
+   *    + ~90 chars of JSON structure (ids array, emoji, field names/quotes)
+   *    = 600 chars / 2.5 chars-per-token = 240 tokens */
+  COMPLETION_TOKENS_PER_BLOCK: 240,
   /** Max blocks in digest */
   MAX_BLOCKS: 20,
   /** Min blocks in digest */

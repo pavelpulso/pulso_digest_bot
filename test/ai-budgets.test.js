@@ -3,6 +3,8 @@ import assert from "node:assert/strict"
 import { BaseAI } from "../src/ai/BaseAI.js"
 import { GroqAI } from "../src/ai/GroqAI.js"
 import { GeminiAI } from "../src/ai/GeminiAI.js"
+import { OpenRouterAI } from "../src/ai/OpenRouterAI.js"
+import { LIMITS } from "../src/ai/constants.js"
 import { withServer } from "./helpers.js"
 
 class RecordingAI extends BaseAI {
@@ -113,4 +115,41 @@ test("compact digests do not pay for fields their rendering throws away", async 
 	assert.ok(full.calls[0].prompt.includes("potential"), "the full format still asks for potential")
 	assert.ok(!compact.calls[0].prompt.includes("• potential"), "compact must not ask for a field it never renders")
 	assert.ok(!compact.calls[0].prompt.includes("• action"), "compact must not ask for an action it never renders")
+})
+
+// Word caps stated by the prompts (prompts.js buildSummaryPrompt / buildRankPrompt).
+// A Cyrillic block asks for essence (<=14 words) + potential (<=10) + action (<=10);
+// a ranked post asks for a reason (RANK_REASON_WORDS) + a 1-2 word topic.
+const BLOCK_WORDS = 14 + 10 + 10
+const POST_WORDS = LIMITS.RANK_REASON_WORDS + 2
+const CHARS_PER_WORD = 15 // same conservative ratio as SUMMARY_WORDS truncation in BaseAI.js
+
+function minBlockTokens() {
+	return Math.ceil((BLOCK_WORDS * CHARS_PER_WORD + 90) / LIMITS.CHARS_PER_TOKEN)
+}
+
+function minPostTokens() {
+	return Math.ceil((POST_WORDS * CHARS_PER_WORD + 60) / LIMITS.CHARS_PER_TOKEN)
+}
+
+test("every provider's budget can actually fit what its prompt asks for", () => {
+	const providers = [
+		new GeminiAI({ apiKey: "k", baseUrl: "https://example.invalid" }),
+		new GroqAI({ apiKey: "k" }),
+		new OpenRouterAI({ apiKey: "k" })
+	]
+
+	const minBlock = minBlockTokens()
+	const minPost = minPostTokens()
+
+	for (const provider of providers) {
+		assert.ok(
+			provider.completionTokensPerBlock >= minBlock,
+			`${provider.name}: completionTokensPerBlock (${provider.completionTokensPerBlock}) must cover a Cyrillic block (>=${minBlock})`
+		)
+		assert.ok(
+			provider.completionTokensPerPost >= minPost,
+			`${provider.name}: completionTokensPerPost (${provider.completionTokensPerPost}) must cover a reason + topic (>=${minPost})`
+		)
+	}
 })

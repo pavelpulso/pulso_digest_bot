@@ -9,7 +9,10 @@ const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
  */
 export class OpenRouterAI extends BaseAI {
   constructor(config = {}) {
-    super("OpenRouter")
+    // minimax/minimax-m3:free is a 1M-context model — a small request budget only forces
+    // rankPosts into many tiny batches (slow, and more requests against the free-tier RPM cap).
+    // Per-post/per-block reserves are left at the shared Cyrillic-sized defaults from constants.js.
+    super("OpenRouter", { requestBudgetTokens: 60000 })
     this.apiKey = config.apiKey ?? process.env.OPENROUTER_API_KEY ?? ""
     this.model = config.model ?? process.env.OPENROUTER_MODEL ?? "minimax/minimax-m3:free"
     this.baseUrl = config.baseUrl ?? OPENROUTER_URL
