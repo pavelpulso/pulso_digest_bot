@@ -4,21 +4,20 @@ const PLAYLIST_ID_KEY = "yt_playlist_id"
 const PLAYLIST_TITLE = "Pulso Digest"
 const PLAYLIST_DESCRIPTION = "Daily rolling selection from Pulso Digest. Synced automatically — don't edit by hand."
 
-/**
- * Hard ceiling on writes (inserts + removals combined) per run. playlistItems.insert/delete
- * cost 50 quota units each, so 60 writes is 3,000 units — enough to fill an empty playlist
- * from scratch (up to VIDEO_DAILY_CAP = 30 adds) and still prune a full week's worth in the
- * same run, while leaving most of the 10,000/day budget for collection and ranking reads.
- * This is a backstop: a caller that miscounts and hands syncPlaylist hundreds of picks (as
- * happened when `picks` briefly held every ranked video instead of the daily selection)
- * must not be able to burn the day's quota — it hits this wall and reports what it skipped.
- */
+// playlistItems.insert/delete cost 50 quota units each (reads cost 1), so this is a backstop
+// against the caller's own cap: 60 writes = 3,000 units, enough to fill an empty playlist
+// (VIDEO_DAILY_CAP = 30 adds) and still prune a full week in the same run, while leaving
+// most of the 10,000/day budget for collection and ranking reads.
 const MAX_WRITES_PER_RUN = 60
 
+async function createAndStorePlaylist(client) {
+  const id = await client.createPlaylist(PLAYLIST_TITLE, PLAYLIST_DESCRIPTION)
+  setSetting(PLAYLIST_ID_KEY, id)
+  return id
+}
+
 /**
- * Converges the YouTube playlist to today's selection by diff, not by rebuild:
- * playlistItems.insert/delete cost 50 quota units each, so clearing and refilling
- * every night would triple the daily cost for no benefit.
+ * Converges the YouTube playlist to today's selection by diff, not by rebuild.
  *
  * @param {object} opts
  * @param {import("./client.js").YouTubeClient} opts.client
@@ -30,19 +29,28 @@ const MAX_WRITES_PER_RUN = 60
 export async function syncPlaylist({ client, picks, windowVideoIds, maxWrites = MAX_WRITES_PER_RUN }) {
   let playlistId = getSetting(PLAYLIST_ID_KEY)
   if (!playlistId) {
-    playlistId = await client.createPlaylist(PLAYLIST_TITLE, PLAYLIST_DESCRIPTION)
-    setSetting(PLAYLIST_ID_KEY, playlistId)
+    playlistId = await createAndStorePlaylist(client)
+  }
+
+  let existing
+  try {
+    existing = await client.listPlaylistItemIds(playlistId)
+  } catch (e) {
+    if (e.reason !== "playlistNotFound") throw e
+    // The user deleted the playlist by hand: the cached id is dead. Recreate instead of
+    // alerting every night for something that fixes itself.
+    playlistId = await createAndStorePlaylist(client)
+    existing = []
   }
 
   const windowSet = windowVideoIds instanceof Set ? windowVideoIds : new Set(windowVideoIds)
-  const existing = await client.listPlaylistItemIds(playlistId)
   const existingVideoIds = new Set(existing.map((e) => e.videoId))
 
   const toAdd = picks.filter((id) => !existingVideoIds.has(id))
   const toRemove = existing.filter((e) => !windowSet.has(e.videoId))
 
-  // Adds come first out of the shared budget: they're this run's fresh selection, while a
-  // removal that gets deferred just means a stale entry survives one more day, unharmed.
+  // Adds are served first out of the shared write budget: a deferred removal just leaves
+  // a stale entry for one more day, while a deferred add is the thing the user wants to see.
   const addBudget = Math.min(toAdd.length, maxWrites)
   const toAddAllowed = toAdd.slice(0, addBudget)
   // playlistItems.insert always lands at position 0, so inserting worst-first leaves
@@ -58,14 +66,11 @@ export async function syncPlaylist({ client, picks, windowVideoIds, maxWrites = 
     await client.removePlaylistItem(item.playlistItemId)
   }
 
-  const skippedAdds = toAdd.length - toAddAllowed.length
-  const skippedRemoves = toRemove.length - toRemoveAllowed.length
-
   return {
     playlistId,
     added: toAddAllowed.length,
     removed: toRemoveAllowed.length,
-    skippedAdds,
-    skippedRemoves
+    skippedAdds: toAdd.length - toAddAllowed.length,
+    skippedRemoves: toRemove.length - toRemoveAllowed.length
   }
 }

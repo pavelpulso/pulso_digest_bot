@@ -35,7 +35,7 @@ function makeState(initialItems = []) {
 	}
 }
 
-function handlerFor(state, { quotaOnInsert = false } = {}) {
+function handlerFor(state, { quotaOnInsert = false, notFoundPlaylistId = null } = {}) {
 	return (req, res) => {
 		const url = new URL(req.url, "http://x")
 		if (url.pathname.endsWith("/token")) {
@@ -53,6 +53,11 @@ function handlerFor(state, { quotaOnInsert = false } = {}) {
 				return res.end(JSON.stringify({ id: state.playlistId }))
 			}
 			if (url.pathname.endsWith("/playlistItems") && req.method === "GET") {
+				const playlistId = url.searchParams.get("playlistId")
+				if (notFoundPlaylistId && playlistId === notFoundPlaylistId) {
+					res.writeHead(404, { "Content-Type": "application/json" })
+					return res.end(JSON.stringify({ error: { code: 404, errors: [{ reason: "playlistNotFound" }] } }))
+				}
 				res.writeHead(200, { "Content-Type": "application/json" })
 				return res.end(JSON.stringify({
 					items: state.items.map((it) => ({
@@ -175,5 +180,36 @@ test("a picks list longer than the write limit does not issue more writes than t
 		assert.equal(result.added, 10)
 		assert.equal(state.insertCalls, 10, "the write ceiling must stop issuing inserts, not just stop counting them")
 		assert.equal(result.skippedAdds, 90)
+	})
+})
+
+test("a stored id that 404s (playlistNotFound) leads to a new playlist being created and stored", async () => {
+	clearPlaylistSetting()
+	db.setSetting("yt_playlist_id", "PL_DEAD")
+	const state = makeState()
+
+	await withServer(handlerFor(state, { notFoundPlaylistId: "PL_DEAD" }), async (url) => {
+		const client = makeClient(url)
+		const result = await syncPlaylist({ client, picks: ["v1"], windowVideoIds: ["v1"] })
+		assert.equal(state.createCalls, 1, "the dead id must trigger exactly one recreate, not a retry loop")
+		assert.notEqual(result.playlistId, "PL_DEAD")
+		assert.equal(db.getSetting("yt_playlist_id"), result.playlistId, "the new id must be persisted, not just returned")
+		assert.equal(result.added, 1, "the new (empty) playlist still gets the day's picks in the same run")
+	})
+})
+
+test("a full prune plus a full new selection together stay within the write ceiling", async () => {
+	clearPlaylistSetting()
+	const staleItems = Array.from({ length: 50 }, (_, i) => ({ id: `PIstale${i}`, videoId: `vStale${i}` }))
+	const state = makeState(staleItems)
+	const picks = Array.from({ length: 50 }, (_, i) => `vNew${i}`)
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+		const result = await syncPlaylist({ client, picks, windowVideoIds: picks })
+		const totalWrites = state.insertCalls + state.deleteCalls
+		assert.ok(totalWrites <= 60, `expected writes <= MAX_WRITES_PER_RUN (60), got ${totalWrites}`)
+		assert.equal(result.added + result.removed, totalWrites)
+		assert.equal(result.skippedRemoves, 40, "the write budget went to adds first, deferring the rest of the prune")
 	})
 })

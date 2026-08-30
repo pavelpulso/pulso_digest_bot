@@ -34,7 +34,7 @@ import { KeyboardProvider } from "../ui/KeyboardProvider.js"
 import { collectChannelPosts } from "../gramjs.js"
 import { computeBoost } from "../youtube/scoring.js"
 
-const VIDEO_WINDOW_DAYS = 7
+export const VIDEO_WINDOW_DAYS = 7
 const VIDEO_LEAD_COUNT = 3
 export const VIDEO_DAILY_CAP = 30
 // The button says what one press delivers, so its label and this batch must not drift apart.

@@ -65,6 +65,30 @@ export class YouTubeClient {
     }
   }
 
+  /** Shared non-ok handling for #get and #mutate. `reason` comes from Google's classic
+   * error format (error.errors[0].reason) so callers can match a specific failure —
+   * e.g. playlistNotFound — instead of guessing from a truncated message string. */
+  #throwOnError(res, json, path, { isWrite = false } = {}) {
+    if (res.ok) return
+    const reason = json?.error?.errors?.[0]?.reason
+    if (res.status === 403 && reason === "quotaExceeded") {
+      // Квота суточная — ретрай её не вернёт, только сожжёт остаток.
+      throw new QuotaExceededError("YouTube daily quota exhausted")
+    }
+    if (isWrite && res.status === 403) {
+      // Most likely 403 right after shipping write support: the stored refresh token
+      // still carries the old read-only scope, and every write fails until reissued.
+      throw new Error(
+        `YouTube ${path} 403: looks like a scope problem, not quota. Re-run "npm run auth:youtube" ` +
+        `to reissue the refresh token with youtube.force-ssl, then update YOUTUBE_REFRESH_TOKEN.`
+      )
+    }
+    const err = new Error(`YouTube ${path} ${res.status}: ${JSON.stringify(json).slice(0, 200)}`)
+    err.status = res.status
+    err.reason = reason
+    throw err
+  }
+
   async #get(path, params) {
     const token = await this.getAccessToken()
     const url = new URL(path, this.baseUrl)
@@ -74,14 +98,7 @@ export class YouTubeClient {
       headers: { Authorization: `Bearer ${token}` }
     })
     const json = await res.json().catch(() => null)
-
-    if (res.status === 403 && JSON.stringify(json).includes("quotaExceeded")) {
-      // Квота суточная — ретрай её не вернёт, только сожжёт остаток.
-      throw new QuotaExceededError("YouTube daily quota exhausted")
-    }
-    if (!res.ok) {
-      throw new Error(`YouTube ${path} ${res.status}: ${JSON.stringify(json).slice(0, 200)}`)
-    }
+    this.#throwOnError(res, json, path)
     return json
   }
 
@@ -99,13 +116,7 @@ export class YouTubeClient {
       body: body ? JSON.stringify(body) : undefined
     })
     const json = await res.json().catch(() => null)
-
-    if (res.status === 403 && JSON.stringify(json).includes("quotaExceeded")) {
-      throw new QuotaExceededError("YouTube daily quota exhausted")
-    }
-    if (!res.ok) {
-      throw new Error(`YouTube ${path} ${res.status}: ${JSON.stringify(json).slice(0, 200)}`)
-    }
+    this.#throwOnError(res, json, path, { isWrite: true })
     return json
   }
 

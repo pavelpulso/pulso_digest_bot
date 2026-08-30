@@ -13,9 +13,7 @@ import { collectYouTubeVideos } from "./youtube/collector.js"
 import { YouTubeClient } from "./youtube/client.js"
 import { syncPlaylist } from "./youtube/playlist.js"
 import { getDigestDate } from "./utils.js"
-import { VIDEO_DAILY_CAP } from "./services/BotService.js"
-
-const PLAYLIST_WINDOW_DAYS = 7
+import { VIDEO_DAILY_CAP, VIDEO_WINDOW_DAYS } from "./services/BotService.js"
 
 const ACTION = process.argv.find(a => a.startsWith("--action="))?.split("=")[1] || "collect"
 
@@ -114,7 +112,7 @@ async function runPlaylistSync() {
   const postById = new Map(posts.map((p) => [p.id, p]))
   const picks = rows.map((r) => postById.get(r.post_id)?.post_id).filter(Boolean)
 
-  const since = new Date(Date.now() - PLAYLIST_WINDOW_DAYS * 86400_000).toISOString()
+  const since = new Date(Date.now() - VIDEO_WINDOW_DAYS * 86400_000).toISOString()
   const windowVideoIds = getVideosInWindow(since).map((v) => v.post_id)
 
   const result = await syncPlaylist({ client, picks, windowVideoIds })
