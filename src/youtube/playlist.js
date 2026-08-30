@@ -47,8 +47,13 @@ export async function syncPlaylist({ client, ranked, maxWrites = MAX_WRITES_PER_
   const keepEligible = new Set(ranked.slice(0, PLAYLIST_SIZE + EVICTION_BUFFER))
   const existingVideoIds = new Set(existing.map((e) => e.videoId))
 
-  const toAdd = target.filter((id) => !existingVideoIds.has(id))
+  const keptExisting = existing.filter((e) => keepEligible.has(e.videoId))
   const toRemove = existing.filter((e) => !keepEligible.has(e.videoId))
+  const missing = target.filter((id) => !existingVideoIds.has(id))
+  // Cap adds so kept incumbents (damped survivors included) plus new arrivals never exceed
+  // PLAYLIST_SIZE — otherwise a slipped-but-buffered incumbent plus a fresh top-20 entrant
+  // grows the playlist and nothing ever pulls it back down.
+  const toAdd = missing.slice(0, Math.max(0, PLAYLIST_SIZE - keptExisting.length))
 
   const addBudget = Math.min(toAdd.length, maxWrites)
   const toAddAllowed = toAdd.slice(0, addBudget)
