@@ -28,7 +28,7 @@ export function buildRankPrompt(list, userProfile, importantChannels, liked, dis
     : ""
 
   const readerContext = getReaderContext(systemPrompt, userProfile)
-  const lang = detectLanguage(list)
+  const lang = detectLanguage(list, userProfile)
   const langInstruction = getLanguageInstruction(lang)
 
   return `You are an experienced digest editor (10+ years). Your task is to select only what's truly useful for the reader.
@@ -64,27 +64,61 @@ Use EXACT "post_id" field (not "id"). Value must match "id" from posts above. Wr
 
 /**
  * Detect language from posts text.
- * @param {Array} list - Posts list
- * @returns {string} Detected language code (ru, en, es, etc.) or 'en' as default
+ * Sniff a language from raw text using cheap character/substring signals.
+ * Returns null when no signal is confident enough to call it.
+ * @param {string} text - Raw text to inspect
+ * @returns {string|null} Detected language code, or null if inconclusive
  */
-function detectLanguage(list) {
-  if (!list || list.length === 0) return 'en'
-  
-  // Take first 3 posts with text
-  const texts = list.slice(0, 3).map(p => p.text || '').filter(Boolean).join(' ').toLowerCase()
-  if (!texts) return 'en'
-  
+function sniffLanguage(text) {
+  if (!text) return null
+  const lower = text.toLowerCase()
+
   // Cyrillic characters indicate Russian
-  const cyrillicChars = texts.match(/[а-яё]/gi)
+  const cyrillicChars = lower.match(/[а-яё]/gi)
   if (cyrillicChars && cyrillicChars.length > 5) return 'ru'
-  
-  // Spanish indicators
-  if (texts.includes('ción') || texts.includes('sión') || texts.includes('ñ')) return 'es'
-  
-  // German indicators
-  if (texts.includes('sch') || texts.includes('ch') || texts.includes('ß')) return 'de'
-  
-  // Default to English
+
+  // Spanish indicators. 'ción'/'sión' are close to Spanish-only in Latin text,
+  // but a single hit could still be a coincidence, so this stays a soft signal too.
+  if (lower.includes('ción') || lower.includes('sión') || lower.includes('ñ')) return 'es'
+
+  // German indicators. We dropped the old 'ch'/'sch' substring check: 'ch' matches ordinary
+  // English words (watch, check, technology, such), which was the bug that shipped German
+  // instructions for English-titled posts. Umlauts and ß don't occur in English, but a lone
+  // occurrence can still be a stray character, so require more than one before calling it German.
+  const germanMarkers = lower.match(/[äöüß]/g)
+  if (germanMarkers && germanMarkers.length > 1) return 'de'
+
+  return null
+}
+
+/**
+ * Determine the digest language. The reader's own profile is the primary signal — it's
+ * written in the reader's language regardless of what language any given post happens to be
+ * in. Content sniffing is only a fallback for when there is no profile to read.
+ * @param {Array} list - Posts list
+ * @param {string} [userProfile] - Reader's free-text profile
+ * @returns {string} Detected language code (ru, en, es, de) — 'en' when nothing is confident
+ */
+function detectLanguage(list, userProfile) {
+  const profileText = (userProfile || '').trim()
+
+  const profileLang = profileText ? sniffLanguage(profileText) : null
+  if (profileLang) {
+    console.log(`[detectLanguage] lang=${profileLang} source=profile`)
+    return profileLang
+  }
+
+  // A profile that gave no signal (empty, or present but uninformative — digits, URLs, too
+  // short) is not evidence the reader writes English; it's just no evidence at all. Fall back
+  // to sniffing the posts, same as when there's no profile to read.
+  const contentText = (list || []).slice(0, 3).map(p => p.text || '').filter(Boolean).join(' ')
+  const contentLang = sniffLanguage(contentText)
+  if (contentLang) {
+    console.log(`[detectLanguage] lang=${contentLang} source=content${profileText ? ' (profile had no signal)' : ''}`)
+    return contentLang
+  }
+
+  console.log('[detectLanguage] lang=en source=default (no signal in profile or content)')
   return 'en'
 }
 
@@ -108,7 +142,7 @@ function getLanguageInstruction(lang) {
  */
 export function buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt = null, compact = false, groundedOnly = false) {
   const readerContext = getReaderContext(systemPrompt, userProfile)
-  const lang = detectLanguage(list)
+  const lang = detectLanguage(list, userProfile)
   const langInstruction = getLanguageInstruction(lang)
   const groundingRule = groundedOnly
     ? `\n\nYou were only given a title and a description, never the video itself — you have not watched it. State only what the title and description actually say. Never infer or describe content that is not written there. Rephrase clickbait titles into plain factual statements instead of repeating them (example: "Google's Gemini Just DESTROYED Social Media" is clickbait, not a fact — describe what the video is actually about, not the outrage framing).`
