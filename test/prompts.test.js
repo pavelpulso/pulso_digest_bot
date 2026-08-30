@@ -124,7 +124,7 @@ test("an English-titled list does not get misdetected as German", () => {
 		{ id: "2", channel: "c", text: "How to check your watch battery" }
 	]
 
-	const prompt = buildRankPrompt(list, "", "", [], [], null)
+	const prompt = buildRankPrompt(list, "", "", { likedWatched: [], likedDigest: [], disliked: [] }, null)
 
 	assert.match(prompt, /Respond in ENGLISH/i, "English-looking content must not trigger the German instruction")
 })
@@ -132,7 +132,7 @@ test("an English-titled list does not get misdetected as German", () => {
 test("a Russian profile wins over English content", () => {
 	const list = [{ id: "1", channel: "c", text: "Watch this new technology video" }]
 
-	const prompt = buildRankPrompt(list, "Читаю каждый день, интересуюсь технологиями и стартапами", "", [], [], null)
+	const prompt = buildRankPrompt(list, "Читаю каждый день, интересуюсь технологиями и стартапами", "", { likedWatched: [], likedDigest: [], disliked: [] }, null)
 
 	assert.match(prompt, /Respond in RUSSIAN/i, "the reader's profile language must win over the content language")
 })
@@ -140,7 +140,7 @@ test("a Russian profile wins over English content", () => {
 test("an empty profile falls back to Russian content", () => {
 	const list = [{ id: "1", channel: "c", text: "Пост про технологии и стартапы для чтения" }]
 
-	const prompt = buildRankPrompt(list, "", "", [], [], null)
+	const prompt = buildRankPrompt(list, "", "", { likedWatched: [], likedDigest: [], disliked: [] }, null)
 
 	assert.match(prompt, /Respond in RUSSIAN/i, "with no profile, content sniffing must still catch Russian")
 })
@@ -148,7 +148,7 @@ test("an empty profile falls back to Russian content", () => {
 test("an empty profile with English content yields English", () => {
 	const list = [{ id: "1", channel: "c", text: "A new gadget was announced today by the company" }]
 
-	const prompt = buildRankPrompt(list, "", "", [], [], null)
+	const prompt = buildRankPrompt(list, "", "", { likedWatched: [], likedDigest: [], disliked: [] }, null)
 
 	assert.match(prompt, /Respond in ENGLISH/i)
 })
@@ -156,7 +156,7 @@ test("an empty profile with English content yields English", () => {
 test("a profile of digits and URLs falls back to content sniffing, not English", () => {
 	const list = [{ id: "1", channel: "c", text: "Пост про технологии и стартапы для чтения" }]
 
-	const prompt = buildRankPrompt(list, "12345 https://example.com/foo?id=42 https://t.me/bar", "", [], [], null)
+	const prompt = buildRankPrompt(list, "12345 https://example.com/foo?id=42 https://t.me/bar", "", { likedWatched: [], likedDigest: [], disliked: [] }, null)
 
 	assert.match(prompt, /Respond in RUSSIAN/i, "an uninformative profile must not shadow the content signal")
 })
@@ -164,7 +164,7 @@ test("a profile of digits and URLs falls back to content sniffing, not English",
 test("German content with a real German marker still yields German", () => {
 	const list = [{ id: "1", channel: "c", text: "Die Größe des Prozesses überrascht schließlich alle Beteiligten" }]
 
-	const prompt = buildRankPrompt(list, "", "", [], [], null)
+	const prompt = buildRankPrompt(list, "", "", { likedWatched: [], likedDigest: [], disliked: [] }, null)
 
 	assert.match(prompt, /Respond in GERMAN/i, "umlauts/ß must still be able to detect German")
 })
