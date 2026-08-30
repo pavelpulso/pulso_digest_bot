@@ -112,6 +112,14 @@ test("an empty profile with English content yields English", () => {
 	assert.match(prompt, /Respond in ENGLISH/i)
 })
 
+test("a profile of digits and URLs falls back to content sniffing, not English", () => {
+	const list = [{ id: "1", channel: "c", text: "Пост про технологии и стартапы для чтения" }]
+
+	const prompt = buildRankPrompt(list, "12345 https://example.com/foo?id=42 https://t.me/bar", "", [], [], null)
+
+	assert.match(prompt, /Respond in RUSSIAN/i, "an uninformative profile must not shadow the content signal")
+})
+
 test("German content with a real German marker still yields German", () => {
 	const list = [{ id: "1", channel: "c", text: "Die Größe des Prozesses überrascht schließlich alle Beteiligten" }]
 

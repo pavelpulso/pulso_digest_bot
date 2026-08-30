@@ -102,18 +102,24 @@ function sniffLanguage(text) {
 function detectLanguage(list, userProfile) {
   const profileText = (userProfile || '').trim()
 
-  if (profileText) {
-    const lang = sniffLanguage(profileText)
-    const resolved = lang || 'en'
-    console.log(`[detectLanguage] lang=${resolved} source=profile${lang ? '' : ' (no marker, defaulted to en)'}`)
-    return resolved
+  const profileLang = profileText ? sniffLanguage(profileText) : null
+  if (profileLang) {
+    console.log(`[detectLanguage] lang=${profileLang} source=profile`)
+    return profileLang
   }
 
+  // A profile that gave no signal (empty, or present but uninformative — digits, URLs, too
+  // short) is not evidence the reader writes English; it's just no evidence at all. Fall back
+  // to sniffing the posts, same as when there's no profile to read.
   const contentText = (list || []).slice(0, 3).map(p => p.text || '').filter(Boolean).join(' ')
-  const lang = sniffLanguage(contentText)
-  const resolved = lang || 'en'
-  console.log(`[detectLanguage] lang=${resolved} source=content${lang ? '' : ' (no marker, defaulted to en)'}`)
-  return resolved
+  const contentLang = sniffLanguage(contentText)
+  if (contentLang) {
+    console.log(`[detectLanguage] lang=${contentLang} source=content${profileText ? ' (profile had no signal)' : ''}`)
+    return contentLang
+  }
+
+  console.log('[detectLanguage] lang=en source=default (no signal in profile or content)')
+  return 'en'
 }
 
 /**
