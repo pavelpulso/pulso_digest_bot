@@ -183,6 +183,23 @@ export class YouTubeClient {
     return out
   }
 
+  /** Paged search of the account's own playlists (reuses #paged's page-count and
+   * repeated-token guards) for the first one whose title AND description match exactly.
+   * Requiring both, not just the title, keeps this from adopting an unrelated playlist a
+   * person happens to have named the same thing. Returns null if none matches. */
+  async findPlaylistByTitle(title, description) {
+    let found = null
+    await this.#paged("playlists", { part: "snippet", mine: "true", maxResults: String(BATCH_SIZE) }, (items) => {
+      for (const it of items) {
+        if (it.snippet?.title === title && it.snippet?.description === description) {
+          found = it.id
+          return false
+        }
+      }
+    })
+    return found
+  }
+
   /** Private by default — this is the user's own queue, not something to publish. */
   async createPlaylist(title, description) {
     const json = await this.#mutate("POST", "playlists", {
