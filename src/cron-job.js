@@ -6,11 +6,14 @@
 
 import "dotenv/config"
 import { collectChannelPosts } from "./gramjs.js"
-import { getChannelUsernames, addChannel, setSetting, pruneOldVideoRankings } from "./db.js"
+import { getChannelUsernames, addChannel, setSetting, pruneOldVideoRankings, getVideoRankingRows, getPostsByIds, getVideosInWindow } from "./db.js"
 import bot from "./bot.js"
 import { sendMorningDigests } from "./bot.js"
 import { collectYouTubeVideos } from "./youtube/collector.js"
 import { YouTubeClient } from "./youtube/client.js"
+import { syncPlaylist } from "./youtube/playlist.js"
+import { getDigestDate } from "./utils.js"
+import { VIDEO_DAILY_CAP, VIDEO_WINDOW_DAYS } from "./services/BotService.js"
 
 const ACTION = process.argv.find(a => a.startsWith("--action="))?.split("=")[1] || "collect"
 
@@ -91,11 +94,48 @@ async function runCollection() {
   }
 }
 
+/** Keeps the admin's YouTube playlist in sync with their video selection. The playlist
+ * is tied to the single account behind YOUTUBE_REFRESH_TOKEN, so it follows that one user. */
+async function runPlaylistSync() {
+  const adminId = parseInt(process.env.ADMIN_ID, 10) || 0
+  if (!adminId) return
+
+  const client = new YouTubeClient()
+  if (!client.isReady()) return
+
+  const date = getDigestDate()
+  // getVideoRankingRows returns every ranked video for the date (hundreds), already
+  // ordered best-first — cap to the same size as the digest's own daily selection so
+  // the playlist can never ask for more inserts than the digest itself would ever show.
+  const rows = getVideoRankingRows(adminId, date).slice(0, VIDEO_DAILY_CAP)
+  const posts = getPostsByIds(rows.map((r) => r.post_id))
+  const postById = new Map(posts.map((p) => [p.id, p]))
+  const picks = rows.map((r) => postById.get(r.post_id)?.post_id).filter(Boolean)
+
+  const since = new Date(Date.now() - VIDEO_WINDOW_DAYS * 86400_000).toISOString()
+  const windowVideoIds = getVideosInWindow(since).map((v) => v.post_id)
+
+  const result = await syncPlaylist({ client, picks, windowVideoIds })
+  console.log(`[cron-job] Playlist synced: +${result.added} -${result.removed} (playlist ${result.playlistId})`)
+  if (result.skippedAdds || result.skippedRemoves) {
+    console.log(`[cron-job] Playlist write limit hit: skipped ${result.skippedAdds} adds, ${result.skippedRemoves} removes.`)
+  }
+}
+
 async function runMorningDigest() {
   console.log("[cron-job] Starting morning digest delivery...")
   try {
     await sendMorningDigests(bot)
     console.log("[cron-job] Morning digest delivery completed.")
+
+    // A playlist sync failure must never take down the digest, so it gets its own try/catch.
+    try {
+      await runPlaylistSync()
+    } catch (e) {
+      console.error("[cron-job] Playlist sync failed:", e.message)
+      await alertAdmin(`Playlist sync failed: ${e.message}`)
+    }
+
     process.exit(0)
   } catch (err) {
     console.error("[cron-job] Morning digest error:", err.message, err.stack)

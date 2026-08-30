@@ -10,7 +10,7 @@ if (!clientId || !clientSecret) {
   process.exit(1)
 }
 
-const SCOPE = "https://www.googleapis.com/auth/youtube.readonly"
+const SCOPE = "https://www.googleapis.com/auth/youtube.force-ssl"
 
 function waitForCode(server) {
   return new Promise((resolve, reject) => {
@@ -72,6 +72,11 @@ async function main() {
 
   console.log("\nAdd this line to .env:\n")
   console.log(`YOUTUBE_REFRESH_TOKEN=${json.refresh_token}\n`)
+  console.log(
+    "This token carries scope youtube.force-ssl. If you had an older token issued for\n" +
+    "youtube.readonly, replace it with this one — an old token keeps its old (read-only)\n" +
+    "permissions and playlist writes will fail with a 403, not because anything is broken.\n"
+  )
 }
 
 main().catch((e) => {
