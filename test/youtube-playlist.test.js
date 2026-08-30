@@ -5,7 +5,7 @@ import { withServer } from "./helpers.js"
 process.env.DB_PATH = ":memory:"
 const db = await import("../src/db.js")
 const { YouTubeClient, QuotaExceededError } = await import("../src/youtube/client.js")
-const { syncPlaylist } = await import("../src/youtube/playlist.js")
+const { syncPlaylist, PLAYLIST_TITLE, PLAYLIST_DESCRIPTION } = await import("../src/youtube/playlist.js")
 const { PLAYLIST_SIZE } = await import("../src/services/BotService.js")
 
 function clearPlaylistSetting() {
@@ -24,7 +24,7 @@ function makeClient(url) {
 }
 
 /** In-memory fake YouTube API: tracks a single playlist's items and every write made to it. */
-function makeState(initialItems = []) {
+function makeState(initialItems = [], { accountPlaylists = [] } = {}) {
 	return {
 		nextPlaylistId: 1,
 		playlistId: null,
@@ -32,7 +32,9 @@ function makeState(initialItems = []) {
 		nextItemId: 1,
 		createCalls: 0,
 		insertCalls: 0,
-		deleteCalls: 0
+		deleteCalls: 0,
+		listPlaylistsCalls: 0,
+		accountPlaylists: accountPlaylists.slice() // { id, title, description }
 	}
 }
 
@@ -47,9 +49,21 @@ function handlerFor(state, { quotaOnInsert = false, notFoundPlaylistId = null } 
 		let body = ""
 		req.on("data", (c) => (body += c))
 		req.on("end", () => {
+			if (url.pathname.endsWith("/playlists") && req.method === "GET") {
+				state.listPlaylistsCalls++
+				res.writeHead(200, { "Content-Type": "application/json" })
+				return res.end(JSON.stringify({
+					items: state.accountPlaylists.map((p) => ({
+						id: p.id,
+						snippet: { title: p.title, description: p.description }
+					}))
+				}))
+			}
 			if (url.pathname.endsWith("/playlists") && req.method === "POST") {
 				state.createCalls++
 				state.playlistId = `PL${state.nextPlaylistId++}`
+				const { snippet } = JSON.parse(body)
+				state.accountPlaylists.push({ id: state.playlistId, title: snippet.title, description: snippet.description })
 				res.writeHead(200, { "Content-Type": "application/json" })
 				return res.end(JSON.stringify({ id: state.playlistId }))
 			}
@@ -282,6 +296,93 @@ test("a complete turnover of the whole target stays within the write ceiling", a
 		assert.ok(totalWrites <= 60, `expected writes <= MAX_WRITES_PER_RUN (60), got ${totalWrites}`)
 		assert.equal(result.added, PLAYLIST_SIZE)
 		assert.equal(result.added + result.removed, totalWrites)
+	})
+})
+
+test("no stored id, a matching playlist already on the account: it is adopted, not recreated", async () => {
+	clearPlaylistSetting()
+	const state = makeState([], {
+		accountPlaylists: [{ id: "PL_EXISTING", title: PLAYLIST_TITLE, description: PLAYLIST_DESCRIPTION }]
+	})
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+		const result = await syncPlaylist({ client, ranked: ["v1"] })
+		assert.equal(result.playlistId, "PL_EXISTING")
+		assert.equal(state.createCalls, 0, "an existing match must be adopted, not duplicated")
+		assert.equal(db.getSetting("yt_playlist_id"), "PL_EXISTING")
+	})
+})
+
+test("no stored id, no match on the account: exactly one playlist is created", async () => {
+	clearPlaylistSetting()
+	const state = makeState([], {
+		accountPlaylists: [{ id: "PL_OTHER", title: "Some Other Playlist", description: "unrelated" }]
+	})
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+		const result = await syncPlaylist({ client, ranked: ["v1"] })
+		assert.equal(state.createCalls, 1)
+		assert.equal(db.getSetting("yt_playlist_id"), result.playlistId)
+	})
+})
+
+test("a stored id that still works: neither the search nor a create ever runs", async () => {
+	clearPlaylistSetting()
+	db.setSetting("yt_playlist_id", "PL_LIVE")
+	const state = makeState()
+	state.playlistId = "PL_LIVE"
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+		await syncPlaylist({ client, ranked: ["v1"] })
+		assert.equal(state.listPlaylistsCalls, 0, "a healthy stored id must skip the account search entirely")
+		assert.equal(state.createCalls, 0)
+	})
+})
+
+test("a differently-titled playlist on the account is not mistaken for ours", async () => {
+	clearPlaylistSetting()
+	const state = makeState([], {
+		accountPlaylists: [{ id: "PL_OTHER", title: "Not Pulso Digest", description: PLAYLIST_DESCRIPTION }]
+	})
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+		const result = await syncPlaylist({ client, ranked: ["v1"] })
+		assert.notEqual(result.playlistId, "PL_OTHER")
+		assert.equal(state.createCalls, 1, "a title mismatch must not be adopted")
+	})
+})
+
+test("a same-titled playlist with a different description is not mistaken for ours", async () => {
+	clearPlaylistSetting()
+	const state = makeState([], {
+		accountPlaylists: [{ id: "PL_LOOKALIKE", title: PLAYLIST_TITLE, description: "some unrelated user-made playlist" }]
+	})
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+		const result = await syncPlaylist({ client, ranked: ["v1"] })
+		assert.notEqual(result.playlistId, "PL_LOOKALIKE", "title alone must not be enough to adopt a playlist")
+		assert.equal(state.createCalls, 1)
+	})
+})
+
+test("on 404 recovery, a matching playlist on the account is adopted instead of recreated", async () => {
+	clearPlaylistSetting()
+	db.setSetting("yt_playlist_id", "PL_DEAD")
+	const state = makeState([], {
+		accountPlaylists: [{ id: "PL_RESTORED", title: PLAYLIST_TITLE, description: PLAYLIST_DESCRIPTION }]
+	})
+
+	await withServer(handlerFor(state, { notFoundPlaylistId: "PL_DEAD" }), async (url) => {
+		const client = makeClient(url)
+		const result = await syncPlaylist({ client, ranked: ["v1"] })
+		assert.equal(result.playlistId, "PL_RESTORED")
+		assert.equal(state.createCalls, 0, "the 404 recovery path must also search before creating")
+		assert.equal(db.getSetting("yt_playlist_id"), "PL_RESTORED")
 	})
 })
 
