@@ -85,6 +85,30 @@ export class YouTubeClient {
     return json
   }
 
+  async #mutate(method, path, { params = {}, body } = {}) {
+    const token = await this.getAccessToken()
+    const url = new URL(path, this.baseUrl)
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v)
+
+    const res = await this.#fetch(url.toString(), {
+      method,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(body ? { "Content-Type": "application/json" } : {})
+      },
+      body: body ? JSON.stringify(body) : undefined
+    })
+    const json = await res.json().catch(() => null)
+
+    if (res.status === 403 && JSON.stringify(json).includes("quotaExceeded")) {
+      throw new QuotaExceededError("YouTube daily quota exhausted")
+    }
+    if (!res.ok) {
+      throw new Error(`YouTube ${path} ${res.status}: ${JSON.stringify(json).slice(0, 200)}`)
+    }
+    return json
+  }
+
   async #paged(path, params, onPage) {
     let pageToken = ""
     const seenTokens = new Set()
@@ -146,5 +170,40 @@ export class YouTubeClient {
       }
     }
     return out
+  }
+
+  /** Private by default — this is the user's own queue, not something to publish. */
+  async createPlaylist(title, description) {
+    const json = await this.#mutate("POST", "playlists", {
+      params: { part: "snippet,status" },
+      body: { snippet: { title, description }, status: { privacyStatus: "private" } }
+    })
+    return json.id
+  }
+
+  async addVideoToPlaylist(playlistId, videoId, position) {
+    const snippet = { playlistId, resourceId: { kind: "youtube#video", videoId } }
+    if (position !== undefined) snippet.position = position
+    const json = await this.#mutate("POST", "playlistItems", {
+      params: { part: "snippet" },
+      body: { snippet }
+    })
+    return json.id
+  }
+
+  /** Returns both ids: removing an entry needs the playlistItem id, not the video id. */
+  async listPlaylistItemIds(playlistId) {
+    const out = []
+    await this.#paged("playlistItems", { part: "snippet", playlistId, maxResults: String(BATCH_SIZE) }, (items) => {
+      for (const it of items) {
+        const videoId = it.snippet?.resourceId?.videoId
+        if (videoId) out.push({ playlistItemId: it.id, videoId })
+      }
+    })
+    return out
+  }
+
+  async removePlaylistItem(playlistItemId) {
+    await this.#mutate("DELETE", "playlistItems", { params: { id: playlistItemId } })
   }
 }
