@@ -149,6 +149,7 @@ if (!rankingCols.includes("topic")) {
   addColumn("ALTER TABLE rankings ADD COLUMN topic TEXT")
 }
 
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS digest_shown (
     user_id INTEGER NOT NULL,
@@ -185,6 +186,12 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_post_feedback_user ON post_feedback(user_id);
 `)
+
+// Migration: post_feedback.watched_at — liked videos watched later (/liked)
+const postFeedbackCols = db.prepare("PRAGMA table_info(post_feedback)").all().map((c) => c.name)
+if (!postFeedbackCols.includes("watched_at")) {
+  addColumn("ALTER TABLE post_feedback ADD COLUMN watched_at TEXT")
+}
 
 // digest_feedback: overall digest rating (1 = useful, 0 = so-so, -1 = irrelevant)
 db.exec(`
@@ -663,6 +670,37 @@ export function getPostFeedbackForRanking(userId) {
 export function getRatedPostIds(userId) {
   const rows = db.prepare("SELECT post_id FROM post_feedback WHERE user_id = ?").all(userId)
   return new Set(rows.map((r) => r.post_id))
+}
+
+/** Liked videos (rating = 1, not yet watched) for /liked, newest feedback first. */
+export function getLikedUnwatchedVideos(userId, limit) {
+  return db.prepare(
+    `SELECT p.id, p.channel, p.text, p.link, p.views, p.duration_sec, f.created_at
+     FROM post_feedback f
+     JOIN posts p ON p.id = f.post_id
+     WHERE f.user_id = ? AND f.rating = 1 AND f.watched_at IS NULL AND p.source = 'yt'
+     ORDER BY f.created_at DESC
+     LIMIT ?`
+  ).all(userId, limit)
+}
+
+/** Total count backing getLikedUnwatchedVideos, used to report how many the cap left out. */
+export function countLikedUnwatchedVideos(userId) {
+  const row = db.prepare(
+    `SELECT COUNT(*) AS cnt
+     FROM post_feedback f
+     JOIN posts p ON p.id = f.post_id
+     WHERE f.user_id = ? AND f.rating = 1 AND f.watched_at IS NULL AND p.source = 'yt'`
+  ).get(userId)
+  return row?.cnt || 0
+}
+
+/** Marks a liked video watched without touching its rating — ranking personalization still reads it. */
+export function markVideoWatched(userId, postId) {
+  const r = db.prepare(
+    "UPDATE post_feedback SET watched_at = datetime('now') WHERE user_id = ? AND post_id = ? AND rating = 1"
+  ).run(userId, postId)
+  return r.changes > 0
 }
 
 // Users

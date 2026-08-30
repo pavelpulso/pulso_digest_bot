@@ -29,11 +29,15 @@ import {
 	getUserDigestPauseWeekends,
 	setUserDigestPause,
 	getUserStatsSummary,
-	getUserTopChannels
+	getUserTopChannels,
+	getLikedUnwatchedVideos,
+	countLikedUnwatchedVideos
 } from "../db.js"
 import { collectChannelPosts, fetchRecentPostsFromChannel } from "../gramjs.js"
 import { DIGEST_PAGE_SIZE } from "../utils.js"
 import { getDigestDate } from "../utils.js"
+
+const LIKED_VIDEOS_LIMIT = 10
 
 export class CommandHandler extends BaseHandler {
 	async handleStart(ctx) {
@@ -490,6 +494,39 @@ export class CommandHandler extends BaseHandler {
 		}
 		const channelList = channels.map((ch, i) => `${i + 1}. @${ch.username}`).join("\n")
 		await ctx.reply(`📢 <b>Channels (${channels.length}):</b>\n\n${channelList}`, { parse_mode: "HTML", reply_markup: KeyboardProvider.channels().reply_markup })
+	}
+
+	/** Formats one /liked entry: emoji-free title line, then channel · duration · views, then the link. */
+	formatLikedEntry(row) {
+		const title = UIFormatter.escapeHtml(String(row.text || "").split("\n")[0].trim())
+		const channel = UIFormatter.escapeHtml(String(row.channel || "").replace(/^yt:/, ""))
+		const meta = [UIFormatter.formatDuration(row.duration_sec), UIFormatter.formatViews(row.views)].filter(Boolean).join(" · ")
+		const safeUrl = String(row.link || "#").replace(/&/g, "&amp;")
+		return `${title}\n\n<a href="${safeUrl}">▶ ${channel}</a>${meta ? " · " + meta : ""}`
+	}
+
+	async handleLiked(ctx) {
+		const userId = ctx.from?.id
+		if (!userId) return
+
+		const total = countLikedUnwatchedVideos(userId)
+		if (total === 0) {
+			return ctx.reply("Отложенных видео нет — всё просмотрено.", { parse_mode: "HTML" })
+		}
+
+		const rows = getLikedUnwatchedVideos(userId, LIKED_VIDEOS_LIMIT)
+		for (const row of rows) {
+			await ctx.reply(this.formatLikedEntry(row), {
+				parse_mode: "HTML",
+				disable_web_page_preview: true,
+				reply_markup: { inline_keyboard: [[{ text: "✅ Посмотрел", callback_data: `watched:${row.id}` }]] }
+			})
+		}
+
+		const remaining = total - rows.length
+		if (remaining > 0) {
+			await ctx.reply(`И ещё ${remaining} видео в очереди.`, { parse_mode: "HTML" })
+		}
 	}
 
 	async handleProfile(ctx) {
