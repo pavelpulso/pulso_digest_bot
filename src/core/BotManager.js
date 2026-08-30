@@ -90,6 +90,7 @@ export class BotManager {
 		this.bot.command("add", (ctx) => cmd.handleAdd(ctx))
 		this.bot.command("remove", (ctx) => cmd.handleRemove(ctx))
 		this.bot.command("sysprompt", (ctx) => cmd.handleSysPrompt(ctx))
+		this.bot.command("liked", (ctx) => cmd.handleLiked(ctx))
 
 		// Admin commands
 		this.bot.command("stats", (ctx) => admin.handleStats(ctx))
@@ -112,6 +113,8 @@ export class BotManager {
 
 		this.bot.action("digest", (ctx) => act.handleDigest(ctx))
 		this.bot.action("video_more", (ctx) => act.handleVideoMore(ctx))
+		this.bot.action(/^watched:(.+)$/, (ctx) => act.handleVideoWatched(ctx))
+		this.bot.action("watched_noop", (ctx) => act.handleWatchedNoop(ctx))
 		this.bot.action("summary", (ctx) => act.handleSummary(ctx))
 		this.bot.action(/^summary_day:(.+)$/, (ctx) => act.handleSummaryDay(ctx))
 

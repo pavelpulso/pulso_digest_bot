@@ -830,3 +830,115 @@ test("the tail button promises what one press delivers, not the whole backlog", 
 
 	assert.equal(KeyboardProvider.videoMoreKeyboard(0, VIDEO_TAIL_COUNT), undefined)
 })
+
+test("a liked video appears in /liked, a liked telegram post does not", () => {
+	const userId = 400
+	db.getOrCreateUser(userId)
+
+	db.upsertVideo("liked-vid1", "yt:@likedchan", "likedv1", "заголовок видео", "https://youtube.com/watch?v=likedv1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertPost("liked-post1", "likedtgchan", 1, "текст поста", "https://t.me/likedtgchan/1", 5, "2026-08-29T10:00:00.000Z")
+
+	db.upsertPostFeedback(userId, "liked-vid1", 1)
+	db.upsertPostFeedback(userId, "liked-post1", 1)
+
+	const rows = db.getLikedUnwatchedVideos(userId, 10)
+	assert.ok(rows.some((r) => r.id === "liked-vid1"), "the liked video is in the list")
+	assert.ok(!rows.some((r) => r.id === "liked-post1"), "a liked telegram post never appears")
+})
+
+test("marking a video watched drops it out of the liked list", () => {
+	const userId = 401
+	db.getOrCreateUser(userId)
+
+	db.upsertVideo("watched-vid1", "yt:@watchedchan", "watchedv1", "заголовок", "https://youtube.com/watch?v=watchedv1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertPostFeedback(userId, "watched-vid1", 1)
+
+	assert.ok(db.getLikedUnwatchedVideos(userId, 10).some((r) => r.id === "watched-vid1"))
+
+	const marked = db.markVideoWatched(userId, "watched-vid1")
+	assert.ok(marked, "the update touched a row")
+	assert.ok(!db.getLikedUnwatchedVideos(userId, 10).some((r) => r.id === "watched-vid1"),
+		"a watched video no longer appears")
+})
+
+test("a like changed to a dislike drops out of the liked list", () => {
+	const userId = 402
+	db.getOrCreateUser(userId)
+
+	db.upsertVideo("flip-vid1", "yt:@flipchan", "flipv1", "заголовок", "https://youtube.com/watch?v=flipv1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertPostFeedback(userId, "flip-vid1", 1)
+	assert.ok(db.getLikedUnwatchedVideos(userId, 10).some((r) => r.id === "flip-vid1"))
+
+	db.upsertPostFeedback(userId, "flip-vid1", -1)
+	assert.ok(!db.getLikedUnwatchedVideos(userId, 10).some((r) => r.id === "flip-vid1"),
+		"a rating flipped to dislike drops the video from the liked list")
+})
+
+test("marking a video watched leaves its rating intact for ranking personalization", () => {
+	const userId = 403
+	db.getOrCreateUser(userId)
+
+	db.upsertVideo("keep-rating-vid1", "yt:@keepratingchan", "keepratingv1", "заголовок", "https://youtube.com/watch?v=keepratingv1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertPostFeedback(userId, "keep-rating-vid1", 1)
+	db.markVideoWatched(userId, "keep-rating-vid1")
+
+	const row = db.default.prepare("SELECT rating, watched_at FROM post_feedback WHERE user_id = ? AND post_id = ?")
+		.get(userId, "keep-rating-vid1")
+	assert.equal(row.rating, 1, "rating is untouched")
+	assert.ok(row.watched_at, "watched_at is set")
+})
+
+test("the /liked cap reports the remainder honestly", () => {
+	const userId = 404
+	db.getOrCreateUser(userId)
+
+	for (let i = 0; i < 13; i++) {
+		db.upsertVideo(`cap-liked-${i}`, `yt:@capliked${i}`, `capvid${i}`, `заголовок ${i}`, `https://youtube.com/watch?v=capliked${i}`, 100, 600,
+			new Date(Date.now() - 86400_000).toISOString())
+		db.upsertPostFeedback(userId, `cap-liked-${i}`, 1)
+	}
+
+	const total = db.countLikedUnwatchedVideos(userId)
+	assert.equal(total, 13)
+
+	const rows = db.getLikedUnwatchedVideos(userId, 10)
+	assert.equal(rows.length, 10, "the list itself is capped at 10")
+
+	const remaining = total - rows.length
+	assert.equal(remaining, 3, "the honest remainder outside the cap")
+})
+
+test("marking watched swaps the keyboard for an inert button and never rewrites the message text", async () => {
+	const { ActionHandler } = await import("../src/handlers/ActionHandler.js")
+	const userId = 405
+	db.getOrCreateUser(userId)
+	db.upsertVideo("noop-vid1", "yt:@noopchan", "noopv1", "заголовок", "https://youtube.com/watch?v=noopv1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertPostFeedback(userId, "noop-vid1", 1)
+
+	const action = new ActionHandler({})
+	let textEdited = false
+	let newMarkup = null
+	const ctx = {
+		match: [null, "noop-vid1"],
+		from: { id: userId },
+		answerCbQuery: async () => {},
+		editMessageText: async () => { textEdited = true },
+		editMessageReplyMarkup: async (markup) => { newMarkup = markup }
+	}
+
+	await action.handleVideoWatched(ctx)
+
+	assert.equal(textEdited, false, "the message text — and its link — is never touched")
+	assert.ok(newMarkup, "the keyboard is replaced")
+	assert.match(JSON.stringify(newMarkup), /Посмотрено/, "the button reads as done")
+
+	const row = db.default.prepare("SELECT rating, watched_at FROM post_feedback WHERE user_id = ? AND post_id = ?")
+		.get(userId, "noop-vid1")
+	assert.equal(row.rating, 1, "rating is still untouched")
+	assert.ok(row.watched_at, "watched_at is still stamped")
+})

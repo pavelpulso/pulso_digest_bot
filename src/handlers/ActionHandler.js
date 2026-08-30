@@ -19,7 +19,8 @@ import {
 	clearUserDigestPause,
 	setUserDigestPauseWeekends,
 	upsertDigestFeedback,
-	getRankingByUserAndPostLatest
+	getRankingByUserAndPostLatest,
+	markVideoWatched
 } from "../db.js"
 import { formatDateLabel, formatChannelList } from "../utils.js"
 import { collectChannelPosts, fetchRecentPostsFromChannel } from "../gramjs.js"
@@ -695,5 +696,27 @@ export class ActionHandler extends BaseHandler {
 			withHeader: false
 		})
 		if (sent === 0) await ctx.reply("Больше видео за неделю нет.")
+	}
+
+	async handleVideoWatched(ctx) {
+		const postId = ctx.match[1]
+		const userId = ctx.from?.id
+		if (!userId || isUserBanned(userId)) return this.safeAnswerCbQuery(ctx)
+
+		const marked = markVideoWatched(userId, postId)
+		if (!marked) return this.safeAnswerCbQuery(ctx, "Не найдено")
+
+		await this.safeAnswerCbQuery(ctx, "Отмечено")
+
+		// Message text keeps its link intact — only the keyboard changes, to an inert button.
+		try {
+			await ctx.editMessageReplyMarkup({
+				inline_keyboard: [[{ text: "✅ Посмотрено", callback_data: "watched_noop" }]]
+			})
+		} catch { /* Ignore */ }
+	}
+
+	async handleWatchedNoop(ctx) {
+		await this.safeAnswerCbQuery(ctx, "Уже отмечено")
 	}
 }
