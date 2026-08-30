@@ -9,7 +9,8 @@ const {
 	recordYouTubeLikes,
 	getYouTubeHitRate,
 	markDigestShown,
-	getOrCreateUser
+	getOrCreateUser,
+	getLikedUnwatchedVideos
 } = db
 const rawDb = db.default
 
@@ -21,8 +22,21 @@ test("a liked video id is matched to its post row and recorded as a youtube like
 	const inserted = recordYouTubeLikes(userId, ["vid-a"])
 	assert.equal(inserted, 1)
 
-	const row = rawDb.prepare("SELECT rating, source FROM post_feedback WHERE user_id = ? AND post_id = ?").get(userId, "post-a")
-	assert.deepEqual(row, { rating: 1, source: "youtube" })
+	const row = rawDb.prepare("SELECT rating, source, watched_at FROM post_feedback WHERE user_id = ? AND post_id = ?").get(userId, "post-a")
+	assert.equal(row.rating, 1)
+	assert.equal(row.source, "youtube")
+	assert.ok(row.watched_at, "a YouTube like is only possible after watching, so watched_at must be stamped")
+})
+
+test("a video liked on YouTube does not show up in /liked as still-to-watch", () => {
+	const userId = 6
+	getOrCreateUser(userId, "u6")
+	upsertVideo("post-watched-on-yt", "yt:chan", "vid-watched", "title", "https://youtu.be/vid-watched", 0, 600, new Date().toISOString())
+
+	recordYouTubeLikes(userId, ["vid-watched"])
+
+	const queue = getLikedUnwatchedVideos(userId, 10)
+	assert.equal(queue.length, 0, "a YouTube like is the reader's watch signal — it must not surface as unwatched")
 })
 
 test("a liked video id with no matching post is ignored, not inserted", () => {

@@ -221,11 +221,9 @@ export class BaseAI {
       .join(", ")
 
     const feedback = _options.feedback || {}
-    const liked = feedback.liked || []
-    const disliked = feedback.disliked || []
 
     const buildPrompt = (items) =>
-      buildRankPrompt(items, userProfile, importantChannels, liked, disliked, systemPrompt || null)
+      buildRankPrompt(items, userProfile, importantChannels, feedback, systemPrompt || null)
 
     const batches = this.#splitIntoBatches(list, buildPrompt)
     console.log(`[rankPosts] ${list.length} posts split into ${batches.length} request(s)`)
