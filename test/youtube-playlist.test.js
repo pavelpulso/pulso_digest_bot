@@ -163,3 +163,17 @@ test("a 403 quota error surfaces as QuotaExceededError and does not retry", asyn
 		assert.equal(state.insertCalls, 1, "a daily quota does not come back from a retry")
 	})
 })
+
+test("a picks list longer than the write limit does not issue more writes than the limit allows", async () => {
+	clearPlaylistSetting()
+	const state = makeState()
+	const picks = Array.from({ length: 100 }, (_, i) => `v${i}`)
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+		const result = await syncPlaylist({ client, picks, windowVideoIds: picks, maxWrites: 10 })
+		assert.equal(result.added, 10)
+		assert.equal(state.insertCalls, 10, "the write ceiling must stop issuing inserts, not just stop counting them")
+		assert.equal(result.skippedAdds, 90)
+	})
+})

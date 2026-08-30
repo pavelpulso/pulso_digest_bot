@@ -13,6 +13,7 @@ import { collectYouTubeVideos } from "./youtube/collector.js"
 import { YouTubeClient } from "./youtube/client.js"
 import { syncPlaylist } from "./youtube/playlist.js"
 import { getDigestDate } from "./utils.js"
+import { VIDEO_DAILY_CAP } from "./services/BotService.js"
 
 const PLAYLIST_WINDOW_DAYS = 7
 
@@ -105,7 +106,10 @@ async function runPlaylistSync() {
   if (!client.isReady()) return
 
   const date = getDigestDate()
-  const rows = getVideoRankingRows(adminId, date)
+  // getVideoRankingRows returns every ranked video for the date (hundreds), already
+  // ordered best-first — cap to the same size as the digest's own daily selection so
+  // the playlist can never ask for more inserts than the digest itself would ever show.
+  const rows = getVideoRankingRows(adminId, date).slice(0, VIDEO_DAILY_CAP)
   const posts = getPostsByIds(rows.map((r) => r.post_id))
   const postById = new Map(posts.map((p) => [p.id, p]))
   const picks = rows.map((r) => postById.get(r.post_id)?.post_id).filter(Boolean)
@@ -115,6 +119,9 @@ async function runPlaylistSync() {
 
   const result = await syncPlaylist({ client, picks, windowVideoIds })
   console.log(`[cron-job] Playlist synced: +${result.added} -${result.removed} (playlist ${result.playlistId})`)
+  if (result.skippedAdds || result.skippedRemoves) {
+    console.log(`[cron-job] Playlist write limit hit: skipped ${result.skippedAdds} adds, ${result.skippedRemoves} removes.`)
+  }
 }
 
 async function runMorningDigest() {

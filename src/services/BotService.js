@@ -36,7 +36,7 @@ import { computeBoost } from "../youtube/scoring.js"
 
 const VIDEO_WINDOW_DAYS = 7
 const VIDEO_LEAD_COUNT = 3
-const VIDEO_DAILY_CAP = 30
+export const VIDEO_DAILY_CAP = 30
 // The button says what one press delivers, so its label and this batch must not drift apart.
 export const VIDEO_TAIL_COUNT = 7
 const VIDEO_NORM_MIN_AGE_DAYS = 7
