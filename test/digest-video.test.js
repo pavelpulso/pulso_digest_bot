@@ -98,7 +98,7 @@ test("more candidates than the daily cap keep only the cap, remaining reflects t
 	const existing = db.getVideoCandidates(7, new Set())
 	db.markDigestShown(userId, existing.map((v) => v.id))
 
-	for (let i = 0; i < 12; i++) {
+	for (let i = 0; i < 35; i++) {
 		db.upsertVideo(`cap${i}`, `yt:@capchan${i}`, `capvid${i}`, `видео ${i}`, `https://youtube.com/watch?v=cap${i}`, 100, 600,
 			new Date(Date.now() - 86400_000).toISOString())
 	}
@@ -108,7 +108,7 @@ test("more candidates than the daily cap keep only the cap, remaining reflects t
 	})
 	const result = await service.selectVideosForDigest(userId)
 	assert.equal(result.videos.length, 3, "lead count is 3")
-	assert.equal(result.remaining, 7, "cap 10 minus lead 3")
+	assert.equal(result.remaining, 27, "cap 30 minus lead 3")
 })
 
 test("fewer candidates than the daily cap leave nothing remaining", async () => {
@@ -556,6 +556,202 @@ test("items missing a topic field do not break selection", async () => {
 	})
 	const result = await service.selectVideosForDigest(userId)
 	assert.equal(result.videos.length, 3, "missing topics still fill the lead")
+})
+
+test("pressing the tail repeatedly never exceeds the daily cap of 30", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 300
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	for (let i = 0; i < 40; i++) {
+		db.upsertVideo(`d30-${i}`, `yt:@d30chan${i}`, `d30v${i}`, `видео ${i}`, `https://youtube.com/watch?v=d30-${i}`, 100, 600,
+			new Date(Date.now() - 86400_000).toISOString())
+	}
+
+	const service = new BotService({
+		ai: { rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1 })) }
+	})
+
+	let total = 0
+	let result = await service.selectVideosForDigest(userId, { limit: 3 })
+	db.markDigestShown(userId, result.videos.map((v) => v.id))
+	total += result.videos.length
+
+	while (result.remaining > 0) {
+		result = await service.selectVideosForDigest(userId, { limit: 7 })
+		db.markDigestShown(userId, result.videos.map((v) => v.id))
+		total += result.videos.length
+	}
+
+	assert.equal(total, 30, "3 + 7 + 7 + 7 + 6 = 30, never more")
+})
+
+test("the button renders after a tail send while videos remain, and disappears once the cap of 30 is exhausted", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 301
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	for (let i = 0; i < 40; i++) {
+		db.upsertVideo(`btn-${i}`, `yt:@btnchan${i}`, `btnv${i}`, `видео ${i}`, `https://youtube.com/watch?v=btn-${i}`, 100, 600,
+			new Date(Date.now() - 86400_000).toISOString())
+	}
+
+	const sends = []
+	const telegram = { sendMessage: async (chatId, text, extra) => { sends.push({ text, extra }); return { message_id: sends.length } } }
+	const service = new BotService({
+		ai: {
+			rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1 })),
+			generateSummaryBlocks: async (videos) => ({ blocks: videos.map((v) => ({ ids: [v.id], essence: "e", emoji: "🎬" })) })
+		}
+	})
+	const hasMoreButton = () => sends.some((s) => JSON.stringify(s.extra || {}).includes("video_more"))
+
+	await service.sendVideoSection(telegram, userId, { limit: 3 })
+	assert.ok(hasMoreButton(), "the lead send offers the tail button")
+
+	sends.length = 0
+	await service.sendVideoSection(telegram, userId, { limit: 7, withHeader: false })
+	assert.ok(hasMoreButton(), "a tail send with videos still remaining offers another tail button")
+
+	sends.length = 0
+	await service.sendVideoSection(telegram, userId, { limit: 7, withHeader: false })
+	sends.length = 0
+	await service.sendVideoSection(telegram, userId, { limit: 7, withHeader: false })
+	sends.length = 0
+	await service.sendVideoSection(telegram, userId, { limit: 7, withHeader: false })
+	assert.ok(!hasMoreButton(), "once the cap of 30 is reached, no more button is offered")
+})
+
+test("a second selectVideosForDigest call for the same user and date reuses the persisted ranking instead of re-ranking", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 302
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	db.upsertVideo("pr1", "yt:@prchan1", "prv1", "видео 1", "https://youtube.com/watch?v=prv1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertVideo("pr2", "yt:@prchan2", "prv2", "видео 2", "https://youtube.com/watch?v=prv2", 200, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	let rankCalls = 0
+	const service = new BotService({
+		ai: { rankPosts: async (posts) => { rankCalls += 1; return posts.map((p) => ({ post_id: p.id, score: 1 })) } }
+	})
+
+	const first = await service.selectVideosForDigest(userId, { limit: 10 })
+	const second = await service.selectVideosForDigest(userId, { limit: 10 })
+
+	assert.equal(rankCalls, 1, "the second call must not re-rank")
+	assert.deepEqual(second.videos.map((v) => v.id).sort(), first.videos.map((v) => v.id).sort(),
+		"the candidates returned are consistent between calls")
+})
+
+test("the persisted ranking survives a fresh BotService instance, proving it lives in the db, not memory", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 303
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	db.upsertVideo("fresh-svc1", "yt:@freshsvcchan", "fsv1", "видео", "https://youtube.com/watch?v=fsv1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	let rankCalls = 0
+	const rankStub = { rankPosts: async (posts) => { rankCalls += 1; return posts.map((p) => ({ post_id: p.id, score: 1 })) } }
+
+	const first = new BotService({ ai: rankStub })
+	await first.selectVideosForDigest(userId, { limit: 10 })
+
+	const second = new BotService({ ai: rankStub })
+	const result = await second.selectVideosForDigest(userId, { limit: 10 })
+
+	assert.equal(rankCalls, 1, "a brand-new service instance still reads the persisted ranking")
+	assert.ok(result.videos.some((v) => v.id === "fresh-svc1"))
+})
+
+test("a different digest date re-ranks instead of reusing yesterday's persisted ranking", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 304
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	db.upsertVideo("dt-1", "yt:@dtchan1", "dtv1", "видео", "https://youtube.com/watch?v=dtv1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	let rankCalls = 0
+	const service = new BotService({
+		ai: { rankPosts: async (posts) => { rankCalls += 1; return posts.map((p) => ({ post_id: p.id, score: 1 })) } }
+	})
+
+	await service.selectVideosForDigest(userId, { limit: 10 })
+	assert.equal(rankCalls, 1)
+
+	service.digestDate = () => "1999-01-01"
+	await service.selectVideosForDigest(userId, { limit: 10 })
+	assert.equal(rankCalls, 2, "a different date has no persisted ranking yet, so it re-ranks")
+})
+
+test("a video's topic round-trips through the rankings table", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 305
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	db.upsertVideo("topic-rt1", "yt:@topicrtchan", "trv1", "видео", "https://youtube.com/watch?v=trv1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const service = new BotService({
+		ai: { rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1, topic: "технологии" })) }
+	})
+	await service.selectVideosForDigest(userId, { limit: 10 })
+
+	const date = service.digestDate()
+	const row = db.getVideoRankingRows(userId, date).find((r) => r.post_id === "topic-rt1")
+	assert.ok(row, "the video's ranking row is persisted")
+	assert.equal(row.topic, "технологии", "the topic survives the round trip through rankings")
+})
+
+test("ensureRankingsForDate re-ranking text posts does not delete that day's video rankings", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 306
+	const date = "2026-01-18"
+	db.getOrCreateUser(userId)
+
+	db.upsertPost("txt-er1", "erchan", 1, "текст", "https://t.me/erchan/1", 5, `${date}T10:00:00.000Z`)
+	db.upsertVideo("vid-er1", "yt:@ervidchan", "erv1", "видео", "https://youtube.com/watch?v=erv1", 100, 600, `${date}T09:00:00.000Z`)
+	db.insertRankings(userId, date, [{ id: "r-vid-er1", post_id: "vid-er1", score: 0.9, reason: "video", topic: "видео" }])
+
+	const service = new BotService({
+		ai: { rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 0.7, reason: "text reason" })) }
+	})
+	await service.ensureRankingsForDate(userId, date, "")
+
+	assert.ok(db.getRankedPostIds(userId, date, 10).includes("txt-er1"), "the text digest got ranked")
+	assert.ok(db.getVideoRankingRows(userId, date).some((r) => r.post_id === "vid-er1"),
+		"the pre-existing video ranking for the same day survives the text re-rank")
+})
+
+test("writing a fresh video ranking does not disturb an existing text ranking for the same day", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 307
+	db.getOrCreateUser(userId)
+	db.markDigestShown(userId, db.getVideoCandidates(7, new Set()).map((v) => v.id))
+
+	db.upsertVideo("vid-wr1", "yt:@wrvidchan", "wrv1", "видео", "https://youtube.com/watch?v=wrv1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const service = new BotService({
+		ai: { rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1, topic: "т" })) }
+	})
+	const date = service.digestDate()
+	db.upsertPost("txt-wr1", "wrchan", 1, "текст существующий", "https://t.me/wrchan/1", 5, `${date}T10:00:00.000Z`)
+	db.insertRankings(userId, date, [{ id: "r-txt-wr1", post_id: "txt-wr1", score: 0.5, reason: "existing text" }])
+
+	await service.selectVideosForDigest(userId, { limit: 10 })
+
+	assert.ok(db.getRankedPostIds(userId, date, 10).includes("txt-wr1"),
+		"the existing text ranking for the day is untouched by writing the video ranking")
 })
 
 test("both the most-viewed and the longest picks are stable across repeated calls when tied", () => {

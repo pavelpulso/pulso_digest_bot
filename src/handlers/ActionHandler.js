@@ -692,8 +692,7 @@ export class ActionHandler extends BaseHandler {
 
 		const sent = await this.mgr.service.sendVideoSection(ctx.telegram, userId, {
 			limit: VIDEO_TAIL_COUNT,
-			withHeader: false,
-			withMore: false
+			withHeader: false
 		})
 		if (sent === 0) await ctx.reply("Больше видео за неделю нет.")
 	}
