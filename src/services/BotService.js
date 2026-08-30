@@ -37,6 +37,8 @@ import { computeBoost } from "../youtube/scoring.js"
 export const VIDEO_WINDOW_DAYS = 7
 const VIDEO_LEAD_COUNT = 3
 export const VIDEO_DAILY_CAP = 30
+// Size of the synced YouTube playlist (a showcase), distinct from VIDEO_DAILY_CAP (the digest's daily ceiling).
+export const PLAYLIST_SIZE = 20
 // The button says what one press delivers, so its label and this batch must not drift apart.
 export const VIDEO_TAIL_COUNT = 7
 const VIDEO_NORM_MIN_AGE_DAYS = 7
