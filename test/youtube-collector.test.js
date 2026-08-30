@@ -110,9 +110,38 @@ test("a feed returning 15 entries all inside the window is flagged as possibly t
 
 	const result = await collectYouTubeVideos({ client, fetchFeeds, now: new Date("2026-08-29T12:00:00Z") })
 	assert.ok(
-		result.errors.some((e) => e.includes("@chan1") && /truncated/i.test(e)),
-		"a full 15-entry feed entirely inside the window is called out, not silently accepted"
+		result.warnings.some((e) => e.includes("@chan1") && /truncated/i.test(e)),
+		"a full 15-entry feed entirely inside the window is called out as a warning, not silently accepted"
 	)
+	assert.ok(
+		!result.errors.some((e) => /truncated/i.test(e)),
+		"a truncation notice is informational and must not land in errors"
+	)
+})
+
+test("a run with only warnings (no errors) is the seam cron-job.js uses to skip the admin alert", async () => {
+	const client = fakeClient()
+	const fifteenFresh = Array.from({ length: 15 }, (_, i) => ({
+		videoId: `fresh${i}`,
+		publishedAt: "2026-08-29T08:00:00Z"
+	}))
+	const fetchFeeds = fakeFetchFeeds({ UC1: fifteenFresh })
+
+	const result = await collectYouTubeVideos({ client, fetchFeeds, now: new Date("2026-08-29T12:00:00Z") })
+	assert.equal(result.errors.length, 0, "no genuine failures happened")
+	assert.ok(result.warnings.length > 0, "the truncation notice is still recorded, just not as an error")
+	// cron-job.js's alertAdmin is not exported/injectable, so we assert on this contract
+	// (errors.length === 0 while warnings.length > 0) rather than exercising runCollection directly.
+})
+
+test("warnings round-trip through the settings storage", async () => {
+	const payload = { warnings: ["yt:Foo: feed returned 15 entries..."], collected: 3, ranAt: "2026-08-29T12:00:00.000Z" }
+	db.setSetting("yt_last_warnings", JSON.stringify(payload))
+
+	const raw = db.getSetting("yt_last_warnings")
+	const restored = JSON.parse(raw)
+
+	assert.deepEqual(restored, payload)
 })
 
 test("a feed returning 15 entries where the oldest falls outside the window is NOT flagged as truncated", async () => {
@@ -191,8 +220,12 @@ test("colliding subscription titles are reported, not silently dropped", async (
 
 	const result = await collectYouTubeVideos({ client, fetchFeeds: fakeFetchFeeds(), now: new Date("2026-08-29T12:00:00Z") })
 	assert.ok(
-		result.errors.some((e) => e.includes("@chan1") && e.includes("UC1") && e.includes("UC2")),
-		"the collision names both channel ids"
+		result.warnings.some((e) => e.includes("@chan1") && e.includes("UC1") && e.includes("UC2")),
+		"the collision names both channel ids, and is a warning, not an error"
+	)
+	assert.ok(
+		!result.errors.some((e) => e.includes("collides")),
+		"a same-title collision must not land in errors"
 	)
 })
 

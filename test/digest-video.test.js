@@ -769,3 +769,47 @@ test("both the most-viewed and the longest picks are stable across repeated call
 	assert.deepEqual(first, second, "the same tie-break winners are returned on repeated calls")
 	assert.equal(first.length, 1, "a full tie on both views and duration still collapses to one row")
 })
+
+test("pruneOldVideoRankings deletes video rankings older than the cutoff", () => {
+	const userId = 91
+	db.getOrCreateUser(userId)
+
+	db.upsertVideo("prune-old-v1", "yt:@prunechan", "pruneold1", "видео", "https://youtube.com/watch?v=pruneold1", 100, 600,
+		new Date(Date.now() - 10 * 86400_000).toISOString())
+
+	db.insertRankings(userId, "2020-01-01", [{ id: "r-prune-old1", post_id: "prune-old-v1", score: 1, reason: "old" }])
+
+	const deleted = db.pruneOldVideoRankings("2020-06-01")
+	assert.ok(deleted >= 1, "at least the seeded stale row was deleted")
+
+	const row = db.default.prepare("SELECT id FROM rankings WHERE id = ?").get("r-prune-old1")
+	assert.equal(row, undefined, "the stale video ranking is gone")
+})
+
+test("pruneOldVideoRankings leaves video rankings inside the cutoff untouched", () => {
+	const userId = 92
+	db.getOrCreateUser(userId)
+
+	db.upsertVideo("prune-fresh-v1", "yt:@prunechan2", "prunefresh1", "видео", "https://youtube.com/watch?v=prunefresh1", 100, 600,
+		new Date(Date.now() - 2 * 86400_000).toISOString())
+
+	db.insertRankings(userId, "2026-08-29", [{ id: "r-prune-fresh1", post_id: "prune-fresh-v1", score: 1, reason: "fresh" }])
+
+	db.pruneOldVideoRankings("2026-08-27")
+
+	const row = db.default.prepare("SELECT id FROM rankings WHERE id = ?").get("r-prune-fresh1")
+	assert.ok(row, "the fresh video ranking survives")
+})
+
+test("pruneOldVideoRankings never touches text-post rankings, regardless of age", () => {
+	const userId = 93
+	db.getOrCreateUser(userId)
+
+	db.upsertPost("prune-old-tg1", "prunetgchan", 999, "текст", "https://t.me/prunetgchan/999", 5, "2020-01-01T10:00:00.000Z")
+	db.insertRankings(userId, "2020-01-01", [{ id: "r-prune-old-tg1", post_id: "prune-old-tg1", score: 1, reason: "old text" }])
+
+	db.pruneOldVideoRankings("2026-08-29")
+
+	const row = db.default.prepare("SELECT id FROM rankings WHERE id = ?").get("r-prune-old-tg1")
+	assert.ok(row, "a text ranking of any age is untouched — videos only")
+})
