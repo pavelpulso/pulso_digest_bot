@@ -114,6 +114,7 @@ export class BotManager {
 		this.bot.action("digest", (ctx) => act.handleDigest(ctx))
 		this.bot.action("video_more", (ctx) => act.handleVideoMore(ctx))
 		this.bot.action(/^watched:(.+)$/, (ctx) => act.handleVideoWatched(ctx))
+		this.bot.action("watched_noop", (ctx) => act.handleWatchedNoop(ctx))
 		this.bot.action("summary", (ctx) => act.handleSummary(ctx))
 		this.bot.action(/^summary_day:(.+)$/, (ctx) => act.handleSummaryDay(ctx))
 

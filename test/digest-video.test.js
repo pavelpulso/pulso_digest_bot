@@ -911,3 +911,34 @@ test("the /liked cap reports the remainder honestly", () => {
 	const remaining = total - rows.length
 	assert.equal(remaining, 3, "the honest remainder outside the cap")
 })
+
+test("marking watched swaps the keyboard for an inert button and never rewrites the message text", async () => {
+	const { ActionHandler } = await import("../src/handlers/ActionHandler.js")
+	const userId = 405
+	db.getOrCreateUser(userId)
+	db.upsertVideo("noop-vid1", "yt:@noopchan", "noopv1", "заголовок", "https://youtube.com/watch?v=noopv1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertPostFeedback(userId, "noop-vid1", 1)
+
+	const action = new ActionHandler({})
+	let textEdited = false
+	let newMarkup = null
+	const ctx = {
+		match: [null, "noop-vid1"],
+		from: { id: userId },
+		answerCbQuery: async () => {},
+		editMessageText: async () => { textEdited = true },
+		editMessageReplyMarkup: async (markup) => { newMarkup = markup }
+	}
+
+	await action.handleVideoWatched(ctx)
+
+	assert.equal(textEdited, false, "the message text — and its link — is never touched")
+	assert.ok(newMarkup, "the keyboard is replaced")
+	assert.match(JSON.stringify(newMarkup), /Посмотрено/, "the button reads as done")
+
+	const row = db.default.prepare("SELECT rating, watched_at FROM post_feedback WHERE user_id = ? AND post_id = ?")
+		.get(userId, "noop-vid1")
+	assert.equal(row.rating, 1, "rating is still untouched")
+	assert.ok(row.watched_at, "watched_at is still stamped")
+})

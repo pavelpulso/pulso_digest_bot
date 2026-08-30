@@ -708,9 +708,15 @@ export class ActionHandler extends BaseHandler {
 
 		await this.safeAnswerCbQuery(ctx, "Отмечено")
 
+		// Message text keeps its link intact — only the keyboard changes, to an inert button.
 		try {
-			const text = ctx.callbackQuery?.message?.text || ""
-			await ctx.editMessageText(`✅ ${text}`, { disable_web_page_preview: true })
+			await ctx.editMessageReplyMarkup({
+				inline_keyboard: [[{ text: "✅ Посмотрено", callback_data: "watched_noop" }]]
+			})
 		} catch { /* Ignore */ }
+	}
+
+	async handleWatchedNoop(ctx) {
+		await this.safeAnswerCbQuery(ctx, "Уже отмечено")
 	}
 }
