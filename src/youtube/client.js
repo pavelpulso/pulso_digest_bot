@@ -202,6 +202,29 @@ export class YouTubeClient {
     return json.id
   }
 
+  /** Newest-first liked video ids. `maxPages` defaults to 2 (100 videos): we only want
+   * recent likes to turn into feedback, and a user with a lifelong like history must not
+   * turn this into an unbounded crawl at 1 quota unit per page. */
+  async listLikedVideos({ maxPages = 2 } = {}) {
+    const out = []
+    let pageToken = ""
+    let pages = 0
+    do {
+      const json = await this.#get("videos", {
+        part: "id",
+        myRating: "like",
+        maxResults: String(BATCH_SIZE),
+        ...(pageToken ? { pageToken } : {})
+      })
+      for (const it of json.items || []) {
+        if (it.id) out.push(it.id)
+      }
+      pageToken = json.nextPageToken || ""
+      pages++
+    } while (pageToken && pages < maxPages)
+    return out
+  }
+
   /** Returns both ids: removing an entry needs the playlistItem id, not the video id. */
   async listPlaylistItemIds(playlistId) {
     const out = []

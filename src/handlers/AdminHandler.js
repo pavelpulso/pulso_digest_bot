@@ -6,7 +6,8 @@ import {
 	unbanUserByUsernameOrId,
 	getSetting,
 	getActiveYouTubeChannels,
-	getDormantYouTubeChannelsDueForRecheck
+	getDormantYouTubeChannelsDueForRecheck,
+	getYouTubeHitRate
 } from "../db.js"
 import { ACTIVE_DAYS, RECHECK_DAYS } from "../youtube/collector.js"
 
@@ -50,16 +51,20 @@ export class AdminHandler extends BaseHandler {
 		const active = getActiveYouTubeChannels(ACTIVE_DAYS).length
 		const dormant = getDormantYouTubeChannelsDueForRecheck(ACTIVE_DAYS, RECHECK_DAYS).length
 
+		const since7d = new Date(Date.now() - 7 * 86400_000).toISOString()
+		const { shown: shownCount, liked: likedCount } = getYouTubeHitRate(ctx.from.id, since7d)
+		const hitRateLine = `YouTube likes (7d): ${likedCount}/${shownCount} shown videos liked\n`
+
 		const raw = getSetting("yt_last_warnings")
 		if (!raw) {
-			return ctx.reply(`📺 YouTube status\n\nChannels: ${active} active, ${dormant} dormant\nNo collection run recorded yet.`)
+			return ctx.reply(`📺 YouTube status\n\nChannels: ${active} active, ${dormant} dormant\n${hitRateLine}No collection run recorded yet.`)
 		}
 
 		let snapshot
 		try {
 			snapshot = JSON.parse(raw)
 		} catch (e) {
-			return ctx.reply(`📺 YouTube status\n\nChannels: ${active} active, ${dormant} dormant\n⚠️ Last run snapshot is unreadable (corrupt stored value).`)
+			return ctx.reply(`📺 YouTube status\n\nChannels: ${active} active, ${dormant} dormant\n${hitRateLine}⚠️ Last run snapshot is unreadable (corrupt stored value).`)
 		}
 
 		const { warnings, collected, ranAt } = snapshot
@@ -73,7 +78,8 @@ export class AdminHandler extends BaseHandler {
 			"📺 YouTube status\n\n" +
 			`Last run: ${new Date(ranAt).toLocaleString()}\n` +
 			`Collected: ${collected}\n` +
-			`Channels: ${active} active, ${dormant} dormant\n\n` +
+			`Channels: ${active} active, ${dormant} dormant\n` +
+			hitRateLine + "\n" +
 			`Warnings:\n${warningsText}`
 		)
 	}

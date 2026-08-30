@@ -6,7 +6,7 @@
 
 import "dotenv/config"
 import { collectChannelPosts } from "./gramjs.js"
-import { getChannelUsernames, addChannel, setSetting, pruneOldVideoRankings, getVideoRankingRows, getPostsByIds, getVideosInWindow } from "./db.js"
+import { getChannelUsernames, addChannel, setSetting, pruneOldVideoRankings, getVideoRankingRows, getPostsByIds, getVideosInWindow, recordYouTubeLikes } from "./db.js"
 import bot from "./bot.js"
 import { sendMorningDigests } from "./bot.js"
 import { collectYouTubeVideos } from "./youtube/collector.js"
@@ -84,6 +84,20 @@ async function runCollection() {
     } catch (e) {
       console.error("[cron-job] YouTube collection failed:", e.message)
       await alertAdmin(`YouTube collection failed: ${e.message}`)
+    }
+
+    // Own try/catch: a liked-videos fetch failure must never affect collection above.
+    try {
+      const adminId = parseInt(process.env.ADMIN_ID, 10) || 0
+      const client = new YouTubeClient()
+      if (adminId && client.isReady()) {
+        const likedVideoIds = await client.listLikedVideos()
+        const recorded = recordYouTubeLikes(adminId, likedVideoIds)
+        console.log(`[cron-job] Recorded ${recorded} YouTube likes as feedback.`)
+      }
+    } catch (e) {
+      console.error("[cron-job] YouTube likes fetch failed:", e.message)
+      await alertAdmin(`YouTube likes fetch failed: ${e.message}`)
     }
 
     console.log("[cron-job] Completed successfully.")

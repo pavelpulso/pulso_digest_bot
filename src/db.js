@@ -192,6 +192,9 @@ const postFeedbackCols = db.prepare("PRAGMA table_info(post_feedback)").all().ma
 if (!postFeedbackCols.includes("watched_at")) {
   addColumn("ALTER TABLE post_feedback ADD COLUMN watched_at TEXT")
 }
+if (!postFeedbackCols.includes("source")) {
+  addColumn("ALTER TABLE post_feedback ADD COLUMN source TEXT NOT NULL DEFAULT 'bot'")
+}
 
 // digest_feedback: overall digest rating (1 = useful, 0 = so-so, -1 = irrelevant)
 db.exec(`
@@ -642,28 +645,85 @@ export function upsertPostFeedback(userId, postId, rating) {
   return r
 }
 
+/** Records a YouTube-native like as 👍 feedback, matched to posts by video id (source='yt').
+ * Never overwrites: if the user already rated the post (bot 👍 or 👎), that was a deliberate
+ * judgement and wins over a later YouTube like, so this only inserts where no row exists yet.
+ * Also stamps watched_at: a YouTube like is only possible after watching, so the like itself
+ * IS the evidence — without this the row would sit in /liked's unwatched queue forever. */
+export function recordYouTubeLikes(userId, videoIds) {
+  if (!videoIds || videoIds.length === 0) return 0
+  const placeholders = videoIds.map(() => "?").join(",")
+  const matched = db.prepare(
+    `SELECT id FROM posts WHERE source = 'yt' AND post_id IN (${placeholders})`
+  ).all(...videoIds)
+  if (matched.length === 0) return 0
+
+  const insertStmt = db.prepare(
+    `INSERT OR IGNORE INTO post_feedback (user_id, post_id, rating, source, watched_at)
+     VALUES (?, ?, 1, 'youtube', datetime('now'))`
+  )
+  const tx = db.transaction((rows) => {
+    let inserted = 0
+    for (const row of rows) {
+      if (insertStmt.run(userId, row.id).changes > 0) inserted++
+    }
+    return inserted
+  })
+  return tx(matched)
+}
+
+/** Of the videos shown in the digest since `sinceIso`, how many were later liked on YouTube
+ * (post-shown, source='youtube') — the hit-rate behind /yt_status. */
+export function getYouTubeHitRate(userId, sinceIso) {
+  const shownRow = db.prepare(
+    `SELECT COUNT(*) AS cnt
+     FROM digest_shown ds
+     JOIN posts p ON p.id = ds.post_id
+     WHERE ds.user_id = ? AND ds.shown_at >= ? AND p.source = 'yt'`
+  ).get(userId, sinceIso)
+
+  const likedRow = db.prepare(
+    `SELECT COUNT(*) AS cnt
+     FROM digest_shown ds
+     JOIN posts p ON p.id = ds.post_id
+     JOIN post_feedback f ON f.user_id = ds.user_id AND f.post_id = ds.post_id
+     WHERE ds.user_id = ? AND ds.shown_at >= ? AND p.source = 'yt'
+       AND f.source = 'youtube' AND f.rating = 1 AND f.created_at >= ds.shown_at`
+  ).get(userId, sinceIso)
+
+  return { shown: shownRow?.cnt || 0, liked: likedRow?.cnt || 0 }
+}
+
 const FEEDBACK_EXAMPLES_PER_SIDE = 8
 const FEEDBACK_EXCERPT_CHARS = 140
 
-/** Returns { liked: string[], disliked: string[] } excerpts for last 90 days (for ranking prompt). */
+/** Returns { likedWatched, likedDigest, disliked } excerpts for last 90 days (for ranking
+ * prompt). Split by how the like was formed: likedWatched is a YouTube like (source='youtube')
+ * — the reader actually watched the video before judging it. likedDigest is a bot 👍
+ * (source='bot') — a pre-watch guess about the headline alone. Pooling the two would discard
+ * exactly the distinction post_feedback.source exists to capture, so they stay separate groups. */
 export function getPostFeedbackForRanking(userId) {
   const since = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString()
   const rows = db.prepare(
-    `SELECT f.rating, p.text
+    `SELECT f.rating, f.source, p.text
      FROM post_feedback f
      JOIN posts p ON p.id = f.post_id
      WHERE f.user_id = ? AND f.created_at >= ? AND p.text IS NOT NULL AND p.text != ''
      ORDER BY f.created_at DESC`
   ).all(userId, since)
 
-  const liked = []
+  const likedWatched = []
+  const likedDigest = []
   const disliked = []
   for (const r of rows) {
-    const target = r.rating === 1 ? liked : disliked
+    let target
+    if (r.rating !== 1) target = disliked
+    else if (r.source === "youtube") target = likedWatched
+    else target = likedDigest
     if (target.length >= FEEDBACK_EXAMPLES_PER_SIDE) continue
     target.push(r.text.replace(/\s+/g, " ").trim().slice(0, FEEDBACK_EXCERPT_CHARS))
   }
-  return { liked, disliked }
+  return { likedWatched, likedDigest, disliked }
 }
 
 /** Returns Set of post_id that user already rated (to hide or disable buttons). */
