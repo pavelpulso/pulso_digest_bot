@@ -1,4 +1,5 @@
 import { BaseHandler } from "./BaseHandler.js"
+import { VIDEO_TAIL_COUNT } from "../services/BotService.js"
 import { KeyboardProvider } from "../ui/KeyboardProvider.js"
 import { UIFormatter } from "../ui/UIFormatter.js"
 import { StatusMessage } from "../services/StatusMessage.js"
@@ -23,7 +24,6 @@ import {
 import { formatDateLabel, formatChannelList } from "../utils.js"
 import { collectChannelPosts, fetchRecentPostsFromChannel } from "../gramjs.js"
 
-const VIDEO_TAIL_COUNT = 7
 
 export class ActionHandler extends BaseHandler {
 	async handleMore(ctx) {

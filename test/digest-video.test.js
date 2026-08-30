@@ -813,3 +813,20 @@ test("pruneOldVideoRankings never touches text-post rankings, regardless of age"
 	const row = db.default.prepare("SELECT id FROM rankings WHERE id = ?").get("r-prune-old-tg1")
 	assert.ok(row, "a text ranking of any age is untouched — videos only")
 })
+
+test("the tail button promises what one press delivers, not the whole backlog", async () => {
+	const { KeyboardProvider } = await import("../src/ui/KeyboardProvider.js")
+	const { VIDEO_TAIL_COUNT } = await import("../src/services/BotService.js")
+
+	const many = KeyboardProvider.videoMoreKeyboard(23, VIDEO_TAIL_COUNT)
+	assert.match(
+		many.reply_markup.inline_keyboard[0][0].text,
+		new RegExp(`Ещё ${VIDEO_TAIL_COUNT} видео`),
+		"a large backlog still offers one batch, since that is what the press sends"
+	)
+
+	const few = KeyboardProvider.videoMoreKeyboard(2, VIDEO_TAIL_COUNT)
+	assert.match(few.reply_markup.inline_keyboard[0][0].text, /Ещё 2 видео/, "a short tail says its real size")
+
+	assert.equal(KeyboardProvider.videoMoreKeyboard(0, VIDEO_TAIL_COUNT), undefined)
+})

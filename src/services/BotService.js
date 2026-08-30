@@ -37,6 +37,8 @@ import { computeBoost } from "../youtube/scoring.js"
 const VIDEO_WINDOW_DAYS = 7
 const VIDEO_LEAD_COUNT = 3
 const VIDEO_DAILY_CAP = 30
+// The button says what one press delivers, so its label and this batch must not drift apart.
+export const VIDEO_TAIL_COUNT = 7
 const VIDEO_NORM_MIN_AGE_DAYS = 7
 const VIDEO_NORM_MAX_AGE_DAYS = 90
 
@@ -193,7 +195,7 @@ export class BotService {
 			// Кнопка живёт, пока в пределах дневного лимита остаются непоказанные видео —
 			// на лидирующей отправке и на хвосте одинаково; withMore=false остаётся
 			// явным способом подавить её отдельно от самого remaining.
-			const moreKb = withMore ? KeyboardProvider.videoMoreKeyboard(picked.remaining) : undefined
+			const moreKb = withMore ? KeyboardProvider.videoMoreKeyboard(picked.remaining, VIDEO_TAIL_COUNT) : undefined
 			if (moreKb) {
 				await telegram.sendMessage(userId, "…", { parse_mode: "HTML", ...moreKb })
 			}

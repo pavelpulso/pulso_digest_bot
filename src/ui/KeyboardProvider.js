@@ -184,12 +184,13 @@ export class KeyboardProvider {
 		}
 	}
 
-	static videoMoreKeyboard(remaining) {
+	static videoMoreKeyboard(remaining, batchSize = remaining) {
 		if (!remaining || remaining <= 0) return undefined
+		const count = Math.min(remaining, batchSize)
 		return {
 			reply_markup: {
 				inline_keyboard: [[
-					{ text: `📺 Ещё ${remaining} видео`, callback_data: "video_more" }
+					{ text: `📺 Ещё ${count} видео`, callback_data: "video_more" }
 				]]
 			}
 		}
