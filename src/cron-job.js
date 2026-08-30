@@ -6,7 +6,7 @@
 
 import "dotenv/config"
 import { collectChannelPosts } from "./gramjs.js"
-import { getChannelUsernames, addChannel, setSetting } from "./db.js"
+import { getChannelUsernames, addChannel, setSetting, pruneOldVideoRankings } from "./db.js"
 import bot from "./bot.js"
 import { sendMorningDigests } from "./bot.js"
 import { collectYouTubeVideos } from "./youtube/collector.js"
@@ -72,6 +72,12 @@ async function runCollection() {
         await alertAdmin(`YouTube: ${yt.errors.slice(0, 5).join("\n")}`)
       }
       console.log(`[cron-job] Collected ${yt.collected} videos.`)
+
+      // Video rankings re-rank from scratch every day; 2 days of slack so a late-night
+      // run or timezone edge cannot delete rows the current day still reads.
+      const cutoff = new Date(Date.now() - 2 * 86400_000).toISOString().slice(0, 10)
+      const pruned = pruneOldVideoRankings(cutoff)
+      if (pruned > 0) console.log(`[cron-job] Pruned ${pruned} stale video rankings.`)
     } catch (e) {
       console.error("[cron-job] YouTube collection failed:", e.message)
       await alertAdmin(`YouTube collection failed: ${e.message}`)

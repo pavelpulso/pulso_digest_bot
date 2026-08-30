@@ -492,6 +492,20 @@ export function clearRankingsForUser(userId, date, source = "tg") {
   ).run(userId, date, source)
 }
 
+/** Video rankings are re-ranked from scratch every day, so old rows are pure dead weight.
+ * `beforeDate` is exclusive-lower-bound as a YYYY-MM-DD string; callers should pass a cutoff
+ * a couple of days back so a late-night run or timezone edge cannot delete rows the current
+ * day still reads. Only rankings are pruned — the underlying yt posts stay (the channel view
+ * norm needs videos aged 7-90 days), and text-post rankings are untouched. */
+export function pruneOldVideoRankings(beforeDate) {
+  const result = db.prepare(
+    `DELETE FROM rankings WHERE date < ? AND post_id IN (
+       SELECT id FROM posts WHERE source = 'yt'
+     )`
+  ).run(beforeDate)
+  return result.changes
+}
+
 export function insertRankings(userId, date, items) {
   if (items.length === 0) return
   const normalized = items.map((it) => ({ ...it, post_id: String(it.post_id).trim() }))

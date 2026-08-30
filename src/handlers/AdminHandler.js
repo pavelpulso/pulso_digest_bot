@@ -55,8 +55,19 @@ export class AdminHandler extends BaseHandler {
 			return ctx.reply(`📺 YouTube status\n\nChannels: ${active} active, ${dormant} dormant\nNo collection run recorded yet.`)
 		}
 
-		const { warnings, collected, ranAt } = JSON.parse(raw)
-		const warningsText = warnings.length ? warnings.map((w) => `• ${w}`).join("\n") : "No warnings."
+		let snapshot
+		try {
+			snapshot = JSON.parse(raw)
+		} catch (e) {
+			return ctx.reply(`📺 YouTube status\n\nChannels: ${active} active, ${dormant} dormant\n⚠️ Last run snapshot is unreadable (corrupt stored value).`)
+		}
+
+		const { warnings, collected, ranAt } = snapshot
+		const shown = warnings.slice(0, 5)
+		const omitted = warnings.length - shown.length
+		const warningsText = shown.length
+			? shown.map((w) => `• ${w}`).join("\n") + (omitted > 0 ? `\n... and ${omitted} more` : "")
+			: "No warnings."
 
 		return ctx.reply(
 			"📺 YouTube status\n\n" +
