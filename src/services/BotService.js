@@ -24,7 +24,8 @@ import {
 	getShownPostIds,
 	markDigestShown,
 	getVideoCandidates,
-	getChannelViewNorms
+	getChannelViewNorms,
+	getVideoRankingRows
 } from "../db.js"
 import { getUserSystemPrompt } from "./SystemPromptLoader.js"
 import { formatDateLabel, MIN_DIGEST_SCORE, DIGEST_PAGE_SIZE, getDigestDate } from "../utils.js"
@@ -35,7 +36,7 @@ import { computeBoost } from "../youtube/scoring.js"
 
 const VIDEO_WINDOW_DAYS = 7
 const VIDEO_LEAD_COUNT = 3
-const VIDEO_DAILY_CAP = 10
+const VIDEO_DAILY_CAP = 30
 const VIDEO_NORM_MIN_AGE_DAYS = 7
 const VIDEO_NORM_MAX_AGE_DAYS = 90
 
@@ -49,31 +50,58 @@ export class BotService {
 	}
 
 	/**
-	 * Топ видео за скользящее окно. Показанные лежат в digest_shown, поэтому
-	 * повторный вызов естественно отдаёт следующие — хвост нигде не хранится.
+	 * Топ видео за скользящее окно. Ранжирование — это ~7 запросов к модели на ~230
+	 * кандидатов (около 100с), поэтому оно один раз в день пишется в rankings и на
+	 * повторных вызовах читается оттуда, а не пересчитывается. digest_shown решает,
+	 * какие из сохранённых кандидатов ещё не показаны — кэшируется ранжирование,
+	 * а не сама выборка.
 	 */
 	async selectVideosForDigest(userId, { limit = VIDEO_LEAD_COUNT } = {}) {
+		const date = this.digestDate()
 		const shown = getShownPostIds(userId)
-		const candidates = this.filterPostsForUser(getVideoCandidates(VIDEO_WINDOW_DAYS, shown, userId), userId)
-		if (candidates.length === 0) return { videos: [], remaining: 0, reasonById: new Map() }
 
-		const user = getOrCreateUser(userId)
-		const priorities = getUserChannelPriorities(userId)
-		const feedback = getPostFeedbackForRanking(userId)
-		const systemPrompt = await getUserSystemPrompt(user)
-		const ranked = await this.mgr.ai.rankPosts(candidates, user.profile || "", { channelPriorities: priorities, feedback, systemPrompt })
-		const scoreById = new Map(ranked.map((r) => [String(r.post_id), Number(r.score) || 0]))
-		const reasonById = new Map(ranked.map((r) => [String(r.post_id), r.reason || null]))
-		const topicById = new Map(ranked.map((r) => [String(r.post_id), r.topic || null]))
-		const norms = getChannelViewNorms(VIDEO_NORM_MIN_AGE_DAYS, VIDEO_NORM_MAX_AGE_DAYS)
+		let scored, reasonById
+		const rankedRows = getVideoRankingRows(userId, date)
+		if (rankedRows.length > 0) {
+			const posts = getPostsByIds(rankedRows.map((r) => r.post_id))
+			const postById = new Map(posts.map((p) => [p.id, p]))
+			scored = rankedRows
+				.filter((r) => postById.has(r.post_id))
+				.map((r) => ({ video: postById.get(r.post_id), score: r.score, topic: r.topic || null }))
+			reasonById = new Map(rankedRows.map((r) => [String(r.post_id), r.reason || null]))
+		} else {
+			const candidates = this.filterPostsForUser(getVideoCandidates(VIDEO_WINDOW_DAYS, shown, userId), userId)
+			if (candidates.length === 0) return { videos: [], remaining: 0, reasonById: new Map() }
 
-		const scored = candidates.map((v) => {
-			const norm = norms.get(v.channel) || { medianViews: 0, maturedCount: 0 }
-			const boost = computeBoost(v.views, norm.medianViews, norm.maturedCount)
-			return { video: v, score: (scoreById.get(v.id) || 0) * (1 + boost), topic: topicById.get(v.id) || null }
-		}).sort((a, b) => b.score - a.score)
+			const user = getOrCreateUser(userId)
+			const priorities = getUserChannelPriorities(userId)
+			const feedback = getPostFeedbackForRanking(userId)
+			const systemPrompt = await getUserSystemPrompt(user)
+			const ranked = await this.mgr.ai.rankPosts(candidates, user.profile || "", { channelPriorities: priorities, feedback, systemPrompt })
+			const scoreById = new Map(ranked.map((r) => [String(r.post_id), Number(r.score) || 0]))
+			reasonById = new Map(ranked.map((r) => [String(r.post_id), r.reason || null]))
+			const topicById = new Map(ranked.map((r) => [String(r.post_id), r.topic || null]))
+			const norms = getChannelViewNorms(VIDEO_NORM_MIN_AGE_DAYS, VIDEO_NORM_MAX_AGE_DAYS)
 
-		const capped = scored.slice(0, VIDEO_DAILY_CAP)
+			scored = candidates.map((v) => {
+				const norm = norms.get(v.channel) || { medianViews: 0, maturedCount: 0 }
+				const boost = computeBoost(v.views, norm.medianViews, norm.maturedCount)
+				return { video: v, score: (scoreById.get(v.id) || 0) * (1 + boost), topic: topicById.get(v.id) || null }
+			}).sort((a, b) => b.score - a.score)
+
+			clearRankingsForUser(userId, date, "yt")
+			insertRankings(userId, date, scored.map((s) => ({
+				id: uuidv4(),
+				post_id: s.video.id,
+				score: s.score,
+				reason: reasonById.get(String(s.video.id)) || null,
+				topic: s.topic
+			})))
+		}
+
+		const unshown = scored.filter((s) => !shown.has(s.video.id))
+		const sentToday = scored.length - unshown.length
+		const capped = unshown.slice(0, Math.max(0, VIDEO_DAILY_CAP - sentToday))
 
 		// Ranking alone picks near-duplicates when the reader's profile leans on one
 		// subject: three highest scores can all be the same topic. Diversify the lead
@@ -162,8 +190,9 @@ export class BotService {
 				shownIds.push(...block.ids)
 			}
 
-			// Кнопка живёт только на ведущей отправке: на хвосте она бы предлагала
-			// следующую порцию и переезжала бы дневной лимит бесконечно.
+			// Кнопка живёт, пока в пределах дневного лимита остаются непоказанные видео —
+			// на лидирующей отправке и на хвосте одинаково; withMore=false остаётся
+			// явным способом подавить её отдельно от самого remaining.
 			const moreKb = withMore ? KeyboardProvider.videoMoreKeyboard(picked.remaining) : undefined
 			if (moreKb) {
 				await telegram.sendMessage(userId, "…", { parse_mode: "HTML", ...moreKb })

@@ -143,6 +143,12 @@ if (!channelCols.includes("last_checked_at")) {
   addColumn("ALTER TABLE channels ADD COLUMN last_checked_at TEXT")
 }
 
+// Migration: rankings.topic — video ranking carries a topic, needed to survive with the score
+const rankingCols = db.prepare("PRAGMA table_info(rankings)").all().map((c) => c.name)
+if (!rankingCols.includes("topic")) {
+  addColumn("ALTER TABLE rankings ADD COLUMN topic TEXT")
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS digest_shown (
     user_id INTEGER NOT NULL,
@@ -476,8 +482,14 @@ export function getShownPostIds(userId) {
 }
 
 // Rankings
-export function clearRankingsForUser(userId, date) {
-  db.prepare("DELETE FROM rankings WHERE user_id = ? AND date = ?").run(userId, date)
+/** Clears one user+date's rankings for posts of a given source (default 'tg'), so clearing
+ * the text digest's rankings before a re-rank never wipes same-day video rankings, and vice versa. */
+export function clearRankingsForUser(userId, date, source = "tg") {
+  db.prepare(
+    `DELETE FROM rankings WHERE user_id = ? AND date = ? AND post_id IN (
+       SELECT id FROM posts WHERE source = ?
+     )`
+  ).run(userId, date, source)
 }
 
 export function insertRankings(userId, date, items) {
@@ -488,7 +500,7 @@ export function insertRankings(userId, date, items) {
   const placeholders = postIds.map(() => "?").join(",")
   const selectExisting = db.prepare(`SELECT id FROM posts WHERE id IN (${placeholders})`)
   const insertStmt = db.prepare(
-    "INSERT INTO rankings (id, user_id, post_id, score, reason, date) VALUES (?, ?, ?, ?, ?, ?)"
+    "INSERT INTO rankings (id, user_id, post_id, score, reason, date, topic) VALUES (?, ?, ?, ?, ?, ?, ?)"
   )
   const tx = db.transaction((list) => {
     const existing = new Set(selectExisting.all(...postIds).map((r) => r.id))
@@ -499,12 +511,22 @@ export function insertRankings(userId, date, items) {
         console.log(`[insertRankings] Skipping post_id=${it.post_id} (not in posts table)`)
         continue
       }
-      insertStmt.run(it.id, userId, it.post_id, it.score, it.reason || null, date)
+      insertStmt.run(it.id, userId, it.post_id, it.score, it.reason || null, date, it.topic || null)
       inserted++
     }
     console.log(`[insertRankings] Inserted ${inserted} rankings for userId=${userId} date=${date}`)
   })
   tx(normalized)
+}
+
+/** Persisted video ranking for a user+date, newest score first — read back instead of re-ranking. */
+export function getVideoRankingRows(userId, date) {
+  return db.prepare(
+    `SELECT r.post_id, r.score, r.reason, r.topic FROM rankings r
+     JOIN posts p ON r.post_id = p.id
+     WHERE r.user_id = ? AND r.date = ? AND p.source = 'yt'
+     ORDER BY r.score DESC`
+  ).all(userId, date)
 }
 
 export function getRankedPostIds(userId, date, limit = 10, offset = 0) {
