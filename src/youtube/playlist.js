@@ -7,10 +7,6 @@ const PLAYLIST_DESCRIPTION = "Daily rolling selection from Pulso Digest. Synced 
 
 const MAX_WRITES_PER_RUN = 60
 
-// Extra ranks beyond PLAYLIST_SIZE a video may hold before eviction: a video that slips
-// just past the cutoff one day and back the next doesn't flicker in and out of the playlist.
-const EVICTION_BUFFER = 5
-
 async function createAndStorePlaylist(client) {
   const id = await client.createPlaylist(PLAYLIST_TITLE, PLAYLIST_DESCRIPTION)
   setSetting(PLAYLIST_ID_KEY, id)
@@ -24,8 +20,7 @@ async function createAndStorePlaylist(client) {
  * @param {object} opts
  * @param {import("./client.js").YouTubeClient} opts.client
  * @param {string[]} opts.ranked - candidate video ids still inside the rolling window,
- *   best score first. The top PLAYLIST_SIZE form the target the playlist converges to;
- *   a video ranked within PLAYLIST_SIZE + EVICTION_BUFFER is left alone if already present.
+ *   best score first. The top PLAYLIST_SIZE form the target the playlist converges to.
  * @param {number} [opts.maxWrites] - ceiling on inserts+deletes issued this run.
  */
 export async function syncPlaylist({ client, ranked, maxWrites = MAX_WRITES_PER_RUN }) {
@@ -44,16 +39,11 @@ export async function syncPlaylist({ client, ranked, maxWrites = MAX_WRITES_PER_
   }
 
   const target = ranked.slice(0, PLAYLIST_SIZE)
-  const keepEligible = new Set(ranked.slice(0, PLAYLIST_SIZE + EVICTION_BUFFER))
+  const targetSet = new Set(target)
   const existingVideoIds = new Set(existing.map((e) => e.videoId))
 
-  const keptExisting = existing.filter((e) => keepEligible.has(e.videoId))
-  const toRemove = existing.filter((e) => !keepEligible.has(e.videoId))
-  const missing = target.filter((id) => !existingVideoIds.has(id))
-  // Cap adds so kept incumbents (damped survivors included) plus new arrivals never exceed
-  // PLAYLIST_SIZE — otherwise a slipped-but-buffered incumbent plus a fresh top-20 entrant
-  // grows the playlist and nothing ever pulls it back down.
-  const toAdd = missing.slice(0, Math.max(0, PLAYLIST_SIZE - keptExisting.length))
+  const toAdd = target.filter((id) => !existingVideoIds.has(id))
+  const toRemove = existing.filter((e) => !targetSet.has(e.videoId))
 
   const addBudget = Math.min(toAdd.length, maxWrites)
   const toAddAllowed = toAdd.slice(0, addBudget)

@@ -135,11 +135,12 @@ test("the playlist converges to exactly PLAYLIST_SIZE when more candidates exist
 	})
 })
 
-test("a video that falls well out of the top ranks (beyond the damping buffer) is removed", async () => {
+test("a video that falls out of the top PLAYLIST_SIZE is removed on the next run", async () => {
 	clearPlaylistSetting()
 	const state = makeState([{ id: "PIkeep", videoId: "vKeep" }, { id: "PIgone", videoId: "vGone" }])
-	// vKeep stays inside PLAYLIST_SIZE, vGone is nowhere in the current ranking at all.
-	const ranked = ["vKeep", ...Array.from({ length: PLAYLIST_SIZE - 1 }, (_, i) => `vFiller${i}`)]
+	// vKeep stays inside PLAYLIST_SIZE; vGone drops to rank PLAYLIST_SIZE (just one past
+	// the cutoff) — no buffer, so it must be evicted immediately, not just eventually.
+	const ranked = ["vKeep", ...Array.from({ length: PLAYLIST_SIZE - 1 }, (_, i) => `vFiller${i}`), "vGone"]
 
 	await withServer(handlerFor(state), async (url) => {
 		const client = makeClient(url)
@@ -165,22 +166,7 @@ test("a video that stays in the top PLAYLIST_SIZE is not touched", async () => {
 	})
 })
 
-test("a video ranked just past the cutoff, within the damping buffer, is left alone", async () => {
-	clearPlaylistSetting()
-	// vBuffer sits at rank PLAYLIST_SIZE (0-indexed), just outside the top PLAYLIST_SIZE but
-	// still within the eviction buffer — the damping mechanism keeps it rather than evicting it.
-	const state = makeState([{ id: "PIbuffer", videoId: "vBuffer" }])
-	const ranked = [...Array.from({ length: PLAYLIST_SIZE }, (_, i) => `vTop${i}`), "vBuffer"]
-
-	await withServer(handlerFor(state), async (url) => {
-		const client = makeClient(url)
-		const result = await syncPlaylist({ client, ranked })
-		assert.equal(result.removed, 0, "a rank just past the cutoff must not be evicted immediately")
-		assert.ok(state.items.some((it) => it.videoId === "vBuffer"))
-	})
-})
-
-test("a boundary swap over several consecutive runs keeps the size at exactly PLAYLIST_SIZE, not PLAYLIST_SIZE + 2", async () => {
+test("a better newcomer displaces a weaker incumbent immediately, with no buffer delay", async () => {
 	clearPlaylistSetting()
 	// Converge to a full 20-item playlist first.
 	const initialRanked = Array.from({ length: PLAYLIST_SIZE }, (_, i) => `v${i}`)
@@ -191,50 +177,31 @@ test("a boundary swap over several consecutive runs keeps the size at exactly PL
 		await syncPlaylist({ client, ranked: initialRanked })
 		assert.equal(state.items.length, PLAYLIST_SIZE, "must start from a converged 20-item playlist")
 
-		// Day 1: v0 slips to rank 21 (inside the buffer, so it survives), and a brand new
-		// video v20 enters at rank 0. Naively this would grow the playlist to 21.
-		const day1Ranked = ["v20", ...Array.from({ length: PLAYLIST_SIZE - 1 }, (_, i) => `v${i + 1}`), "v0"]
-		const day1 = await syncPlaylist({ client, ranked: day1Ranked })
-		assert.equal(state.items.length, PLAYLIST_SIZE, `size must stay at ${PLAYLIST_SIZE} after one boundary swap, got ${state.items.length}`)
-
-		// Run several more times with the same ranking (steady state) — size must not creep further.
-		for (let i = 0; i < 8; i++) {
-			await syncPlaylist({ client, ranked: day1Ranked })
-			assert.equal(state.items.length, PLAYLIST_SIZE, `size must stay at ${PLAYLIST_SIZE} on repeated runs`)
-		}
+		// vBetter scores above every incumbent; v0 (the weakest incumbent) drops to rank
+		// PLAYLIST_SIZE, one past the cutoff. There is no buffer: the swap must happen
+		// in this same run, not be deferred.
+		const nextRanked = ["vBetter", ...Array.from({ length: PLAYLIST_SIZE - 1 }, (_, i) => `v${i + 1}`), "v0"]
+		const result = await syncPlaylist({ client, ranked: nextRanked })
+		assert.equal(result.added, 1, "the better newcomer is added in the same run it appears")
+		assert.equal(result.removed, 1, "the displaced incumbent is removed in the same run")
+		assert.equal(state.items.length, PLAYLIST_SIZE, "size stays at PLAYLIST_SIZE through the swap")
+		assert.ok(state.items.some((it) => it.videoId === "vBetter"))
+		assert.ok(!state.items.some((it) => it.videoId === "v0"))
 	})
 })
 
-test("a video in the 20-25 band that is already present is not evicted (hysteresis still holds under the size budget)", async () => {
+test("the size holds at exactly PLAYLIST_SIZE across several consecutive days of churn", async () => {
 	clearPlaylistSetting()
-	const state = makeState([{ id: "PIbuffer", videoId: "vBuffer" }])
-	// vBuffer sits at rank 20 (just past the top 20 cutoff) but within the eviction buffer.
-	const ranked = [...Array.from({ length: PLAYLIST_SIZE }, (_, i) => `vTop${i}`), "vBuffer"]
-
-	await withServer(handlerFor(state), async (url) => {
-		const client = makeClient(url)
-		const result = await syncPlaylist({ client, ranked })
-		assert.equal(result.removed, 0, "a buffered incumbent must not be evicted")
-		assert.ok(state.items.some((it) => it.videoId === "vBuffer"), "the buffered incumbent survives")
-		assert.equal(state.items.length, PLAYLIST_SIZE, "the size budget must still cap the total at PLAYLIST_SIZE")
-	})
-})
-
-test("a new top-20 entrant does not push the playlist size above PLAYLIST_SIZE", async () => {
-	clearPlaylistSetting()
-	const initialRanked = Array.from({ length: PLAYLIST_SIZE }, (_, i) => `v${i}`)
 	const state = makeState()
 
 	await withServer(handlerFor(state), async (url) => {
 		const client = makeClient(url)
-		await syncPlaylist({ client, ranked: initialRanked })
-
-		// v0 drifts to rank 20 — just past the top-20 cutoff but still inside the buffer,
-		// so nothing is evicted — while a fresh video vNew takes the top spot.
-		const nextRanked = ["vNew", ...Array.from({ length: PLAYLIST_SIZE - 1 }, (_, i) => `v${i + 1}`), "v0"]
-		const result = await syncPlaylist({ client, ranked: nextRanked })
-		assert.equal(state.items.length, PLAYLIST_SIZE, "the new entrant must not grow the playlist past PLAYLIST_SIZE")
-		assert.equal(result.removed, 0, "the drifted incumbent stays put under the buffer")
+		// Each day, the whole roster shifts by one: dayN's ranked list is v_N..v_(N+19).
+		for (let day = 0; day < 10; day++) {
+			const ranked = Array.from({ length: PLAYLIST_SIZE }, (_, i) => `v${day + i}`)
+			await syncPlaylist({ client, ranked })
+			assert.equal(state.items.length, PLAYLIST_SIZE, `size must stay at ${PLAYLIST_SIZE} on day ${day}`)
+		}
 	})
 })
 
