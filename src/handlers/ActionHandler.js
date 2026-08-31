@@ -6,6 +6,7 @@ import { StatusMessage } from "../services/StatusMessage.js"
 import { getUserSystemPrompt } from "../services/SystemPromptLoader.js"
 import {
 	getOrCreateUser,
+	getReaderProfile,
 	isUserBanned,
 	getChannels,
 	upsertPostFeedback,
@@ -193,7 +194,7 @@ export class ActionHandler extends BaseHandler {
 
 			// Stage 2: Ranking (30-70%)
 			await status.percent("⏳ <b>Ranking posts...</b>", 70)
-			await this.mgr.service.ensureRankingsForDate(userId, date, user.profile || "")
+			await this.mgr.service.ensureRankingsForDate(userId, date, getReaderProfile(user))
 			await status.percent("⏳ <b>Ranking posts...</b>", 80)
 
 			// Stage 3: Block generation (80-100%)
@@ -566,7 +567,7 @@ export class ActionHandler extends BaseHandler {
 			const minWarning = posts.length < 5 ? `\n⚠️ <i>Limited data (${posts.length} posts) — approximate score.</i>` : ""
 
 			const systemPrompt = await getUserSystemPrompt(user)
-			const result = await this.mgr.ai.analyzeChannel(posts, channelName, user.profile || "", systemPrompt)
+			const result = await this.mgr.ai.analyzeChannel(posts, channelName, getReaderProfile(user), systemPrompt)
 
 			const { emoji, label: vLabel } = UIFormatter.verdictLabel(result.verdict)
 			const snPct = Math.round((result.signal_noise || 0) * 100)
