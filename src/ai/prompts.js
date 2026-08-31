@@ -155,17 +155,14 @@ function getLanguageInstruction(lang) {
 /**
  * Prompt for generating digest blocks.
  */
-export function buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt = null, compact = false, groundedOnly = false) {
+export function buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt = null, compact = false) {
   const readerContext = getReaderContext(systemPrompt, userProfile)
   const lang = detectLanguage(list, userProfile)
   const langInstruction = getLanguageInstruction(lang)
-  const groundingRule = groundedOnly
-    ? `\n\nYou were only given a title and a description, never the video itself — you have not watched it. State only what the title and description actually say. Never infer or describe content that is not written there. Rephrase clickbait titles into plain factual statements instead of repeating them (example: "Google's Gemini Just DESTROYED Social Media" is clickbait, not a fact — describe what the video is actually about, not the outrage framing).`
-    : ""
 
   return `You are an experienced digest editor (10+ years). Your task is to create a digest for ${dateLabel} that the reader will actually apply in life.
 
-${langInstruction}${groundingRule}
+${langInstruction}
 
 Priorities when selecting:
 - Practice > theory: concrete steps, examples, templates instead of abstract reasoning.

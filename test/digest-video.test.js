@@ -163,14 +163,40 @@ test("a ranked video does not leak into getRankedPostIds", () => {
 test("a video block shows the two numbers a viewer decides by", async () => {
 	const { UIFormatter } = await import("../src/ui/UIFormatter.js")
 
-	const block = { ids: ["v1"], essence: "Автор разбирает архитектуру воркеров", emoji: "🎬" }
+	const video = { id: "v1", text: "Автор разбирает архитектуру воркеров\n\nописание видео" }
 	const postById = {
 		v1: { channel: "yt:@chan", postUrl: "https://www.youtube.com/watch?v=abc", duration_sec: 1320, views: 47000 }
 	}
 
-	const text = UIFormatter.formatVideoBlockText(block, postById)
+	const text = UIFormatter.formatVideoBlockText(video, postById)
 	assert.match(text, /22 мин/, "duration in minutes")
 	assert.match(text, /47k/, "views abbreviated")
+	assert.match(text, /@chan/)
+})
+
+test("a video renders its own title, not a generated summary, and never calls the AI", async () => {
+	const { UIFormatter } = await import("../src/ui/UIFormatter.js")
+
+	const video = { id: "v2", text: "Автор разбирает архитектуру воркеров\n\nдлинное описание, которого нет в заголовке" }
+	const postById = {
+		v2: { channel: "yt:@chan", postUrl: "https://www.youtube.com/watch?v=abc2", duration_sec: 600, views: 1000 }
+	}
+
+	const text = UIFormatter.formatVideoBlockText(video, postById)
+	assert.match(text, /Автор разбирает архитектуру воркеров/, "the video's own title is rendered")
+	assert.ok(!text.includes("длинное описание"), "the description is not pulled into the headline")
+})
+
+test("a video whose stored text has no description still renders correctly", async () => {
+	const { UIFormatter } = await import("../src/ui/UIFormatter.js")
+
+	const video = { id: "v3", text: "Заголовок без описания" }
+	const postById = {
+		v3: { channel: "yt:@chan", postUrl: "https://www.youtube.com/watch?v=abc3", duration_sec: 600, views: 500 }
+	}
+
+	const text = UIFormatter.formatVideoBlockText(video, postById)
+	assert.match(text, /Заголовок без описания/)
 	assert.match(text, /@chan/)
 })
 
@@ -184,6 +210,28 @@ test("durations and views read as a human would write them", async () => {
 	assert.equal(UIFormatter.formatViews(1500000), "1.5M")
 	assert.equal(UIFormatter.formatViews(999500), "1.0M")
 	assert.equal(UIFormatter.formatViews(999999), "1.0M")
+})
+
+test("the video line still carries duration and views", async () => {
+	const { UIFormatter } = await import("../src/ui/UIFormatter.js")
+	const video = { id: "v4", text: "Ролик с метриками" }
+	const postById = {
+		v4: { channel: "yt:@chan", postUrl: "https://www.youtube.com/watch?v=abc4", duration_sec: 1320, views: 47000 }
+	}
+	const text = UIFormatter.formatVideoBlockText(video, postById)
+	assert.match(text, /22 мин/, "duration survives")
+	assert.match(text, /47k/, "views survive")
+})
+
+test("the text block no longer contains a publication time", async () => {
+	const { UIFormatter } = await import("../src/ui/UIFormatter.js")
+	const block = { ids: ["p1"], essence: "суть поста", potential: "польза", action: "", emoji: "💡" }
+	const postById = {
+		p1: { channel: "chan", postUrl: "https://t.me/chan/1", date: "2026-08-01T09:30:00.000Z" }
+	}
+	const text = UIFormatter.formatBlockText(block, postById)
+	assert.ok(!text.includes("🕘"), "the clock is gone")
+	assert.match(text, /@chan/, "the channel link stays")
 })
 
 test("no tail means no button", async () => {
@@ -227,13 +275,7 @@ test("a telegram send that fails mid-section does not throw, and reports what ac
 
 	const service = {
 		selectVideosForDigest: async () => ({ videos, remaining: 0 }),
-		mgr: {
-			ai: {
-				generateSummaryBlocks: async () => ({
-					blocks: [{ ids: ["sv1"], essence: "e1", emoji: "🎬" }, { ids: ["sv2"], essence: "e2", emoji: "🎬" }]
-				})
-			}
-		},
+		mgr: {},
 		sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
 	}
 
@@ -244,6 +286,30 @@ test("a telegram send that fails mid-section does not throw, and reports what ac
 	assert.equal(count, 1, "only the video sent before the failure is reported")
 	assert.ok(db.getShownPostIds(60).has("sv1"), "the delivered video is marked shown")
 	assert.ok(!db.getShownPostIds(60).has("sv2"), "the video whose send failed is not marked shown")
+})
+
+test("sendVideoSection renders the video's own title and never touches the AI", async () => {
+	db.getOrCreateUser(59)
+	const sends = []
+	const telegram = {
+		sendMessage: async (chatId, text, extra) => { sends.push({ text, extra }); return { message_id: sends.length } }
+	}
+	const videos = [
+		{ id: "title1", channel: "yt:@titlechan", post_id: "tv1", source: "yt", text: "Заголовок ролика\n\nописание, которое не должно попасть в текст",
+			link: "https://www.youtube.com/watch?v=tv1", date: "2026-08-01T00:00:00.000Z", duration_sec: 600, views: 10 }
+	]
+	const service = {
+		selectVideosForDigest: async () => ({ videos, remaining: 0, reasonById: new Map() }),
+		mgr: {
+			ai: { generateSummaryBlocks: async () => { throw new Error("must not be called") } }
+		},
+		sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
+	}
+
+	const count = await service.sendVideoSection.call(service, telegram, 59, { withHeader: false })
+	assert.equal(count, 1)
+	assert.match(sends[0].text, /Заголовок ролика/, "the video's own title is rendered")
+	assert.ok(!sends[0].text.includes("описание, которое не должно попасть"), "the description is not pulled into the message")
 })
 
 test("a video link survives the trip from the db row to the rendered block", async () => {
@@ -259,7 +325,7 @@ test("a video link survives the trip from the db row to the rendered block", asy
 	assert.ok(postById.link1.postUrl.startsWith("https://www.youtube.com/watch"),
 		`a video must keep its own url, got ${postById.link1.postUrl}`)
 
-	const text = UIFormatter.formatVideoBlockText({ ids: ["link1"], essence: "суть", emoji: "🎬" }, postById)
+	const text = UIFormatter.formatVideoBlockText(candidates[0], postById)
 	assert.ok(!text.includes("t.me"), "no fabricated telegram link reaches the message")
 })
 
@@ -274,7 +340,7 @@ test("the tail send offers no further button", async () => {
 	]
 	const service = {
 		selectVideosForDigest: async () => ({ videos, remaining: 5, reasonById: new Map() }),
-		mgr: { ai: { generateSummaryBlocks: async () => ({ blocks: [{ ids: ["tail1"], essence: "e", emoji: "🎬" }] }) } },
+		mgr: {},
 		sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
 	}
 	db.getOrCreateUser(62)
@@ -296,7 +362,7 @@ test("the lead send still offers the tail button", async () => {
 	]
 	const service = {
 		selectVideosForDigest: async () => ({ videos, remaining: 5, reasonById: new Map() }),
-		mgr: { ai: { generateSummaryBlocks: async () => ({ blocks: [{ ids: ["lead1"], essence: "e", emoji: "🎬" }] }) } },
+		mgr: {},
 		sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
 	}
 	db.getOrCreateUser(63)
@@ -361,8 +427,7 @@ test("a ranked video block carries the why button", async () => {
 	const service = {
 		selectVideosForDigest: async () => ({ videos, remaining: 0, reasonById: new Map([["why1", "совпадает с профилем"]]) }),
 		mgr: {
-			cache: { setBlock: () => {} },
-			ai: { generateSummaryBlocks: async () => ({ blocks: [{ ids: ["why1"], essence: "e", emoji: "🎬" }] }) }
+			cache: { setBlock: () => {} }
 		},
 		sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
 	}
@@ -379,7 +444,7 @@ test("a channel with three eligible videos yields the most-viewed and the longes
 
 	db.upsertVideo("cap-low", "yt:@capcap", "capv-low", "видео", "https://youtube.com/watch?v=capv-low", 100, 400,
 		new Date(Date.now() - 86400_000).toISOString())
-	db.upsertVideo("cap-high-views", "yt:@capcap", "capv-high-views", "видео", "https://youtube.com/watch?v=capv-high-views", 900, 500,
+	db.upsertVideo("cap-high-views", "yt:@capcap", "capv-high-views", "видео", "https://youtube.com/watch?v=capv-high-views", 900, 700,
 		new Date(Date.now() - 86400_000).toISOString())
 	db.upsertVideo("cap-longest", "yt:@capcap", "capv-longest", "видео", "https://youtube.com/watch?v=capv-longest", 300, 4200,
 		new Date(Date.now() - 86400_000).toISOString())
@@ -445,12 +510,12 @@ test("a video shorter than the minimum duration is dropped, a longer one is kept
 
 	db.upsertVideo("short1", "yt:@shortchan", "shortv1", "видео", "https://youtube.com/watch?v=shortv1", 100, 200,
 		new Date(Date.now() - 86400_000).toISOString())
-	db.upsertVideo("long1", "yt:@longchan", "longv1", "видео", "https://youtube.com/watch?v=longv1", 100, 400,
+	db.upsertVideo("long1", "yt:@longchan", "longv1", "видео", "https://youtube.com/watch?v=longv1", 100, 900,
 		new Date(Date.now() - 86400_000).toISOString())
 
 	const candidates = db.getVideoCandidates(7, new Set(), userId)
 	assert.ok(!candidates.some((v) => v.id === "short1"), "a 200-second video is too short")
-	assert.ok(candidates.some((v) => v.id === "long1"), "a 400-second video is kept")
+	assert.ok(candidates.some((v) => v.id === "long1"), "a 900-second video is kept")
 })
 
 test("a video with unknown duration is kept, not dropped", () => {
@@ -602,8 +667,7 @@ test("the button renders after a tail send while videos remain, and disappears o
 	const telegram = { sendMessage: async (chatId, text, extra) => { sends.push({ text, extra }); return { message_id: sends.length } } }
 	const service = new BotService({
 		ai: {
-			rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1 })),
-			generateSummaryBlocks: async (videos) => ({ blocks: videos.map((v) => ({ ids: [v.id], essence: "e", emoji: "🎬" })) })
+			rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1 }))
 		}
 	})
 	const hasMoreButton = () => sends.some((s) => JSON.stringify(s.extra || {}).includes("video_more"))
@@ -970,38 +1034,6 @@ test("a failure selecting videos alerts the admin and still returns 0 without th
 	}
 })
 
-test("a failure generating blocks alerts the admin and still returns 0 without throwing", async () => {
-	const prevAdmin = process.env.ADMIN_ID
-	process.env.ADMIN_ID = "999"
-	try {
-		const sent = []
-		const telegram = {
-			sendMessage: async (chatId, text) => { sent.push({ chatId, text }); return { message_id: sent.length } }
-		}
-		db.getOrCreateUser(901)
-		const videos = [
-			{ id: "bf1", channel: "yt:@bfchan", post_id: "bf1", link: null, date: "2026-08-01T00:00:00.000Z", duration_sec: 100, views: 10 }
-		]
-		const service = {
-			selectVideosForDigest: async () => ({ videos, remaining: 0 }),
-			mgr: { ai: { generateSummaryBlocks: async () => { throw new Error("provider exhausted") } } },
-			sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
-		}
-
-		let count
-		await assert.doesNotReject(async () => {
-			count = await service.sendVideoSection.call(service, telegram, 901, {})
-		})
-		assert.equal(count, 0)
-		assert.equal(sent.length, 1)
-		assert.equal(sent[0].chatId, 999)
-		assert.match(sent[0].text, /provider exhausted/)
-	} finally {
-		if (prevAdmin === undefined) delete process.env.ADMIN_ID
-		else process.env.ADMIN_ID = prevAdmin
-	}
-})
-
 test("a send failure alerts the admin in addition to leaving the delivered videos marked shown", async () => {
 	const prevAdmin = process.env.ADMIN_ID
 	process.env.ADMIN_ID = "999"
@@ -1020,7 +1052,7 @@ test("a send failure alerts the admin in addition to leaving the delivered video
 		}
 		const service = {
 			selectVideosForDigest: async () => ({ videos, remaining: 0 }),
-			mgr: { ai: { generateSummaryBlocks: async () => ({ blocks: [{ ids: ["sf1"], essence: "e", emoji: "🎬" }] }) } },
+			mgr: {},
 			sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
 		}
 
@@ -1098,7 +1130,7 @@ test("the happy path sends no admin alert", async () => {
 		]
 		const service = {
 			selectVideosForDigest: async () => ({ videos, remaining: 0, reasonById: new Map() }),
-			mgr: { ai: { generateSummaryBlocks: async () => ({ blocks: [{ ids: ["hp1"], essence: "e", emoji: "🎬" }] }) } },
+			mgr: {},
 			sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
 		}
 

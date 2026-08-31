@@ -171,22 +171,6 @@ export class BotService {
 
 		if (picked.videos.length === 0) return 0
 
-		const user = getOrCreateUser(userId)
-		const label = formatDateLabel(new Date())
-		let result
-		try {
-			result = await this.mgr.ai.generateSummaryBlocks(
-				picked.videos, label, user.profile || "", picked.videos.length,
-				{ compact: true, groundedOnly: true }
-			)
-		} catch (e) {
-			console.error("[video section] blocks failed for user", userId, e.message)
-			await alertVideoSectionFailure(telegram, "генерация блоков", userId, e)
-			return 0
-		}
-
-		if (!result.blocks?.length) return 0
-
 		const postById = UIFormatter.buildPostById(picked.videos)
 		const shownIds = []
 
@@ -198,22 +182,23 @@ export class BotService {
 				await telegram.sendMessage(userId, "📺 <b>Посмотреть</b>", { parse_mode: "HTML" })
 			}
 
-			for (const block of result.blocks) {
-				const postId = block.ids.length === 1 ? block.ids[0] : null
-				const reason = postId ? picked.reasonById?.get(postId) : null
-				const text = UIFormatter.formatVideoBlockText(block, postById)
+			// Заголовок видео уже есть, и его написал человек — модели тут нечего добавить:
+			// она не смотрит видео, только пересказывает title+description с риском выдумать.
+			for (const video of picked.videos) {
+				const postId = video.id
+				const reason = picked.reasonById?.get(postId)
+				const text = UIFormatter.formatVideoBlockText(video, postById)
 				const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false, postById[postId]?.channel)
-				if (postId) this.mgr.cache?.setBlock(postId, { normalText: text, block, postById, reason, isVideo: true })
+				this.mgr.cache?.setBlock(postId, { normalText: text, postById, reason, isVideo: true })
 				await telegram.sendMessage(userId, text, {
 					parse_mode: "HTML",
 					disable_web_page_preview: true,
 					...kb
 				})
 				// Помечаем сразу после успешной отправки: упавшая рассылка не должна
-				// съесть видео, которых пользователь не видел, а слитый блок должен
-				// пометить все свои id, а не только единственный.
-				markDigestShown(userId, block.ids)
-				shownIds.push(...block.ids)
+				// съесть видео, которых пользователь не видел.
+				markDigestShown(userId, [postId])
+				shownIds.push(postId)
 			}
 
 			// Кнопка живёт, пока в пределах дневного лимита остаются непоказанные видео —

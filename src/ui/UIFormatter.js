@@ -38,7 +38,7 @@ export class UIFormatter {
 		return header.trim()
 	}
 
-	/** Map id -> {channel, postUrl, date, duration_sec, views} */
+	/** Map id -> {channel, postUrl, duration_sec, views} */
 	static buildPostById(posts) {
 		return Object.fromEntries(
 			posts.map((p) => {
@@ -46,21 +46,9 @@ export class UIFormatter {
 				const postUrl = p.source === "yt"
 					? p.link
 					: p.link && String(p.link).endsWith("/" + p.post_id) ? p.link : `https://t.me/${p.channel}/${p.post_id}`
-				return [p.id, { channel: p.channel, postUrl, date: p.date, duration_sec: p.duration_sec, views: p.views }]
+				return [p.id, { channel: p.channel, postUrl, duration_sec: p.duration_sec, views: p.views }]
 			})
 		)
-	}
-
-	/** Publication time in Moscow, the reader's timezone — empty when the post carries no date. */
-	static formatPostTime(date) {
-		if (!date) return ""
-		const d = new Date(date)
-		if (Number.isNaN(d.getTime())) return ""
-		return new Intl.DateTimeFormat("ru-RU", {
-			timeZone: "Europe/Moscow",
-			hour: "2-digit",
-			minute: "2-digit"
-		}).format(d)
 	}
 
 	/** Block format: essence → action → potential → links. */
@@ -73,10 +61,9 @@ export class UIFormatter {
 
 		let linksLine
 		if (block.ids.length === 1) {
-			const { channel, postUrl, date } = postById[block.ids[0]] || { channel: "channel", postUrl: "#" }
+			const { channel, postUrl } = postById[block.ids[0]] || { channel: "channel", postUrl: "#" }
 			const safeUrl = postUrl.replace(/&/g, "&amp;")
-			const time = this.formatPostTime(date)
-			linksLine = `<a href="${safeUrl}">↗ @${this.escapeHtml(channel)}</a>${time ? ` · 🕘 ${time}` : ""}`
+			linksLine = `<a href="${safeUrl}">↗ @${this.escapeHtml(channel)}</a>`
 		} else {
 			const parts = block.ids.map((id) => {
 				const { channel, postUrl } = postById[id] || { channel: "channel", postUrl: "#" }
@@ -118,10 +105,14 @@ export class UIFormatter {
 		return `${(views / 1_000_000).toFixed(1)}M`
 	}
 
-	/** Как текстовый блок, но вторая строка несёт длительность и просмотры — по ним решают, открывать ли. */
-	static formatVideoBlockText(block, postById) {
-		const essence = this.escapeHtml(block.essence)
-		const meta = postById[block.ids[0]] || {}
+	/**
+	 * Как текстовый блок, но заголовок — собственный заголовок видео (первая строка text),
+	 * а не сгенерированная моделью суть: модель видео не смотрит, только пересказывает
+	 * title+description. Вторая строка несёт длительность и просмотры — по ним решают, открывать ли.
+	 */
+	static formatVideoBlockText(video, postById) {
+		const title = this.escapeHtml(String(video.text || "").split("\n")[0].trim())
+		const meta = postById[video.id] || {}
 		const safeUrl = String(meta.postUrl || "#").replace(/&/g, "&amp;")
 		const channel = this.escapeHtml(String(meta.channel || "").replace(/^yt:/, ""))
 
@@ -131,7 +122,7 @@ export class UIFormatter {
 			this.formatViews(meta.views)
 		].filter(Boolean)
 
-		return `${block.emoji || "🎬"} ${essence}\n\n${parts.join(" · ")}`
+		return `🎬 ${title}\n\n${parts.join(" · ")}`
 	}
 
 	/** Verdict -> emoji and label */
