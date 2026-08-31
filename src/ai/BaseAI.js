@@ -178,11 +178,11 @@ export class BaseAI {
    * Splits posts into batches whose prompt plus reserved completion fits the budget.
    * @private
    */
-  #splitIntoBatches(list, buildPrompt) {
+  #splitIntoBatches(list, buildPrompt, completionTokensPerItem = this.completionTokensPerPost) {
     const budgetTokens = this.requestBudgetTokens
     const overhead = buildPrompt([]).length / LIMITS.CHARS_PER_TOKEN
     const costOf = (item) =>
-      JSON.stringify(item).length / LIMITS.CHARS_PER_TOKEN + this.completionTokensPerPost
+      JSON.stringify(item).length / LIMITS.CHARS_PER_TOKEN + completionTokensPerItem
 
     const batches = []
     let current = []
@@ -259,7 +259,7 @@ export class BaseAI {
 
     const list = items.map((it) => ({ id: it.id, title: String(it.title || "") }))
     const buildPrompt = (batch) => buildCleanTitlesPrompt(batch)
-    const batches = this.#splitIntoBatches(list, buildPrompt)
+    const batches = this.#splitIntoBatches(list, buildPrompt, LIMITS.COMPLETION_TOKENS_PER_TITLE)
 
     const result = new Map()
     for (const batch of batches) {

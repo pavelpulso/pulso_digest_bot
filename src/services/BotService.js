@@ -55,6 +55,40 @@ async function alertVideoSectionFailure(telegram, stage, userId, error) {
 	}
 }
 
+/**
+ * Rewrites the picks' shouty titles once, in place, and persists the result — a video
+ * that already has clean_title is skipped, so it is never sent to the model twice.
+ * Failure here must never block the video section: it already renders the raw title
+ * as a fallback, so a caught error just means this pass silently did nothing.
+ * Module-level (not a class field/#method), same reason as alertVideoSectionFailure above:
+ * selectVideosForDigest is exercised against hand-built fakes via .call(fakeObject, ...),
+ * and a private class method throws on a receiver that isn't a real BotService instance.
+ */
+async function cleanLeadTitles(ai, leads) {
+	const pending = leads.filter((s) => !s.video.clean_title)
+	if (pending.length === 0) return
+
+	try {
+		const items = pending.map((s) => ({
+			id: s.video.id,
+			title: String(s.video.text || "").split("\n")[0].trim()
+		}))
+		const titles = await ai.cleanTitles(items)
+
+		const toStore = {}
+		for (const s of pending) {
+			const title = titles.get(s.video.id)
+			if (title) {
+				s.video.clean_title = title
+				toStore[s.video.id] = title
+			}
+		}
+		setCleanTitles(toStore)
+	} catch (e) {
+		console.error("[selectVideosForDigest] title cleanup failed:", e.message)
+	}
+}
+
 export const VIDEO_WINDOW_DAYS = 7
 const VIDEO_LEAD_COUNT = 3
 export const VIDEO_DAILY_CAP = 30
@@ -148,44 +182,13 @@ export class BotService {
 			}
 		}
 
-		await this.#cleanLeadTitles(leads)
+		await cleanLeadTitles(this.mgr.ai, leads)
 
 		const leadIds = new Set(leads.map((s) => s.video.id))
 		return {
 			videos: leads.map((s) => s.video),
 			remaining: Math.max(0, capped.length - leadIds.size),
 			reasonById
-		}
-	}
-
-	/**
-	 * Rewrites the picks' shouty titles once, in place, and persists the result — a video
-	 * that already has clean_title is skipped, so it is never sent to the model twice.
-	 * Failure here must never block the video section: it already renders the raw title
-	 * as a fallback, so a caught error just means this pass silently did nothing.
-	 */
-	async #cleanLeadTitles(leads) {
-		const pending = leads.filter((s) => !s.video.clean_title)
-		if (pending.length === 0) return
-
-		try {
-			const items = pending.map((s) => ({
-				id: s.video.id,
-				title: String(s.video.text || "").split("\n")[0].trim()
-			}))
-			const titles = await this.mgr.ai.cleanTitles(items)
-
-			const toStore = {}
-			for (const s of pending) {
-				const title = titles.get(s.video.id)
-				if (title) {
-					s.video.clean_title = title
-					toStore[s.video.id] = title
-				}
-			}
-			setCleanTitles(toStore)
-		} catch (e) {
-			console.error("[selectVideosForDigest] title cleanup failed:", e.message)
 		}
 	}
 

@@ -115,7 +115,8 @@ export class UIFormatter {
 		// processed, or the rewrite failed) falls back to the raw first line, which is the
 		// whole reason this section does not depend on the model to send.
 		const rawTitle = String(video.text || "").split("\n")[0].trim()
-		const title = this.escapeHtml(video.clean_title ? String(video.clean_title).trim() : rawTitle)
+		const cleanTitle = String(video.clean_title || "").trim()
+		const title = this.escapeHtml(cleanTitle || rawTitle)
 		const meta = postById[video.id] || {}
 		const safeUrl = String(meta.postUrl || "#").replace(/&/g, "&amp;")
 		const channel = this.escapeHtml(String(meta.channel || "").replace(/^yt:/, ""))

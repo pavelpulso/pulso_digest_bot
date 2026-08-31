@@ -1270,3 +1270,12 @@ test("formatVideoBlockText prefers clean_title and falls back to the raw first l
 	const textWithoutClean = UIFormatter.formatVideoBlockText(withoutClean, postById)
 	assert.match(textWithoutClean, /RAW SHOUTY TITLE/, "falls back to the raw title when clean_title is absent")
 })
+
+test("a whitespace-only clean_title falls back to the raw title instead of rendering blank", async () => {
+	const { UIFormatter } = await import("../src/ui/UIFormatter.js")
+	const postById = { v6: { channel: "yt:@chan", postUrl: "https://www.youtube.com/watch?v=abc6", duration_sec: 600, views: 100 } }
+
+	const video = { id: "v6", text: "RAW SHOUTY TITLE\n\ndescription", clean_title: "   " }
+	const text = UIFormatter.formatVideoBlockText(video, postById)
+	assert.match(text, /RAW SHOUTY TITLE/, "a blank-after-trim clean_title must not win over the raw title")
+})
