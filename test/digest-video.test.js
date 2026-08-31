@@ -1142,3 +1142,140 @@ test("the happy path sends no admin alert", async () => {
 		else process.env.ADMIN_ID = prevAdmin
 	}
 })
+
+test("a picked video with no clean_title gets one generated and stored", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 950
+	db.getOrCreateUser(userId)
+	const existing = db.getVideoCandidates(7, new Set())
+	db.markDigestShown(userId, existing.map((v) => v.id))
+
+	db.upsertVideo("ct1", "yt:@ctchan1", "ctv1", "SHOUTY CLICKBAIT TITLE!!!", "https://youtube.com/watch?v=ct1", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const calls = []
+	const service = new BotService({
+		ai: {
+			rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1 })),
+			cleanTitles: async (items) => {
+				calls.push(...items)
+				return new Map(items.map((it) => [it.id, "Calm title"]))
+			}
+		}
+	})
+
+	const result = await service.selectVideosForDigest(userId)
+	const picked = result.videos.find((v) => v.id === "ct1")
+	assert.ok(picked, "the video was picked")
+	assert.equal(picked.clean_title, "Calm title", "the returned video carries the rewritten title")
+	assert.equal(db.getPostById("ct1").clean_title, "Calm title", "the rewrite is persisted")
+	assert.ok(calls.some((it) => it.id === "ct1"), "the model was asked about this video")
+})
+
+test("a video that already has clean_title is never sent to the model again", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 951
+	db.getOrCreateUser(userId)
+	const existing = db.getVideoCandidates(7, new Set())
+	db.markDigestShown(userId, existing.map((v) => v.id))
+
+	db.upsertVideo("ct2", "yt:@ctchan2", "ctv2", "ANOTHER SHOUTY TITLE", "https://youtube.com/watch?v=ct2", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.setCleanTitles({ ct2: "Already clean" })
+
+	let called = false
+	const service = new BotService({
+		ai: {
+			rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1 })),
+			cleanTitles: async () => { called = true; return new Map() }
+		}
+	})
+
+	const result = await service.selectVideosForDigest(userId)
+	const picked = result.videos.find((v) => v.id === "ct2")
+	assert.ok(picked, "the video was picked")
+	assert.equal(picked.clean_title, "Already clean", "the stored title is kept")
+	assert.equal(called, false, "a video with a stored clean_title is not re-sent to the model")
+})
+
+test("a rewrite failure leaves the picks with raw titles rather than nothing", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const { UIFormatter } = await import("../src/ui/UIFormatter.js")
+	const userId = 952
+	db.getOrCreateUser(userId)
+	const existing = db.getVideoCandidates(7, new Set())
+	db.markDigestShown(userId, existing.map((v) => v.id))
+
+	db.upsertVideo("ct3", "yt:@ctchan3", "ctv3", "RAW SHOUTY TITLE", "https://youtube.com/watch?v=ct3", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const service = new BotService({
+		ai: {
+			rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1 })),
+			cleanTitles: async () => { throw new Error("quota exceeded") }
+		}
+	})
+
+	const result = await service.selectVideosForDigest(userId)
+	const picked = result.videos.find((v) => v.id === "ct3")
+	assert.ok(picked, "the section still gets its picks despite the rewrite failure")
+	assert.ok(!picked.clean_title, "no clean_title was stored")
+	assert.ok(!db.getPostById("ct3").clean_title, "nothing was persisted either")
+
+	const postById = UIFormatter.buildPostById([picked])
+	const text = UIFormatter.formatVideoBlockText(picked, postById)
+	assert.match(text, /RAW SHOUTY TITLE/, "the raw title still renders")
+})
+
+test("a model response missing some ids leaves just those videos with raw titles, not empty ones", async () => {
+	const { BotService } = await import("../src/services/BotService.js")
+	const userId = 953
+	db.getOrCreateUser(userId)
+	const existing = db.getVideoCandidates(7, new Set())
+	db.markDigestShown(userId, existing.map((v) => v.id))
+
+	db.upsertVideo("ct4a", "yt:@ctchan4a", "ctv4a", "FIRST SHOUTY TITLE", "https://youtube.com/watch?v=ct4a", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+	db.upsertVideo("ct4b", "yt:@ctchan4b", "ctv4b", "SECOND SHOUTY TITLE", "https://youtube.com/watch?v=ct4b", 100, 600,
+		new Date(Date.now() - 86400_000).toISOString())
+
+	const service = new BotService({
+		ai: {
+			rankPosts: async (posts) => posts.map((p) => ({ post_id: p.id, score: 1 })),
+			cleanTitles: async (items) => new Map(
+				items.filter((it) => it.id === "ct4a").map((it) => [it.id, "First calm title"])
+			)
+		}
+	})
+
+	const result = await service.selectVideosForDigest(userId, { limit: 5 })
+	const a = result.videos.find((v) => v.id === "ct4a")
+	const b = result.videos.find((v) => v.id === "ct4b")
+	assert.ok(a && b, "both picks are present")
+	assert.equal(a.clean_title, "First calm title")
+	assert.ok(!b.clean_title, "the video the model dropped keeps no clean_title, not an empty string")
+	assert.ok(!db.getPostById("ct4b").clean_title)
+})
+
+test("formatVideoBlockText prefers clean_title and falls back to the raw first line", async () => {
+	const { UIFormatter } = await import("../src/ui/UIFormatter.js")
+	const postById = { v5: { channel: "yt:@chan", postUrl: "https://www.youtube.com/watch?v=abc5", duration_sec: 600, views: 100 } }
+
+	const withClean = { id: "v5", text: "RAW SHOUTY TITLE\n\ndescription", clean_title: "Calm rewritten title" }
+	const textWithClean = UIFormatter.formatVideoBlockText(withClean, postById)
+	assert.match(textWithClean, /Calm rewritten title/)
+	assert.ok(!textWithClean.includes("RAW SHOUTY TITLE"), "the raw title is not shown when a clean one exists")
+
+	const withoutClean = { id: "v5", text: "RAW SHOUTY TITLE\n\ndescription", clean_title: null }
+	const textWithoutClean = UIFormatter.formatVideoBlockText(withoutClean, postById)
+	assert.match(textWithoutClean, /RAW SHOUTY TITLE/, "falls back to the raw title when clean_title is absent")
+})
+
+test("a whitespace-only clean_title falls back to the raw title instead of rendering blank", async () => {
+	const { UIFormatter } = await import("../src/ui/UIFormatter.js")
+	const postById = { v6: { channel: "yt:@chan", postUrl: "https://www.youtube.com/watch?v=abc6", duration_sec: 600, views: 100 } }
+
+	const video = { id: "v6", text: "RAW SHOUTY TITLE\n\ndescription", clean_title: "   " }
+	const text = UIFormatter.formatVideoBlockText(video, postById)
+	assert.match(text, /RAW SHOUTY TITLE/, "a blank-after-trim clean_title must not win over the raw title")
+})

@@ -1,6 +1,6 @@
 import { test } from "node:test"
 import assert from "node:assert/strict"
-import { buildRankPrompt, buildSummaryPrompt } from "../src/ai/prompts.js"
+import { buildRankPrompt, buildSummaryPrompt, buildCleanTitlesPrompt } from "../src/ai/prompts.js"
 
 const posts = [{ id: "p1", channel: "somechannel", text: "Пост про найм первого сотрудника" }]
 
@@ -157,4 +157,12 @@ test("the summary prompt bans news filler instead of demanding complete sentence
 	assert.ok(/FIRST word is the subject/i.test(prompt), "the prompt must demand the subject first")
 	assert.ok(/Goldie автоматизирует/.test(prompt), "the rewrites must be shown in the language the digest is written in")
 	assert.match(prompt, /essence: the fact itself, 8-14 words/)
+})
+
+test("the clean-titles prompt asks to keep the original language, not translate", () => {
+	const prompt = buildCleanTitlesPrompt([{ id: "1", title: "ЭТО ШОК!!! Новый ИИ ВЗОРВАЛ интернет 🔥" }])
+
+	assert.match(prompt, /original language/i, "the prompt must demand the original language is kept")
+	assert.match(prompt, /do not translate/i, "the prompt must explicitly forbid translation")
+	assert.match(prompt, /rewrite, not a summary/i, "the prompt must frame this as a rewrite, not a description")
 })

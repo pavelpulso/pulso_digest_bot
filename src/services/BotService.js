@@ -25,7 +25,8 @@ import {
 	markDigestShown,
 	getVideoCandidates,
 	getChannelViewNorms,
-	getVideoRankingRows
+	getVideoRankingRows,
+	setCleanTitles
 } from "../db.js"
 import { getUserSystemPrompt } from "./SystemPromptLoader.js"
 import { formatDateLabel, MIN_DIGEST_SCORE, DIGEST_PAGE_SIZE, getDigestDate } from "../utils.js"
@@ -51,6 +52,40 @@ async function alertVideoSectionFailure(telegram, stage, userId, error) {
 		await telegram.sendMessage(adminId, message)
 	} catch (e) {
 		console.error("[video section] admin alert failed:", e.message)
+	}
+}
+
+/**
+ * Rewrites the picks' shouty titles once, in place, and persists the result — a video
+ * that already has clean_title is skipped, so it is never sent to the model twice.
+ * Failure here must never block the video section: it already renders the raw title
+ * as a fallback, so a caught error just means this pass silently did nothing.
+ * Module-level (not a class field/#method), same reason as alertVideoSectionFailure above:
+ * selectVideosForDigest is exercised against hand-built fakes via .call(fakeObject, ...),
+ * and a private class method throws on a receiver that isn't a real BotService instance.
+ */
+async function cleanLeadTitles(ai, leads) {
+	const pending = leads.filter((s) => !s.video.clean_title)
+	if (pending.length === 0) return
+
+	try {
+		const items = pending.map((s) => ({
+			id: s.video.id,
+			title: String(s.video.text || "").split("\n")[0].trim()
+		}))
+		const titles = await ai.cleanTitles(items)
+
+		const toStore = {}
+		for (const s of pending) {
+			const title = titles.get(s.video.id)
+			if (title) {
+				s.video.clean_title = title
+				toStore[s.video.id] = title
+			}
+		}
+		setCleanTitles(toStore)
+	} catch (e) {
+		console.error("[selectVideosForDigest] title cleanup failed:", e.message)
 	}
 }
 
@@ -146,6 +181,8 @@ export class BotService {
 				leads.push(s)
 			}
 		}
+
+		await cleanLeadTitles(this.mgr.ai, leads)
 
 		const leadIds = new Set(leads.map((s) => s.video.id))
 		return {

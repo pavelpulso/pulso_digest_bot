@@ -111,7 +111,12 @@ export class UIFormatter {
 	 * title+description. Вторая строка несёт длительность и просмотры — по ним решают, открывать ли.
 	 */
 	static formatVideoBlockText(video, postById) {
-		const title = this.escapeHtml(String(video.text || "").split("\n")[0].trim())
+		// clean_title is generated once at selection time; a video without one (not yet
+		// processed, or the rewrite failed) falls back to the raw first line, which is the
+		// whole reason this section does not depend on the model to send.
+		const rawTitle = String(video.text || "").split("\n")[0].trim()
+		const cleanTitle = String(video.clean_title || "").trim()
+		const title = this.escapeHtml(cleanTitle || rawTitle)
 		const meta = postById[video.id] || {}
 		const safeUrl = String(meta.postUrl || "#").replace(/&/g, "&amp;")
 		const channel = this.escapeHtml(String(meta.channel || "").replace(/^yt:/, ""))
