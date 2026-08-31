@@ -5,6 +5,7 @@ import { StatusMessage } from "../services/StatusMessage.js"
 import { getUserSystemPrompt } from "../services/SystemPromptLoader.js"
 import {
 	getOrCreateUser,
+	getReaderProfile,
 	getUser,
 	getChannelUsernames,
 	getRecentPostsByChannel,
@@ -182,7 +183,7 @@ export class CommandHandler extends BaseHandler {
 			// Stage 2: Post ranking (20-80%)
 			await status.percent("⏳ <b>Ranking posts...</b>", 70)
 			try {
-				await this.mgr.service.ensureRankings(userId, user.profile || "")
+				await this.mgr.service.ensureRankings(userId, getReaderProfile(user))
 				await status.percent("⏳ <b>Ranking posts...</b>", 80)
 			} catch (e) {
 				console.error(`[handleDigest] Rankings error:`, e)
@@ -245,7 +246,7 @@ export class CommandHandler extends BaseHandler {
 			const minWarning = posts.length < 5 ? `\n⚠️ <i>Limited data (${posts.length} posts) — approximate score.</i>` : ""
 
 			const systemPrompt = await getUserSystemPrompt(user)
-			const result = await this.mgr.ai.analyzeChannel(posts, channelName, user.profile || "", systemPrompt)
+			const result = await this.mgr.ai.analyzeChannel(posts, channelName, getReaderProfile(user), systemPrompt)
 
 			const { emoji, label: vLabel } = UIFormatter.verdictLabel(result.verdict)
 			const snPct = Math.round((result.signal_noise || 0) * 100)
@@ -361,7 +362,7 @@ export class CommandHandler extends BaseHandler {
 		const user = getOrCreateUser(userId)
 		const systemPrompt = await getUserSystemPrompt(user)
 		try {
-			const scores = await this.mgr.ai.auditAllChannels(channelsWithData, user.profile || "", {
+			const scores = await this.mgr.ai.auditAllChannels(channelsWithData, getReaderProfile(user), {
 				onProgress: ({ analyzedChannels, totalChannels, percent, completedBatches, totalBatches }) => {
 					status.percent(
 						"⏳ Analyzing channels...",

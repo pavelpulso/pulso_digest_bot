@@ -6,6 +6,7 @@ import {
 	getRankedPostIdsAboveScore,
 	getPostsByIds,
 	getOrCreateUser,
+	getReaderProfile,
 	getRankingsMap,
 	getRankingByUserAndPost,
 	getDigestFormat,
@@ -136,7 +137,7 @@ export class BotService {
 			const priorities = getUserChannelPriorities(userId)
 			const feedback = getPostFeedbackForRanking(userId)
 			const systemPrompt = await getUserSystemPrompt(user)
-			const ranked = await this.mgr.ai.rankPosts(candidates, user.profile || "", { channelPriorities: priorities, feedback, systemPrompt })
+			const ranked = await this.mgr.ai.rankPosts(candidates, getReaderProfile(user), { channelPriorities: priorities, feedback, systemPrompt })
 			const scoreById = new Map(ranked.map((r) => [String(r.post_id), Number(r.score) || 0]))
 			reasonById = new Map(ranked.map((r) => [String(r.post_id), r.reason || null]))
 			const topicById = new Map(ranked.map((r) => [String(r.post_id), r.topic || null]))
@@ -498,7 +499,7 @@ export class BotService {
 			
 			// Re-build rankings
 			const user = getOrCreateUser(userId)
-			await this.ensureRankings(userId, user.profile || "")
+			await this.ensureRankings(userId, getReaderProfile(user))
 			
 			// Check again
 			const result = this.getDigestPostIds(userId, date, count, offset)
@@ -530,7 +531,7 @@ export class BotService {
 		// Update progress before generating blocks
 		if (status) await status.percent("⏳ <b>Generating digest blocks...</b>", 95)
 
-		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", user.digest_max_items, {
+		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, getReaderProfile(user), user.digest_max_items, {
 			onProgress: (pct) => {
 				if (status) {
 					const progress = 95 + Math.round(pct / 100 * 5)
@@ -642,7 +643,7 @@ export class BotService {
 		const systemPrompt = await getUserSystemPrompt(user)
 
 		// Generate blocks for filtered posts
-		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", limit, { systemPrompt, compact: getDigestFormat(userId) === "compact" })
+		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, getReaderProfile(user), limit, { systemPrompt, compact: getDigestFormat(userId) === "compact" })
 
 		if (!result.blocks?.length) {
 			return ctx.reply("⚠️ Failed to generate blocks for filtered posts.", { parse_mode: "HTML" })
@@ -760,7 +761,7 @@ export class BotService {
 		rankedPosts.sort((a, b) => orderMap[a.id] - orderMap[b.id])
 
 		const systemPrompt = await getUserSystemPrompt(user)
-		const result = await this.mgr.ai.generateSummaryBlocks(rankedPosts, label, user.profile || "", maxItems, {
+		const result = await this.mgr.ai.generateSummaryBlocks(rankedPosts, label, getReaderProfile(user), maxItems, {
 			onProgress: (pct) => {
 				if (options.status) {
 					const progress = 70 + Math.round(pct / 100 * 30)
@@ -815,7 +816,7 @@ export class BotService {
 
 		for (const u of users) {
 			try {
-				await this.ensureRankingsForDate(u.user_id, digestDateStr, u.profile || "")
+				await this.ensureRankingsForDate(u.user_id, digestDateStr, getReaderProfile(u))
 				const payload = await this.buildDigestBlocksForDate(u.user_id, digestDateStr)
 				if (!payload) continue
 
@@ -919,7 +920,7 @@ export class BotService {
 		const user = getOrCreateUser(userId)
 		const label = formatDateLabel(date)
 		const systemPrompt = await getUserSystemPrompt(user)
-		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", user.digest_max_items, { systemPrompt, compact: getDigestFormat(userId) === "compact" })
+		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, getReaderProfile(user), user.digest_max_items, { systemPrompt, compact: getDigestFormat(userId) === "compact" })
 		if (!result.blocks?.length) return null
 
 		// Get total collected posts count for stats
@@ -945,7 +946,7 @@ export class BotService {
 		const user = getOrCreateUser(userId)
 		const label = formatDateLabel(date)
 		const systemPrompt = await getUserSystemPrompt(user)
-		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, user.profile || "", user.digest_max_items, { systemPrompt, compact: getDigestFormat(userId) === "compact" })
+		const result = await this.mgr.ai.generateSummaryBlocks(posts, label, getReaderProfile(user), user.digest_max_items, { systemPrompt, compact: getDigestFormat(userId) === "compact" })
 		if (!result.blocks?.length) return null
 
 		// Get total collected posts count for stats

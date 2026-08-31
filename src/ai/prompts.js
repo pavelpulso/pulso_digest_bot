@@ -6,6 +6,9 @@ import { LIMITS } from "./constants.js"
 
 /**
  * Determines reader context: priority — systemPrompt, otherwise — userProfile.
+ * Callers pass the caller-resolved reader profile here (getReaderProfile(user) in db.js) —
+ * `digest_profile` when set, otherwise the reader's own `profile` — so this function and
+ * detectLanguage below always see the same text.
  * @param {string|null} systemPrompt - Loaded system prompt
  * @param {string} userProfile - User profile (fallback)
  * @returns {string} Context for the prompt

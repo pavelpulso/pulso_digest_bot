@@ -114,6 +114,13 @@ if (!userCols.includes("onboarding_completed")) {
   addColumn("ALTER TABLE users ADD COLUMN onboarding_completed INTEGER DEFAULT 0")
 }
 
+// Migration: digest_profile — a ranking-only reader description, separate from `profile`
+// because `profile` is also pasted into other assistants and carries formatting instructions
+// (ФОРМАТ ОТВЕТОВ, etc.) that are noise inside the ranking prompt.
+if (!userCols.includes("digest_profile")) {
+  addColumn("ALTER TABLE users ADD COLUMN digest_profile TEXT")
+}
+
 // Migration: posts.source / posts.duration_sec — split telegram posts from videos
 const postCols = db.prepare("PRAGMA table_info(posts)").all().map((c) => c.name)
 if (!postCols.includes("source")) {
@@ -782,7 +789,7 @@ export function markVideoWatched(userId, postId) {
 
 // Users
 const USER_SELECT =
-  "SELECT user_id, username, profile, is_banned, updated_at, COALESCE(digest_max_items, 7) AS digest_max_items, minus_keywords, COALESCE(digest_format, 'full') AS digest_format, system_prompt_url, system_prompt_cached, system_prompt_cached_at, digest_pause_until, digest_pause_weekends, onboarding_completed FROM users WHERE user_id = ?"
+  "SELECT user_id, username, profile, digest_profile, is_banned, updated_at, COALESCE(digest_max_items, 7) AS digest_max_items, minus_keywords, COALESCE(digest_format, 'full') AS digest_format, system_prompt_url, system_prompt_cached, system_prompt_cached_at, digest_pause_until, digest_pause_weekends, onboarding_completed FROM users WHERE user_id = ?"
 
 export function getUser(userId) {
   return db.prepare(USER_SELECT).get(userId)
@@ -802,6 +809,15 @@ export function getOrCreateUser(userId, username = null) {
 
 export function updateUserProfile(userId, profile) {
   db.prepare("UPDATE users SET profile = ?, updated_at = datetime('now') WHERE user_id = ?").run(profile, userId)
+}
+
+/** The reader text ranking/summary prompts should use: `digest_profile` when set (a
+ * ranking-only description), otherwise `profile` (the reader's own bio, also pasted into
+ * other assistants and possibly carrying formatting instructions irrelevant to ranking). */
+export function getReaderProfile(user) {
+  const digestProfile = user?.digest_profile
+  if (digestProfile && String(digestProfile).trim() !== "") return digestProfile
+  return user?.profile || ""
 }
 
 export function updateUserDigestMax(userId, maxItems) {
@@ -960,8 +976,8 @@ export function getUsersForMorningDigest() {
   const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6) ? 1 : 0
   
   return db.prepare(
-    `SELECT user_id, profile FROM users 
-     WHERE is_banned = 0 
+    `SELECT user_id, profile, digest_profile FROM users
+     WHERE is_banned = 0
        AND (digest_pause_until IS NULL OR digest_pause_until < ?)
        AND (digest_pause_weekends = 0 OR ? = 0)`
   ).all(now, isWeekend)
