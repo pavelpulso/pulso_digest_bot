@@ -34,6 +34,26 @@ import { KeyboardProvider } from "../ui/KeyboardProvider.js"
 import { collectChannelPosts } from "../gramjs.js"
 import { computeBoost } from "../youtube/scoring.js"
 
+/**
+ * sendVideoSection swallows its own failures so a broken video section can never take
+ * down the text digest that already went out — but that must not mean the failure goes
+ * unheard. Module-level (not a class field/#method) because sendVideoSection is exercised
+ * against hand-built fakes, not real BotService instances.
+ */
+async function alertVideoSectionFailure(telegram, stage, userId, error) {
+	const adminId = parseInt(process.env.ADMIN_ID, 10) || 0
+	if (!adminId) return
+
+	const message = `⚠️ Видео-секция (${stage}) упала для user ${userId}: ${error?.message ?? error}`.slice(0, 4000)
+	try {
+		// The alert itself can be refused by Telegram (rate limit, blocked bot); letting
+		// that throw would recreate the exact silent failure this alert exists to fix.
+		await telegram.sendMessage(adminId, message)
+	} catch (e) {
+		console.error("[video section] admin alert failed:", e.message)
+	}
+}
+
 export const VIDEO_WINDOW_DAYS = 7
 const VIDEO_LEAD_COUNT = 3
 export const VIDEO_DAILY_CAP = 30
@@ -145,6 +165,7 @@ export class BotService {
 			picked = await this.selectVideosForDigest(userId, { limit })
 		} catch (e) {
 			console.error("[video section] user", userId, e.message)
+			await alertVideoSectionFailure(telegram, "выбор видео", userId, e)
 			return 0
 		}
 
@@ -160,6 +181,7 @@ export class BotService {
 			)
 		} catch (e) {
 			console.error("[video section] blocks failed for user", userId, e.message)
+			await alertVideoSectionFailure(telegram, "генерация блоков", userId, e)
 			return 0
 		}
 
@@ -203,6 +225,7 @@ export class BotService {
 			}
 		} catch (e) {
 			console.error("[video section] send failed for user", userId, e.message)
+			await alertVideoSectionFailure(telegram, "отправка", userId, e)
 		}
 
 		return shownIds.length
