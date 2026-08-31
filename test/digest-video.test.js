@@ -942,3 +942,171 @@ test("marking watched swaps the keyboard for an inert button and never rewrites 
 	assert.equal(row.rating, 1, "rating is still untouched")
 	assert.ok(row.watched_at, "watched_at is still stamped")
 })
+
+test("a failure selecting videos alerts the admin and still returns 0 without throwing", async () => {
+	const prevAdmin = process.env.ADMIN_ID
+	process.env.ADMIN_ID = "999"
+	try {
+		const sent = []
+		const telegram = {
+			sendMessage: async (chatId, text) => { sent.push({ chatId, text }); return { message_id: sent.length } }
+		}
+		const service = {
+			selectVideosForDigest: async () => { throw new Error("AI down") },
+			sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
+		}
+
+		let count
+		await assert.doesNotReject(async () => {
+			count = await service.sendVideoSection.call(service, telegram, 900, {})
+		})
+		assert.equal(count, 0)
+		assert.equal(sent.length, 1, "the admin got exactly one alert")
+		assert.equal(sent[0].chatId, 999)
+		assert.match(sent[0].text, /AI down/)
+	} finally {
+		if (prevAdmin === undefined) delete process.env.ADMIN_ID
+		else process.env.ADMIN_ID = prevAdmin
+	}
+})
+
+test("a failure generating blocks alerts the admin and still returns 0 without throwing", async () => {
+	const prevAdmin = process.env.ADMIN_ID
+	process.env.ADMIN_ID = "999"
+	try {
+		const sent = []
+		const telegram = {
+			sendMessage: async (chatId, text) => { sent.push({ chatId, text }); return { message_id: sent.length } }
+		}
+		db.getOrCreateUser(901)
+		const videos = [
+			{ id: "bf1", channel: "yt:@bfchan", post_id: "bf1", link: null, date: "2026-08-01T00:00:00.000Z", duration_sec: 100, views: 10 }
+		]
+		const service = {
+			selectVideosForDigest: async () => ({ videos, remaining: 0 }),
+			mgr: { ai: { generateSummaryBlocks: async () => { throw new Error("provider exhausted") } } },
+			sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
+		}
+
+		let count
+		await assert.doesNotReject(async () => {
+			count = await service.sendVideoSection.call(service, telegram, 901, {})
+		})
+		assert.equal(count, 0)
+		assert.equal(sent.length, 1)
+		assert.equal(sent[0].chatId, 999)
+		assert.match(sent[0].text, /provider exhausted/)
+	} finally {
+		if (prevAdmin === undefined) delete process.env.ADMIN_ID
+		else process.env.ADMIN_ID = prevAdmin
+	}
+})
+
+test("a send failure alerts the admin in addition to leaving the delivered videos marked shown", async () => {
+	const prevAdmin = process.env.ADMIN_ID
+	process.env.ADMIN_ID = "999"
+	try {
+		db.getOrCreateUser(902)
+		const videos = [
+			{ id: "sf1", channel: "yt:@sfchan", post_id: "sf1", link: null, date: "2026-08-01T00:00:00.000Z", duration_sec: 100, views: 10 }
+		]
+		const sent = []
+		const telegram = {
+			sendMessage: async (chatId, text) => {
+				sent.push({ chatId, text })
+				if (chatId === 902) throw new Error("Telegram rejected the message")
+				return { message_id: sent.length }
+			}
+		}
+		const service = {
+			selectVideosForDigest: async () => ({ videos, remaining: 0 }),
+			mgr: { ai: { generateSummaryBlocks: async () => ({ blocks: [{ ids: ["sf1"], essence: "e", emoji: "🎬" }] }) } },
+			sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
+		}
+
+		let count
+		await assert.doesNotReject(async () => {
+			count = await service.sendVideoSection.call(service, telegram, 902, { withHeader: false })
+		})
+		assert.equal(count, 0)
+		const adminAlerts = sent.filter((s) => s.chatId === 999)
+		assert.equal(adminAlerts.length, 1)
+		assert.match(adminAlerts[0].text, /Telegram rejected the message/)
+	} finally {
+		if (prevAdmin === undefined) delete process.env.ADMIN_ID
+		else process.env.ADMIN_ID = prevAdmin
+	}
+})
+
+test("an admin alert that itself fails does not make sendVideoSection throw", async () => {
+	const prevAdmin = process.env.ADMIN_ID
+	process.env.ADMIN_ID = "999"
+	try {
+		const telegram = {
+			sendMessage: async () => { throw new Error("admin chat is blocked") }
+		}
+		const service = {
+			selectVideosForDigest: async () => { throw new Error("AI down") },
+			sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
+		}
+
+		let count
+		await assert.doesNotReject(async () => {
+			count = await service.sendVideoSection.call(service, telegram, 903, {})
+		})
+		assert.equal(count, 0, "still reports nothing sent despite the alert itself failing")
+	} finally {
+		if (prevAdmin === undefined) delete process.env.ADMIN_ID
+		else process.env.ADMIN_ID = prevAdmin
+	}
+})
+
+test("no ADMIN_ID means no alert attempt and no error", async () => {
+	const prevAdmin = process.env.ADMIN_ID
+	delete process.env.ADMIN_ID
+	try {
+		const sent = []
+		const telegram = {
+			sendMessage: async (chatId, text) => { sent.push({ chatId, text }); return { message_id: sent.length } }
+		}
+		const service = {
+			selectVideosForDigest: async () => { throw new Error("AI down") },
+			sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
+		}
+
+		let count
+		await assert.doesNotReject(async () => {
+			count = await service.sendVideoSection.call(service, telegram, 904, {})
+		})
+		assert.equal(count, 0)
+		assert.equal(sent.length, 0, "no alert is attempted without an ADMIN_ID")
+	} finally {
+		if (prevAdmin === undefined) delete process.env.ADMIN_ID
+		else process.env.ADMIN_ID = prevAdmin
+	}
+})
+
+test("the happy path sends no admin alert", async () => {
+	const prevAdmin = process.env.ADMIN_ID
+	process.env.ADMIN_ID = "999"
+	try {
+		db.getOrCreateUser(905)
+		const sends = []
+		const telegram = { sendMessage: async (chatId, text, extra) => { sends.push({ chatId, text, extra }); return { message_id: sends.length } } }
+		const videos = [
+			{ id: "hp1", channel: "yt:@hpchan", post_id: "hpv1", source: "yt", link: "https://www.youtube.com/watch?v=hpv1", date: "2026-08-01T00:00:00.000Z", duration_sec: 600, views: 10 }
+		]
+		const service = {
+			selectVideosForDigest: async () => ({ videos, remaining: 0, reasonById: new Map() }),
+			mgr: { ai: { generateSummaryBlocks: async () => ({ blocks: [{ ids: ["hp1"], essence: "e", emoji: "🎬" }] }) } },
+			sendVideoSection: (await import("../src/services/BotService.js")).BotService.prototype.sendVideoSection
+		}
+
+		const count = await service.sendVideoSection.call(service, telegram, 905, { withHeader: false })
+		assert.ok(count > 0, "the happy path actually sends something")
+		assert.ok(!sends.some((s) => s.chatId === 999), "no admin alert on the happy path")
+	} finally {
+		if (prevAdmin === undefined) delete process.env.ADMIN_ID
+		else process.env.ADMIN_ID = prevAdmin
+	}
+})
