@@ -213,7 +213,7 @@
     provider: "openrouter",
     key: "",
     model: "minimax/minimax-m3:free",
-    persona: "Ты настольный голосовой ассистент. Отвечай на русском, коротко и по делу — три-четыре предложения, без списков и заголовков, потому что ответ будет прочитан вслух. Если вопрос требует長 длинного ответа, дай суть и предложи уточнить.",
+    persona: "Ты настольный голосовой ассистент. Отвечай на русском, коротко и по делу — три-четыре предложения, без списков и заголовков, потому что ответ будет прочитан вслух. Если вопрос требует длинного ответа, дай суть и предложи уточнить.",
     lang: "ru-RU",
     continuous: "0"
   };
@@ -484,8 +484,28 @@
     } catch (e) { /* not fatal — the phone just dims as usual */ }
   })();
 
-  if (!cfg.key) { setStatus("Открой настройки и вставь ключ"); openSetup(); }
-  if (!SR) { setFace("error"); setStatus("Нужен Chrome — этот браузер не распознаёт речь"); }
+  // A config.json sitting next to this page seeds the settings on first run, so a
+  // phone set up over ssh needs no typing. It is never committed; localStorage wins after.
+  (async () => {
+    if (cfg.key) { boot(); return; }
+    try {
+      const res = await fetch("config.json", { cache: "no-store" });
+      if (res.ok) {
+        const j = await res.json();
+        for (const k of ["provider", "key", "model", "persona", "lang", "continuous"]) {
+          if (j[k] !== undefined && j[k] !== null && j[k] !== "") cfg[k] = String(j[k]);
+        }
+        if (cfg.key) save();
+      }
+    } catch (e) { /* no config file — fall through to asking */ }
+    boot();
+  })();
+
+  function boot() {
+    if (!cfg.key) { setStatus("Открой настройки и вставь ключ"); openSetup(); }
+    else setStatus("Готово. Нажми «Говорить»");
+    if (!SR) { setFace("error"); setStatus("Нужен Chrome — этот браузер не распознаёт речь"); }
+  }
 })();
 </script>
 </body>
