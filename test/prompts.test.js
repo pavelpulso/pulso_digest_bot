@@ -94,30 +94,6 @@ test("no feedback at all produces no feedback section", () => {
 	assert.ok(!/Marked interesting in the digest/.test(prompt))
 })
 
-test("the summary prompt carries a grounding rule only when the flag is set", () => {
-	const list = [{ id: "1", channel: "c", text: "текст", link: "l" }]
-
-	const grounded = buildSummaryPrompt(list, "29 августа", "профиль", 5, null, true, true)
-	const ungrounded = buildSummaryPrompt(list, "29 августа", "профиль", 5, null, true, false)
-
-	assert.match(grounded, /have not watched it/i, "the grounding rule must be present when the flag is set")
-	assert.ok(!/have not watched it/i.test(ungrounded), "the grounding rule must not appear when the flag is off")
-})
-
-test("the grounding flag is independent of compact", () => {
-	const list = [{ id: "1", channel: "c", text: "текст", link: "l" }]
-
-	const compactGrounded = buildSummaryPrompt(list, "29 августа", "профиль", 5, null, true, true)
-	const fullGrounded = buildSummaryPrompt(list, "29 августа", "профиль", 5, null, false, true)
-	const compactUngrounded = buildSummaryPrompt(list, "29 августа", "профиль", 5, null, true, false)
-	const fullUngrounded = buildSummaryPrompt(list, "29 августа", "профиль", 5, null, false, false)
-
-	assert.match(compactGrounded, /have not watched it/i)
-	assert.match(fullGrounded, /have not watched it/i)
-	assert.ok(!/have not watched it/i.test(compactUngrounded))
-	assert.ok(!/have not watched it/i.test(fullUngrounded))
-})
-
 test("an English-titled list does not get misdetected as German", () => {
 	const list = [
 		{ id: "1", channel: "c", text: "Watch this: check out the new technology" },

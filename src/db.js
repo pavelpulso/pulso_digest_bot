@@ -414,7 +414,7 @@ export function getVideosInWindow(sinceIso) {
 }
 
 /** Минимальная длительность видео-кандидата — отсекает трейлеры и клипы. */
-const MIN_VIDEO_SECONDS = 300
+const MIN_VIDEO_SECONDS = 600
 
 /**
  * Видео за окно, не скрытые пользователем, максимум два на канал — самое просматриваемое
