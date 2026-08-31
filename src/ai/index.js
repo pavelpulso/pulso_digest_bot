@@ -126,6 +126,10 @@ export class AIRouter {
     return this.#executeWithFallback("rankPosts", [posts, userProfile, options || {}], "rank")
   }
 
+  cleanTitles(items) {
+    return this.#executeWithFallback("cleanTitles", [items], "cleanTitles")
+  }
+
   generateSummaryBlocks(posts, dateLabel, userProfile, maxItems, options) {
     return this.#executeWithFallback("generateSummaryBlocks", [posts, dateLabel, userProfile, maxItems, options || {}], "summary")
   }
@@ -165,6 +169,7 @@ const autoInit = async () => {
 }
 
 export const rankPosts = (...args) => router.rankPosts(...args)
+export const cleanTitles = (...args) => router.cleanTitles(...args)
 export const generateSummaryBlocks = (...args) => router.generateSummaryBlocks(...args)
 export const analyzeChannel = (...args) => router.analyzeChannel(...args)
 export const auditAllChannels = (...args) => router.auditAllChannels(...args)

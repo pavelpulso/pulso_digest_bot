@@ -153,6 +153,33 @@ function getLanguageInstruction(lang) {
 }
 
 /**
+ * Prompt for rewriting shouty/clickbait YouTube titles. This is a REWRITE of the author's
+ * own words, not a summary or a description — the model sees only the title, never the
+ * video, so it cannot add a single fact that isn't already in the text it's transforming.
+ */
+export function buildCleanTitlesPrompt(list) {
+  return `You rewrite YouTube video titles so they read calmly, without touching their meaning.
+
+Rules:
+- Keep the author's meaning and every fact. This is a rewrite, not a summary — add nothing, drop nothing except noise.
+- Strip shouting: turn ALL-CAPS words into normal case, unless they are genuine acronyms or product names (e.g. AI, GPT, NASA).
+- Remove decorative emoji, bracketed tags like [ОБЗОР] or [NEW], and trailing channel-name suffixes.
+- Keep the ORIGINAL language of each title. Do not translate — the reader watches videos in several languages and a translated title makes the video harder to recognise.
+- Keep the rewritten title short enough to fit a single digest line (under ${LIMITS.CLEAN_TITLE_MAX_CHARS} characters).
+- If a title is already clean, return it unchanged — do not paraphrase for the sake of change.
+
+Titles:
+${JSON.stringify(list)}
+
+Return JSON array with EXACT structure:
+[
+  {"id": "ID_FROM_TITLES", "title": "rewritten title"},
+  ...
+]
+Use EXACT "id" field, matching "id" from the titles above. Return one entry per title.`
+}
+
+/**
  * Prompt for generating digest blocks.
  */
 export function buildSummaryPrompt(list, dateLabel, userProfile, maxBlocks, systemPrompt = null, compact = false) {

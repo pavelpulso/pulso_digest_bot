@@ -7,7 +7,8 @@ import {
   buildSummaryPrompt,
   buildAnalyzeChannelPrompt,
   buildAuditAllChannelsPrompt,
-  buildRecommendChannelsPrompt
+  buildRecommendChannelsPrompt,
+  buildCleanTitlesPrompt
 } from "./prompts.js"
 import { LIMITS, JSON_ARRAY_KEYS, VERDICTS } from "./constants.js"
 
@@ -246,6 +247,32 @@ export class BaseAI {
       reason: String(item.reason || ""),
       topic: item.topic ? String(item.topic).trim() : null
     }))
+  }
+
+  /**
+   * Rewrites a batch of video titles (rewrite, not summary — see prompts.js). Returns a
+   * Map from id to rewritten title; ids the model dropped or mangled are simply absent,
+   * so the caller can fall back to the raw title for exactly those.
+   */
+  async cleanTitles(items) {
+    if (items.length === 0) return new Map()
+
+    const list = items.map((it) => ({ id: it.id, title: String(it.title || "") }))
+    const buildPrompt = (batch) => buildCleanTitlesPrompt(batch)
+    const batches = this.#splitIntoBatches(list, buildPrompt)
+
+    const result = new Map()
+    for (const batch of batches) {
+      const maxTokens = batch.length * LIMITS.COMPLETION_TOKENS_PER_TITLE + 100
+      const raw = await this._callAPI(buildPrompt(batch), { type: "json_object", maxTokens })
+      const parsed = this.#parseJSONArray(raw)
+      for (const item of parsed) {
+        const id = item?.id != null ? String(item.id) : null
+        const title = typeof item?.title === "string" ? item.title.trim() : ""
+        if (id && title) result.set(id, title.slice(0, LIMITS.CLEAN_TITLE_MAX_CHARS))
+      }
+    }
+    return result
   }
 
   async generateSummaryBlocks(posts, dateLabel, userProfile = "", maxItems = 10, _options = {}) {

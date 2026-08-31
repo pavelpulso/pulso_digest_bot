@@ -123,6 +123,11 @@ if (!postCols.includes("duration_sec")) {
   addColumn("ALTER TABLE posts ADD COLUMN duration_sec INTEGER")
 }
 
+// Migration: posts.clean_title — model-rewritten video title, generated once at selection time
+if (!postCols.includes("clean_title")) {
+  addColumn("ALTER TABLE posts ADD COLUMN clean_title TEXT")
+}
+
 // Migration: channels.source / channels.external_id / channels.unsubscribed_at
 const channelCols = db.prepare("PRAGMA table_info(channels)").all().map((c) => c.name)
 if (!channelCols.includes("source")) {
@@ -314,14 +319,14 @@ export function getPostsForCalendarDay(dateStr) {
 }
 
 export function getPostById(id) {
-  return db.prepare("SELECT id, channel, post_id, text, link, views, date, source, duration_sec FROM posts WHERE id = ?").get(id)
+  return db.prepare("SELECT id, channel, post_id, text, link, views, date, source, duration_sec, clean_title FROM posts WHERE id = ?").get(id)
 }
 
 export function getPostsByIds(ids) {
   if (ids.length === 0) return []
   const placeholders = ids.map(() => "?").join(",")
   return db.prepare(
-    `SELECT id, channel, post_id, text, link, views, date, source, duration_sec FROM posts WHERE id IN (${placeholders})`
+    `SELECT id, channel, post_id, text, link, views, date, source, duration_sec, clean_title FROM posts WHERE id IN (${placeholders})`
   ).all(...ids)
 }
 
@@ -426,7 +431,7 @@ const MIN_VIDEO_SECONDS = 600
 export function getVideoCandidates(windowDays, shownIds, userId = null) {
   const since = new Date(Date.now() - windowDays * 86400_000).toISOString()
   const rows = db.prepare(
-    `SELECT id, channel, post_id, text, link, views, date, source, duration_sec FROM (
+    `SELECT id, channel, post_id, text, link, views, date, source, duration_sec, clean_title FROM (
        SELECT p.*,
          ROW_NUMBER() OVER (PARTITION BY p.channel ORDER BY p.views DESC, p.date DESC, p.id) AS rn_views,
          ROW_NUMBER() OVER (PARTITION BY p.channel ORDER BY p.duration_sec DESC, p.date DESC, p.id) AS rn_duration
@@ -441,6 +446,18 @@ export function getVideoCandidates(windowDays, shownIds, userId = null) {
      ORDER BY date DESC`
   ).all(since, MIN_VIDEO_SECONDS, userId, userId)
   return rows.filter((r) => !shownIds.has(r.id))
+}
+
+/** Persists model-rewritten titles for a batch of videos. Called once per video, at
+ * selection time — a video that already has clean_title is never passed in again. */
+export function setCleanTitles(titlesById) {
+  const entries = Object.entries(titlesById || {})
+  if (entries.length === 0) return
+  const stmt = db.prepare("UPDATE posts SET clean_title = ? WHERE id = ?")
+  const tx = db.transaction((items) => {
+    for (const [id, title] of items) stmt.run(title, id)
+  })
+  tx(entries)
 }
 
 /** Медиана просмотров по созревшим видео каждого канала — норма для boost. */

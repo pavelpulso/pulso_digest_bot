@@ -53,7 +53,11 @@ export const LIMITS = {
   /** Max channels for analysis */
   MAX_CHANNELS_ANALYZE: 100,
   /** Max posts for channel analysis */
-  MAX_POSTS_ANALYZE: 15
+  MAX_POSTS_ANALYZE: 15,
+  /** Max length of a rewritten video title — fits a single digest line */
+  CLEAN_TITLE_MAX_CHARS: 100,
+  /** Completion tokens one rewritten title needs: id + a title up to CLEAN_TITLE_MAX_CHARS chars + JSON overhead */
+  COMPLETION_TOKENS_PER_TITLE: 60
 }
 
 /**
