@@ -1,7 +1,8 @@
 import Database from "better-sqlite3"
 import { mkdirSync, existsSync } from "fs"
 import { dirname } from "path"
-import { median } from "./youtube/scoring.js"
+import { median, likeRatio } from "./youtube/scoring.js"
+import { forwardRatio } from "./telegram/signals.js"
 
 const dbPath = process.env.DB_PATH || "./data/db.sqlite"
 
@@ -133,6 +134,23 @@ if (!postCols.includes("duration_sec")) {
 // Migration: posts.clean_title — model-rewritten video title, generated once at selection time
 if (!postCols.includes("clean_title")) {
   addColumn("ALTER TABLE posts ADD COLUMN clean_title TEXT")
+}
+
+// Migration: posts.forwards / posts.reactions — telegram engagement.
+// forwards has no DEFAULT 0 for the same reason as likes: a channel that forbids
+// forwarding is missing data, not a post nobody shared. reactions holds the raw
+// per-emoji counts as JSON so the polarity dictionary can change without recollecting.
+if (!postCols.includes("forwards")) {
+  addColumn("ALTER TABLE posts ADD COLUMN forwards INTEGER")
+}
+if (!postCols.includes("reactions")) {
+  addColumn("ALTER TABLE posts ADD COLUMN reactions TEXT")
+}
+
+// Migration: posts.likes — YouTube like count. No DEFAULT 0: NULL means "the author hides
+// likes", which is not the same as a video nobody liked, and the boost must tell them apart.
+if (!postCols.includes("likes")) {
+  addColumn("ALTER TABLE posts ADD COLUMN likes INTEGER")
 }
 
 // Migration: channels.source / channels.external_id / channels.unsubscribed_at
@@ -293,22 +311,24 @@ export function hasChannel(username) {
 }
 
 // Posts
-export function upsertPost(id, channel, postId, text, link, views, date) {
+export function upsertPost(id, channel, postId, text, link, views, date, forwards = null, reactions = null) {
   db.prepare(
-    `INSERT INTO posts (id, channel, post_id, text, link, views, date)
-     VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO posts (id, channel, post_id, text, link, views, date, forwards, reactions)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(channel, post_id) DO UPDATE SET
        text = excluded.text,
        link = excluded.link,
        views = excluded.views,
-       date = excluded.date`
-  ).run(id, channel, postId, text || "", link || "", views || 0, date)
+       date = excluded.date,
+       forwards = excluded.forwards,
+       reactions = excluded.reactions`
+  ).run(id, channel, postId, text || "", link || "", views || 0, date, forwards ?? null, reactions ?? null)
 }
 
 export function getPostsLast24h() {
   const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
   return db.prepare(
-    "SELECT id, channel, post_id, text, link, views, date, source, duration_sec FROM posts WHERE date >= ? AND source = 'tg' ORDER BY date DESC"
+    "SELECT id, channel, post_id, text, link, views, forwards, reactions, date, source, duration_sec FROM posts WHERE date >= ? AND source = 'tg' ORDER BY date DESC"
   ).all(since)
 }
 
@@ -321,34 +341,35 @@ export function getPostsForCalendarDay(dateStr) {
   const until = new Date(moscowDate.getTime() + 24 * 60 * 60 * 1000).toISOString() // Next day 00:00 MSK in UTC
 
   return db.prepare(
-    "SELECT id, channel, post_id, text, link, views, date, source, duration_sec FROM posts WHERE date >= ? AND date < ? AND source = 'tg' ORDER BY date DESC"
+    "SELECT id, channel, post_id, text, link, views, forwards, reactions, date, source, duration_sec FROM posts WHERE date >= ? AND date < ? AND source = 'tg' ORDER BY date DESC"
   ).all(since, until)
 }
 
 export function getPostById(id) {
-  return db.prepare("SELECT id, channel, post_id, text, link, views, date, source, duration_sec, clean_title FROM posts WHERE id = ?").get(id)
+  return db.prepare("SELECT id, channel, post_id, text, link, views, likes, forwards, reactions, date, source, duration_sec, clean_title FROM posts WHERE id = ?").get(id)
 }
 
 export function getPostsByIds(ids) {
   if (ids.length === 0) return []
   const placeholders = ids.map(() => "?").join(",")
   return db.prepare(
-    `SELECT id, channel, post_id, text, link, views, date, source, duration_sec, clean_title FROM posts WHERE id IN (${placeholders})`
+    `SELECT id, channel, post_id, text, link, views, likes, forwards, reactions, date, source, duration_sec, clean_title FROM posts WHERE id IN (${placeholders})`
   ).all(...ids)
 }
 
-export function upsertVideo(id, channel, videoId, text, link, views, durationSec, date) {
+export function upsertVideo(id, channel, videoId, text, link, views, durationSec, date, likes = null) {
   // date is not in the UPDATE SET (unlike upsertPost): publish date is immutable,
   // and overwriting it would shift the video inside the selection window on every collection run.
   db.prepare(
-    `INSERT INTO posts (id, channel, post_id, text, link, views, date, source, duration_sec)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'yt', ?)
+    `INSERT INTO posts (id, channel, post_id, text, link, views, date, source, duration_sec, likes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'yt', ?, ?)
      ON CONFLICT(channel, post_id) DO UPDATE SET
        text = excluded.text,
        link = excluded.link,
        views = excluded.views,
-       duration_sec = excluded.duration_sec`
-  ).run(id, channel, videoId, text || "", link || "", views || 0, date, durationSec || null)
+       duration_sec = excluded.duration_sec,
+       likes = excluded.likes`
+  ).run(id, channel, videoId, text || "", link || "", views || 0, date, durationSec || null, likes ?? null)
 }
 
 export function getYouTubeChannels() {
@@ -420,7 +441,7 @@ export function updateChannelActivity(username, { lastVideoAt } = {}) {
 
 export function getVideosInWindow(sinceIso) {
   return db.prepare(
-    `SELECT id, channel, post_id, text, link, views, date, source, duration_sec
+    `SELECT id, channel, post_id, text, link, views, likes, date, source, duration_sec
      FROM posts WHERE source = 'yt' AND date >= ? ORDER BY date DESC`
   ).all(sinceIso)
 }
@@ -438,7 +459,7 @@ const MIN_VIDEO_SECONDS = 600
 export function getVideoCandidates(windowDays, shownIds, userId = null) {
   const since = new Date(Date.now() - windowDays * 86400_000).toISOString()
   const rows = db.prepare(
-    `SELECT id, channel, post_id, text, link, views, date, source, duration_sec, clean_title FROM (
+    `SELECT id, channel, post_id, text, link, views, likes, date, source, duration_sec, clean_title FROM (
        SELECT p.*,
          ROW_NUMBER() OVER (PARTITION BY p.channel ORDER BY p.views DESC, p.date DESC, p.id) AS rn_views,
          ROW_NUMBER() OVER (PARTITION BY p.channel ORDER BY p.duration_sec DESC, p.date DESC, p.id) AS rn_duration
@@ -472,19 +493,54 @@ export function getChannelViewNorms(minAgeDays, maxAgeDays) {
   const newest = new Date(Date.now() - minAgeDays * 86400_000).toISOString()
   const oldest = new Date(Date.now() - maxAgeDays * 86400_000).toISOString()
   const rows = db.prepare(
-    `SELECT channel, views FROM posts
+    `SELECT channel, views, likes FROM posts
      WHERE source = 'yt' AND date <= ? AND date >= ?`
   ).all(newest, oldest)
 
   const byChannel = new Map()
   for (const r of rows) {
-    if (!byChannel.has(r.channel)) byChannel.set(r.channel, [])
-    byChannel.get(r.channel).push(r.views || 0)
+    if (!byChannel.has(r.channel)) byChannel.set(r.channel, { views: [], likeRatios: [] })
+    const entry = byChannel.get(r.channel)
+    entry.views.push(r.views || 0)
+    const ratio = likeRatio(r.likes, r.views)
+    if (ratio !== null) entry.likeRatios.push(ratio)
   }
 
   const norms = new Map()
-  for (const [channel, views] of byChannel) {
-    norms.set(channel, { medianViews: median(views), maturedCount: views.length })
+  for (const [channel, entry] of byChannel) {
+    norms.set(channel, {
+      medianViews: median(entry.views),
+      maturedCount: entry.views.length,
+      medianLikeRatio: median(entry.likeRatios),
+      likeRatioCount: entry.likeRatios.length
+    })
+  }
+  return norms
+}
+
+/**
+ * Медиана доли репостов по созревшим постам канала — норма для boost. В отличие от видео
+ * окно берётся в часах: телеграм-пост собирает почти всё за сутки, а не за неделю.
+ */
+export function getChannelForwardNorms(minAgeHours, maxAgeDays) {
+  const newest = new Date(Date.now() - minAgeHours * 3600_000).toISOString()
+  const oldest = new Date(Date.now() - maxAgeDays * 86400_000).toISOString()
+  const rows = db.prepare(
+    `SELECT channel, views, forwards FROM posts
+     WHERE source = 'tg' AND date <= ? AND date >= ?`
+  ).all(newest, oldest)
+
+  const byChannel = new Map()
+  for (const r of rows) {
+    const ratio = forwardRatio(r.forwards, r.views)
+    if (ratio === null) continue
+    if (!byChannel.has(r.channel)) byChannel.set(r.channel, [])
+    byChannel.get(r.channel).push(ratio)
+  }
+
+  const norms = new Map()
+  for (const [channel, ratios] of byChannel) {
+    norms.set(channel, { medianForwardRatio: median(ratios), maturedCount: ratios.length })
   }
   return norms
 }
@@ -1001,7 +1057,7 @@ export function clearUserSystemPrompt(userId) {
 
 export function getPostsForDateRange(since, until) {
   return db.prepare(
-    "SELECT id, channel, post_id, text, link, views, date FROM posts WHERE date >= ? AND date < ? AND source = 'tg' ORDER BY date DESC"
+    "SELECT id, channel, post_id, text, link, views, forwards, reactions, date FROM posts WHERE date >= ? AND date < ? AND source = 'tg' ORDER BY date DESC"
   ).all(since, until)
 }
 

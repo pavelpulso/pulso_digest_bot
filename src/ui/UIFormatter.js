@@ -1,4 +1,5 @@
 import { MAX_MESSAGE_LEN } from "../utils.js"
+import { likeRatio } from "../youtube/scoring.js"
 
 export class UIFormatter {
 	/** Escapes Markdown characters in text. */
@@ -38,7 +39,7 @@ export class UIFormatter {
 		return header.trim()
 	}
 
-	/** Map id -> {channel, postUrl, duration_sec, views} */
+	/** Map id -> {channel, postUrl, duration_sec, views, likes} */
 	static buildPostById(posts) {
 		return Object.fromEntries(
 			posts.map((p) => {
@@ -46,7 +47,7 @@ export class UIFormatter {
 				const postUrl = p.source === "yt"
 					? p.link
 					: p.link && String(p.link).endsWith("/" + p.post_id) ? p.link : `https://t.me/${p.channel}/${p.post_id}`
-				return [p.id, { channel: p.channel, postUrl, duration_sec: p.duration_sec, views: p.views }]
+				return [p.id, { channel: p.channel, postUrl, duration_sec: p.duration_sec, views: p.views, likes: p.likes }]
 			})
 		)
 	}
@@ -105,6 +106,14 @@ export class UIFormatter {
 		return `${(views / 1_000_000).toFixed(1)}M`
 	}
 
+	/** Доля лайков, а не их число: 5k лайков ничего не говорят, пока не поделишь на просмотры.
+	 * Пусто, если автор скрыл лайки или просмотров слишком мало — см. likeRatio. */
+	static formatLikeRatio(likes, views) {
+		const ratio = likeRatio(likes, views)
+		if (ratio === null || ratio <= 0) return ""
+		return `👍 ${(ratio * 100).toFixed(1)}%`
+	}
+
 	/**
 	 * Как текстовый блок, но заголовок — собственный заголовок видео (первая строка text),
 	 * а не сгенерированная моделью суть: модель видео не смотрит, только пересказывает
@@ -124,7 +133,8 @@ export class UIFormatter {
 		const parts = [
 			`<a href="${safeUrl}">▶ ${channel}</a>`,
 			this.formatDuration(meta.duration_sec),
-			this.formatViews(meta.views)
+			this.formatViews(meta.views),
+			this.formatLikeRatio(meta.likes, meta.views)
 		].filter(Boolean)
 
 		return `🎬 ${title}\n\n${parts.join(" · ")}`

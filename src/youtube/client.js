@@ -176,6 +176,9 @@ export class YouTubeClient {
           channelTitle: it.snippet?.channelTitle || "",
           publishedAt: it.snippet?.publishedAt || "",
           views: parseInt(it.statistics?.viewCount, 10) || 0,
+          // likeCount is absent when the author hides likes. null, not 0: a hidden
+          // count must not read as "nobody liked it" and drag the ratio down.
+          likes: it.statistics?.likeCount === undefined ? null : parseInt(it.statistics.likeCount, 10) || 0,
           durationSec: parseISODuration(it.contentDetails?.duration)
         })
       }

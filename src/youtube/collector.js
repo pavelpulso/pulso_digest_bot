@@ -98,7 +98,8 @@ export async function collectYouTubeVideos({ client, now = new Date(), addedBy =
       `https://www.youtube.com/watch?v=${d.videoId}`,
       d.views,
       d.durationSec,
-      d.publishedAt
+      d.publishedAt,
+      d.likes ?? null
     )
     collected++
   }

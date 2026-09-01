@@ -27,14 +27,16 @@ import {
 	getVideoCandidates,
 	getChannelViewNorms,
 	getVideoRankingRows,
-	setCleanTitles
+	setCleanTitles,
+	getChannelForwardNorms
 } from "../db.js"
 import { getUserSystemPrompt } from "./SystemPromptLoader.js"
 import { formatDateLabel, MIN_DIGEST_SCORE, DIGEST_PAGE_SIZE, getDigestDate } from "../utils.js"
 import { UIFormatter } from "../ui/UIFormatter.js"
 import { KeyboardProvider } from "../ui/KeyboardProvider.js"
 import { collectChannelPosts } from "../gramjs.js"
-import { computeBoost } from "../youtube/scoring.js"
+import { computeBoost, computeLikeBoost } from "../youtube/scoring.js"
+import { computeForwardBoost, computePolarity, computePolarityFactor, parseReactions } from "../telegram/signals.js"
 
 /**
  * sendVideoSection swallows its own failures so a broken video section can never take
@@ -99,6 +101,10 @@ export const PLAYLIST_SIZE = 20
 export const VIDEO_TAIL_COUNT = 7
 const VIDEO_NORM_MIN_AGE_DAYS = 7
 const VIDEO_NORM_MAX_AGE_DAYS = 90
+// Телеграм-пост собирает почти весь охват за сутки, поэтому норма считается по постам
+// старше суток — в отличие от видео, которым на созревание нужна неделя.
+const POST_NORM_MIN_AGE_HOURS = 24
+const POST_NORM_MAX_AGE_DAYS = 90
 
 export class BotService {
 	constructor(botManager) {
@@ -144,9 +150,10 @@ export class BotService {
 			const norms = getChannelViewNorms(VIDEO_NORM_MIN_AGE_DAYS, VIDEO_NORM_MAX_AGE_DAYS)
 
 			scored = candidates.map((v) => {
-				const norm = norms.get(v.channel) || { medianViews: 0, maturedCount: 0 }
+				const norm = norms.get(v.channel) || { medianViews: 0, maturedCount: 0, medianLikeRatio: 0, likeRatioCount: 0 }
 				const boost = computeBoost(v.views, norm.medianViews, norm.maturedCount)
-				return { video: v, score: (scoreById.get(v.id) || 0) * (1 + boost), topic: topicById.get(v.id) || null }
+				const likeBoost = computeLikeBoost(v.likes, v.views, norm.medianLikeRatio, norm.likeRatioCount)
+				return { video: v, score: (scoreById.get(v.id) || 0) * (1 + boost + likeBoost), topic: topicById.get(v.id) || null }
 			}).sort((a, b) => b.score - a.score)
 
 			clearRankingsForUser(userId, date, "yt")
@@ -308,7 +315,7 @@ export class BotService {
 		console.log(`[ensureRankings] Ranked ${ranked.length} posts, inserting...`)
 		clearRankingsForUser(userId, date)
 
-		const items = ranked.map((r) => ({
+		const items = this.applyEngagement(ranked, posts).map((r) => ({
 			id: uuidv4(),
 			post_id: r.post_id,
 			score: r.score,
@@ -342,13 +349,32 @@ export class BotService {
 		const ranked = await this.mgr.ai.rankPosts(posts, userProfile, { channelPriorities: priorities, feedback, systemPrompt })
 		clearRankingsForUser(userId, date)
 
-		const items = ranked.map((r) => ({
+		const items = this.applyEngagement(ranked, posts).map((r) => ({
 			id: uuidv4(),
 			post_id: r.post_id,
 			score: r.score,
 			reason: r.reason
 		}))
 		insertRankings(userId, date, items)
+	}
+
+	/**
+	 * Правит скор модели сигналами вовлечения: репосты поднимают, полярность реакций
+	 * поднимает или опускает. Модель читает только текст и не знает, что пост собрал
+	 * 💩 или что его массово переслали.
+	 */
+	applyEngagement(ranked, posts) {
+		const postById = new Map(posts.map((p) => [String(p.id), p]))
+		const norms = getChannelForwardNorms(POST_NORM_MIN_AGE_HOURS, POST_NORM_MAX_AGE_DAYS)
+
+		return ranked.map((r) => {
+			const post = postById.get(String(r.post_id))
+			if (!post) return r
+			const norm = norms.get(post.channel) || { medianForwardRatio: 0, maturedCount: 0 }
+			const boost = computeForwardBoost(post.forwards, post.views, norm.medianForwardRatio, norm.maturedCount)
+			const factor = computePolarityFactor(computePolarity(parseReactions(post.reactions)))
+			return { ...r, score: (Number(r.score) || 0) * (1 + boost) * factor }
+		})
 	}
 
 	filterPostsForUser(posts, userId) {

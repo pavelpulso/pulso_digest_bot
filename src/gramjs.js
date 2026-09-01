@@ -2,6 +2,7 @@ import { TelegramClient } from "telegram"
 import { StringSession } from "telegram/sessions/index.js"
 import { getSetting, getChannelUsernames, upsertPost } from "./db.js"
 import { v4 as uuidv4 } from "uuid"
+import { summarizeReactions, serializeReactions } from "./telegram/signals.js"
 
 const apiId = parseInt(process.env.TG_API_ID, 10)
 const apiHash = process.env.TG_API_HASH
@@ -109,7 +110,12 @@ async function collectFromChannel(client, channelName, sinceTs, untilTs) {
     const link = `https://t.me/${channel}/${message.id}`
     const id = uuidv4()
 
-    upsertPost(id, channel, message.id, text, link, views, date)
+    // forwards stays undefined when the channel forbids forwarding — passed through as
+    // null so the ranking can tell "not allowed" from "nobody shared it".
+    const forwards = typeof message.forwards === "number" ? message.forwards : null
+    const reactions = serializeReactions(summarizeReactions(message.reactions))
+
+    upsertPost(id, channel, message.id, text, link, views, date, forwards, reactions)
     count++
   }
 
@@ -120,7 +126,7 @@ async function collectFromChannel(client, channelName, sinceTs, untilTs) {
  * Fetches last N posts from a channel (regardless of time).
  * @param {string} channelName - @username or username
  * @param {number} limit - number of posts (default 20)
- * @returns {Promise<Array<{ id: string, channel: string, post_id: number, text: string, link: string, views: number, date: string }>>}
+ * @returns {Promise<Array<{ id: string, channel: string, post_id: number, text: string, link: string, views: number, forwards: number|null, reactions: string|null, date: string }>>}
  */
 export async function fetchRecentPostsFromChannel(channelName, limit = 20) {
   const client = createClient()
@@ -150,11 +156,13 @@ export async function fetchRecentPostsFromChannel(channelName, limit = 20) {
       const channel = channelName.replace(/^@/, "").toLowerCase()
       const link = `https://t.me/${channel}/${message.id}`
       const id = uuidv4()
+      const forwards = typeof message.forwards === "number" ? message.forwards : null
+      const reactions = serializeReactions(summarizeReactions(message.reactions))
 
       // Save to DB
-      upsertPost(id, channel, message.id, text, link, views, date)
+      upsertPost(id, channel, message.id, text, link, views, date, forwards, reactions)
 
-      posts.push({ id, channel, post_id: message.id, text, link, views, date })
+      posts.push({ id, channel, post_id: message.id, text, link, views, forwards, reactions, date })
       fetched++
       
       // Stop when we have enough text posts
