@@ -1,8 +1,8 @@
 import Database from "better-sqlite3"
 import { mkdirSync, existsSync } from "fs"
 import { dirname } from "path"
-import { median, likeRatio } from "./youtube/scoring.js"
-import { forwardRatio } from "./telegram/signals.js"
+import { median, percentile, likeRatio } from "./youtube/scoring.js"
+import { forwardRatio, negativeShare, parseReactions } from "./telegram/signals.js"
 
 const dbPath = process.env.DB_PATH || "./data/db.sqlite"
 
@@ -519,28 +519,35 @@ export function getChannelViewNorms(minAgeDays, maxAgeDays) {
 }
 
 /**
- * Медиана доли репостов по созревшим постам канала — норма для boost. В отличие от видео
- * окно берётся в часах: телеграм-пост собирает почти всё за сутки, а не за неделю.
+ * Нормы канала для телеграм-сигналов: верхний дециль доли репостов и обычная для канала
+ * доля негативных реакций. В отличие от видео окно берётся в часах — телеграм-пост
+ * собирает почти всё за сутки, а не за неделю.
  */
-export function getChannelForwardNorms(minAgeHours, maxAgeDays) {
+export function getChannelEngagementNorms(minAgeHours, maxAgeDays) {
   const newest = new Date(Date.now() - minAgeHours * 3600_000).toISOString()
   const oldest = new Date(Date.now() - maxAgeDays * 86400_000).toISOString()
   const rows = db.prepare(
-    `SELECT channel, views, forwards FROM posts
+    `SELECT channel, views, forwards, reactions FROM posts
      WHERE source = 'tg' AND date <= ? AND date >= ?`
   ).all(newest, oldest)
 
   const byChannel = new Map()
   for (const r of rows) {
+    if (!byChannel.has(r.channel)) byChannel.set(r.channel, { ratios: [], negatives: [] })
+    const entry = byChannel.get(r.channel)
     const ratio = forwardRatio(r.forwards, r.views)
-    if (ratio === null) continue
-    if (!byChannel.has(r.channel)) byChannel.set(r.channel, [])
-    byChannel.get(r.channel).push(ratio)
+    if (ratio !== null) entry.ratios.push(ratio)
+    const share = negativeShare(parseReactions(r.reactions))
+    if (share !== null) entry.negatives.push(share)
   }
 
   const norms = new Map()
-  for (const [channel, ratios] of byChannel) {
-    norms.set(channel, { medianForwardRatio: median(ratios), maturedCount: ratios.length })
+  for (const [channel, entry] of byChannel) {
+    norms.set(channel, {
+      forwardNorm: percentile(entry.ratios, 0.9),
+      maturedCount: entry.ratios.length,
+      negativeBaseline: median(entry.negatives)
+    })
   }
   return norms
 }

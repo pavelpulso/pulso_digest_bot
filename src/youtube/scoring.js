@@ -8,6 +8,13 @@ export function median(values) {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
 }
 
+/** Значение, ниже которого лежит доля p выборки. Пустая выборка — 0, как и у median. */
+export function percentile(values, p) {
+  if (!values || values.length === 0) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  return sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))]
+}
+
 /**
  * Метрика умеет только поднимать скор. Видео, вышедшее вчера, физически не успело
  * набрать просмотры — если позволить метрике опускать, свежее всегда проиграет

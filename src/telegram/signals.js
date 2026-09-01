@@ -26,17 +26,21 @@ const POLARITY = new Map([
 /** Ниже этого числа классифицированных реакций полярность — мнение двух человек. */
 export const MIN_POLARITY_REACTIONS = 20
 
-/** Насколько полярность поднимает и опускает скор. Опускает сильнее: пост, набравший
- * охват через 🤡, — именно тот случай, ради которого метрика и заводится. */
-export const MAX_POLARITY_LIFT = 0.3
+/**
+ * Насколько сильно негатив опускает скор. Подъёма нет вовсе, и это вывод из данных:
+ * за сутки на 44 постах не нашлось ни одного с отрицательным перевесом, все 17 постов
+ * с вердиктом получили ровно +1.00. То есть «подъём за полярность» на живой ленте
+ * означал бы просто «набрал 20 реакций» — то же самое, что просмотры, только хуже.
+ */
 export const MAX_POLARITY_DROP = 0.5
 
-/** Пока у канала меньше стольких созревших постов, медиана доли репостов недостоверна. */
-export const MIN_MATURED_POSTS = 5
-
-/** Максимальная добавка за репосты. Репост — самое дорогое действие читателя, но он
- * коррелирует с просмотрами, поэтому вклад ограничен сильнее просмотрового у видео. */
-export const MAX_FORWARD_BOOST = 0.6
+/**
+ * Часть каналов использует реакции как голосовалку: у leadgr посты штатно собирают
+ * 👎 наравне с 👍, а gleb_pro_ai прямым текстом просит «накидайте бустов, голосовалку
+ * эмоджиками». Там 👎 означает «не согласен», а не «плохой пост». Поэтому доля негатива
+ * сравнивается не с нулём, а с собственной нормой канала — как и все остальные метрики здесь.
+ */
+export const MIN_NEGATIVE_BASELINE = 0.05
 
 /** Вариационный селектор emoji (❤️ против ❤) приходит от Telegram непредсказуемо. */
 function normalizeEmoji(emoticon) {
@@ -87,11 +91,11 @@ export function parseReactions(json) {
 }
 
 /**
- * Перевес плюсовых реакций над минусовыми, от -1 до 1. null — «нет данных»: реакций нет,
- * они все кастомные либо их слишком мало. Нейтральные (😁, 🤔) в знаменатель не входят:
- * иначе смешной пост с одним 👎 выглядел бы почти нейтральным по чистой арифметике.
+ * Доля негатива среди классифицированных реакций, от 0 до 1. null — «нет данных»:
+ * реакций нет, они все кастомные либо их слишком мало. Нейтральные (😁, 🤔) не в
+ * знаменателе: иначе смешной пост с одним 👎 выглядел бы почти безупречным.
  */
-export function computePolarity(summary) {
+export function negativeShare(summary) {
   if (!summary || !summary.e) return null
   let positive = 0
   let negative = 0
@@ -102,16 +106,32 @@ export function computePolarity(summary) {
   }
   const classified = positive + negative
   if (classified < MIN_POLARITY_REACTIONS) return null
-  return (positive - negative) / classified
+  return negative / classified
 }
 
-/** Множитель к скору. Ровно 1, когда данных нет — пост со скрытыми или кастомными
- * реакциями не должен ни выигрывать, ни проигрывать из-за настроек канала. */
-export function computePolarityFactor(polarity) {
-  if (polarity === null || polarity === undefined || Number.isNaN(polarity)) return 1
-  const clamped = Math.max(-1, Math.min(1, polarity))
-  return clamped >= 0 ? 1 + MAX_POLARITY_LIFT * clamped : 1 + MAX_POLARITY_DROP * clamped
+/**
+ * Множитель к скору: 1, пока негатива не больше обычного для канала, и вниз до
+ * 1 - MAX_POLARITY_DROP, когда пост собрал негатив почти целиком. Единственная метрика
+ * в проекте, умеющая опускать: пост, набравший охват через 💩 и 🤡, — ровно тот случай,
+ * который просмотры и репосты принимают за успех.
+ */
+export function computePolarityFactor(share, baseline = 0) {
+  if (share === null || share === undefined || Number.isNaN(share)) return 1
+  const floor = Math.max(baseline || 0, MIN_NEGATIVE_BASELINE)
+  if (share <= floor) return 1
+  const excess = (share - floor) / (1 - floor)
+  return 1 - MAX_POLARITY_DROP * Math.min(1, excess)
 }
+
+/**
+ * Пока у канала меньше стольких созревших постов, верхний дециль не на чем считать.
+ * Выше, чем у видео: по пяти точкам «p90» — это просто максимум.
+ */
+export const MIN_MATURED_POSTS = 10
+
+/** Максимальная добавка за репосты. Репост — самое дорогое действие читателя, но он
+ * коррелирует с просмотрами, поэтому вклад ограничен сильнее просмотрового у видео. */
+export const MAX_FORWARD_BOOST = 0.6
 
 /** Доля репостнувших. null — данных нет: канал запретил пересылку либо просмотров ещё нет. */
 export function forwardRatio(forwards, views) {
@@ -122,16 +142,17 @@ export function forwardRatio(forwards, views) {
 }
 
 /**
- * Как и у видео, считается превышение над медианой канала, а не абсолютная доля: по
- * замеру доли репостов лежат в узкой полосе 0.26%…2.63%, так что абсолютный порог
- * отдал бы буст каналу, а не посту. Умеет только поднимать.
+ * Норма канала — верхний дециль его же постов, а не медиана. Медиана как порог по
+ * определению пропускает половину ленты: на живых данных она поднимала 60% постов, то
+ * есть не отличала ничего. p90 поднимает 19% — и это уже «заметный пост», а не «любой
+ * выше среднего». Умеет только поднимать.
  */
-export function computeForwardBoost(forwards, views, medianForwardRatio, maturedCount) {
+export function computeForwardBoost(forwards, views, forwardNorm, maturedCount) {
   if (!(maturedCount >= MIN_MATURED_POSTS)) return 0
-  if (!medianForwardRatio || medianForwardRatio <= 0) return 0
+  if (!forwardNorm || forwardNorm <= 0) return 0
   const ratio = forwardRatio(forwards, views)
   if (ratio === null || ratio <= 0) return 0
-  const rel = ratio / medianForwardRatio
+  const rel = ratio / forwardNorm
   if (rel <= 1) return 0
   return Math.min(Math.log10(rel), 1) * MAX_FORWARD_BOOST
 }

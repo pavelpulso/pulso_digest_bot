@@ -28,7 +28,7 @@ import {
 	getChannelViewNorms,
 	getVideoRankingRows,
 	setCleanTitles,
-	getChannelForwardNorms
+	getChannelEngagementNorms
 } from "../db.js"
 import { getUserSystemPrompt } from "./SystemPromptLoader.js"
 import { formatDateLabel, MIN_DIGEST_SCORE, DIGEST_PAGE_SIZE, getDigestDate } from "../utils.js"
@@ -36,7 +36,7 @@ import { UIFormatter } from "../ui/UIFormatter.js"
 import { KeyboardProvider } from "../ui/KeyboardProvider.js"
 import { collectChannelPosts } from "../gramjs.js"
 import { computeBoost, computeLikeBoost } from "../youtube/scoring.js"
-import { computeForwardBoost, computePolarity, computePolarityFactor, parseReactions } from "../telegram/signals.js"
+import { computeForwardBoost, negativeShare, computePolarityFactor, parseReactions } from "../telegram/signals.js"
 
 /**
  * sendVideoSection swallows its own failures so a broken video section can never take
@@ -359,20 +359,20 @@ export class BotService {
 	}
 
 	/**
-	 * Правит скор модели сигналами вовлечения: репосты поднимают, полярность реакций
-	 * поднимает или опускает. Модель читает только текст и не знает, что пост собрал
-	 * 💩 или что его массово переслали.
+	 * Правит скор модели сигналами вовлечения: репосты поднимают, избыток негативных
+	 * реакций опускает. Модель читает только текст и не знает, что пост собрал 💩
+	 * или что его массово переслали.
 	 */
 	applyEngagement(ranked, posts) {
 		const postById = new Map(posts.map((p) => [String(p.id), p]))
-		const norms = getChannelForwardNorms(POST_NORM_MIN_AGE_HOURS, POST_NORM_MAX_AGE_DAYS)
+		const norms = getChannelEngagementNorms(POST_NORM_MIN_AGE_HOURS, POST_NORM_MAX_AGE_DAYS)
 
 		return ranked.map((r) => {
 			const post = postById.get(String(r.post_id))
 			if (!post) return r
-			const norm = norms.get(post.channel) || { medianForwardRatio: 0, maturedCount: 0 }
-			const boost = computeForwardBoost(post.forwards, post.views, norm.medianForwardRatio, norm.maturedCount)
-			const factor = computePolarityFactor(computePolarity(parseReactions(post.reactions)))
+			const norm = norms.get(post.channel) || { forwardNorm: 0, maturedCount: 0, negativeBaseline: 0 }
+			const boost = computeForwardBoost(post.forwards, post.views, norm.forwardNorm, norm.maturedCount)
+			const factor = computePolarityFactor(negativeShare(parseReactions(post.reactions)), norm.negativeBaseline)
 			return { ...r, score: (Number(r.score) || 0) * (1 + boost) * factor }
 		})
 	}
