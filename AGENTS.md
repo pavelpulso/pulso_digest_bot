@@ -88,6 +88,16 @@ AI integration for ranking and summarization.
 - `generateSummaryBlocks(posts, dateLabel, userProfile, maxItems)` — Generates digest blocks + teaser
 - `recommendChannels(userProfile, channelUsernames)` — Recommends channels matching interests
 
+**Prompt contract:** every prompt is sent with `response_format: {type: "json_object"}`, so it
+must ask for a top-level JSON **object**, never a bare array. A prompt that asks for an array
+contradicts the response format, and models resolve that by returning a single object — one
+post scored out of forty, on every provider at once. Wrap the array under a key from
+`JSON_ARRAY_KEYS` (`ranking`, `items`, `channels`, …); `test/prompts.test.js` enforces this.
+
+**Verifying a provider or model:** `tools/probe-openrouter.mjs` (real prompt, real batch size,
+`--runs=N` for flaky routes) and `tools/probe-ranking.mjs <provider>` (the whole router path).
+A raw HTTP probe with a hand-written prompt proves nothing — that is what hid the bug above.
+
 ### `src/db.js`
 
 Database operations (synchronous `better-sqlite3`, WAL mode).

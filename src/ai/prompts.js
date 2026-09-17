@@ -72,12 +72,12 @@ Evaluate strictly:
 - Score 0.4–0.6 — useful but without specifics: general advice, theory without examples.
 - Score < 0.4 — just interesting, news, announcements, ads, polls.
 
-Return JSON array with EXACT structure:
-[
+Return a JSON object with EXACT structure:
+{"ranking": [
   {"post_id": "POST_ID_FROM_POSTS", "score": 0.85, "reason": "why this score", "topic": "1-2 word subject area"},
   ...
-]
-Use EXACT "post_id" field (not "id"). Value must match "id" from posts above. Write "reason" in the same language as posts (${lang}), at most ${LIMITS.RANK_REASON_WORDS} words. Write "topic" in the same language as posts (${lang}): one or two words naming the subject area (e.g. "AI-разработка", "политика", "здоровье"). Keep the array compact so it is never truncated.`
+]}
+Return one entry per post — all ${list.length} of them, not just the first. Use EXACT "post_id" field (not "id"). Value must match "id" from posts above. Write "reason" in the same language as posts (${lang}), at most ${LIMITS.RANK_REASON_WORDS} words. Write "topic" in the same language as posts (${lang}): one or two words naming the subject area (e.g. "AI-разработка", "политика", "здоровье"). Keep the array compact so it is never truncated.`
 }
 
 /**
@@ -174,11 +174,11 @@ Rules:
 Titles:
 ${JSON.stringify(list)}
 
-Return JSON array with EXACT structure:
-[
+Return a JSON object with EXACT structure:
+{"items": [
   {"id": "ID_FROM_TITLES", "title": "rewritten title"},
   ...
-]
+]}
 Use EXACT "id" field, matching "id" from the titles above. Return one entry per title.`
 }
 
@@ -344,7 +344,7 @@ For each channel return:
 - recommendation: "remove", "keep", "keep_if", or "mute"
 
 Return ONLY this JSON format (no other text):
-[{"channel":"name","score":8.5,"avg_views":1000,"verdict":"keep","summary":"text","reason":"text","problem_type":"none","recommendation":"keep"}]`
+{"channels": [{"channel":"name","score":8.5,"avg_views":1000,"verdict":"keep","summary":"text","reason":"text","problem_type":"none","recommendation":"keep"}]}`
 }
 
 /**

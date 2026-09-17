@@ -15,7 +15,7 @@ test("a reader profile is quoted as description, never obeyed as instructions", 
 		"the prompt must say the profile is a description, not a command"
 	)
 	assert.ok(
-		prompt.lastIndexOf("JSON array") > prompt.indexOf(profileWithOrders),
+		prompt.lastIndexOf("JSON object") > prompt.indexOf(profileWithOrders),
 		"the output contract must come after the profile, so it wins"
 	)
 })
@@ -165,4 +165,25 @@ test("the clean-titles prompt asks to keep the original language, not translate"
 	assert.match(prompt, /original language/i, "the prompt must demand the original language is kept")
 	assert.match(prompt, /do not translate/i, "the prompt must explicitly forbid translation")
 	assert.match(prompt, /rewrite, not a summary/i, "the prompt must frame this as a rewrite, not a description")
+})
+
+/** Every prompt below is sent with response_format json_object, which forces the model to
+ * answer with a top-level object. A prompt that asks for a top-level array contradicts that,
+ * and the models resolve the contradiction by returning a single object — one post scored out
+ * of forty. That is how ranking broke on every provider at once. */
+test("prompts sent in JSON mode ask for an object, never a bare array", async () => {
+	const { buildAuditAllChannelsPrompt } = await import("../src/ai/prompts.js")
+	const { JSON_ARRAY_KEYS } = await import("../src/ai/constants.js")
+
+	const cases = [
+		["rank", buildRankPrompt(posts, "профиль", "", {}, null), "ranking"],
+		["cleanTitles", buildCleanTitlesPrompt([{ id: "v1", title: "Заголовок" }]), "items"],
+		["auditAllChannels", buildAuditAllChannelsPrompt("профиль", [{ channel: "c", posts: [{ text: "пост", views: 10 }] }], null), "channels"]
+	]
+
+	for (const [name, prompt, key] of cases) {
+		assert.doesNotMatch(prompt, /JSON array/i, `${name} must not ask for a bare array`)
+		assert.ok(prompt.includes(`{"${key}":`), `${name} must wrap its array in an object`)
+		assert.ok(JSON_ARRAY_KEYS.includes(key), `${name} uses a key the parser already recognises`)
+	}
 })
