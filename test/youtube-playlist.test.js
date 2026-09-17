@@ -5,11 +5,15 @@ import { withServer } from "./helpers.js"
 process.env.DB_PATH = ":memory:"
 const db = await import("../src/db.js")
 const { YouTubeClient, QuotaExceededError } = await import("../src/youtube/client.js")
-const { syncPlaylist, PLAYLIST_TITLE, PLAYLIST_DESCRIPTION } = await import("../src/youtube/playlist.js")
+const { syncPlaylist, appendToArchive, appendVideos, PLAYLIST_TITLE, PLAYLIST_DESCRIPTION, ARCHIVE_TITLE, ARCHIVE_DESCRIPTION } = await import("../src/youtube/playlist.js")
 const { PLAYLIST_SIZE } = await import("../src/services/BotService.js")
 
 function clearPlaylistSetting() {
 	db.default.prepare("DELETE FROM settings WHERE key = ?").run("yt_playlist_id")
+}
+
+function clearArchiveSetting() {
+	db.default.prepare("DELETE FROM settings WHERE key = ?").run("yt_archive_playlist_id")
 }
 
 function makeClient(url) {
@@ -112,8 +116,8 @@ test("creating the playlist stores its id, and a second run reuses it", async ()
 
 	await withServer(handlerFor(state), async (url) => {
 		const client = makeClient(url)
-		await syncPlaylist({ client, ranked: [] })
-		await syncPlaylist({ client, ranked: [] })
+		await syncPlaylist({ client, ranked: ["v1"] })
+		await syncPlaylist({ client, ranked: ["v1"] })
 		assert.equal(state.createCalls, 1, "a second run must not create a second playlist")
 		assert.equal(db.getSetting("yt_playlist_id"), state.playlistId)
 	})
@@ -400,5 +404,157 @@ test("a full-size target turning over entirely fits in a single run's write ceil
 		assert.equal(result.skippedAdds, 0)
 		assert.equal(result.skippedRemoves, 0)
 		assert.equal(state.items.length, PLAYLIST_SIZE)
+	})
+})
+
+test("the archive is a separate playlist, created once and remembered under its own key", async () => {
+	clearPlaylistSetting()
+	clearArchiveSetting()
+	const state = makeState()
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+		await syncPlaylist({ client, ranked: ["v1"] })
+		const showcaseId = db.getSetting("yt_playlist_id")
+
+		await appendToArchive({ client, ranked: ["v1"] })
+		const archiveId = db.getSetting("yt_archive_playlist_id")
+		assert.notEqual(archiveId, showcaseId, "the archive must not reuse the showcase playlist")
+
+		await appendToArchive({ client, ranked: ["v1"] })
+		assert.equal(db.getSetting("yt_archive_playlist_id"), archiveId, "a second run must not create a second archive")
+
+		const created = state.accountPlaylists.find((p) => p.id === archiveId)
+		assert.equal(created.title, ARCHIVE_TITLE)
+		assert.equal(created.description, ARCHIVE_DESCRIPTION)
+		assert.notEqual(created.title, PLAYLIST_TITLE)
+	})
+})
+
+test("the archive never removes, and never re-adds what it already holds", async () => {
+	clearArchiveSetting()
+	const state = makeState([{ id: "PI1", videoId: "vOld" }])
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+		const result = await appendToArchive({ client, ranked: ["vOld", "vNew"] })
+
+		assert.equal(result.added, 1)
+		assert.equal(state.insertCalls, 1, "the video already held must cost no request")
+		assert.equal(state.deleteCalls, 0, "the archive is append-only")
+		assert.equal(result.size, 2)
+		assert.deepEqual(state.items.map((it) => it.videoId).sort(), ["vNew", "vOld"])
+	})
+})
+
+test("a repeated id inside one run is inserted once", async () => {
+	clearArchiveSetting()
+	const state = makeState()
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+		const result = await appendToArchive({ client, ranked: ["vDup", "vDup", "vOther"] })
+
+		assert.equal(result.added, 2)
+		assert.equal(state.insertCalls, 2)
+	})
+})
+
+test("the archive records only what the showcase shows — the ranked tail is dropped", async () => {
+	clearArchiveSetting()
+	const state = makeState()
+	const ranked = Array.from({ length: PLAYLIST_SIZE + 5 }, (_, i) => `v${i}`)
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+		const result = await appendToArchive({ client, ranked })
+
+		assert.equal(result.added, PLAYLIST_SIZE)
+		assert.ok(!state.items.some((it) => it.videoId === `v${PLAYLIST_SIZE}`))
+	})
+})
+
+test("maxWrites caps inserts and reports what it left for the next run", async () => {
+	clearArchiveSetting()
+	const state = makeState()
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+		const result = await appendToArchive({ client, ranked: ["v1", "v2", "v3"], maxWrites: 2 })
+
+		assert.equal(result.added, 2)
+		assert.equal(result.skippedAdds, 1)
+		assert.equal(state.insertCalls, 2)
+	})
+})
+
+test("an archive id pointing at a deleted playlist is healed, not thrown", async () => {
+	clearArchiveSetting()
+	db.setSetting("yt_archive_playlist_id", "PLgone")
+	const state = makeState()
+
+	await withServer(handlerFor(state, { notFoundPlaylistId: "PLgone" }), async (url) => {
+		const client = makeClient(url)
+		const result = await appendToArchive({ client, ranked: ["v1"] })
+
+		assert.notEqual(result.playlistId, "PLgone")
+		assert.equal(result.added, 1)
+		assert.equal(db.getSetting("yt_archive_playlist_id"), result.playlistId)
+	})
+})
+
+test("a backfill resumes from the playlist itself, not from a cursor", async () => {
+	clearArchiveSetting()
+	const history = ["v1", "v2", "v3", "v4", "v5"]
+	const state = makeState()
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+
+		const first = await appendVideos({ client, videoIds: history, maxWrites: 2 })
+		assert.equal(first.added, 2)
+		assert.equal(first.remaining, 3)
+
+		const second = await appendVideos({ client, videoIds: history, maxWrites: 2 })
+		assert.equal(second.added, 2, "the second run must skip what the first already inserted")
+		assert.equal(second.remaining, 1)
+
+		const third = await appendVideos({ client, videoIds: history, maxWrites: 2 })
+		assert.equal(third.added, 1)
+		assert.equal(third.remaining, 0)
+
+		assert.equal(state.insertCalls, 5, "no video is inserted twice across the three runs")
+		assert.deepEqual(state.items.map((it) => it.videoId).sort(), history.slice().sort())
+	})
+})
+
+test("running out of quota mid-backfill stops cleanly and reports the remainder", async () => {
+	clearArchiveSetting()
+	const state = makeState()
+
+	await withServer(handlerFor(state, { quotaOnInsert: true }), async (url) => {
+		const client = makeClient(url)
+		const result = await appendVideos({ client, videoIds: ["v1", "v2", "v3"] })
+
+		assert.equal(result.quotaExhausted, true)
+		assert.equal(result.added, 0)
+		assert.equal(result.remaining, 3)
+		assert.equal(state.insertCalls, 1, "it must stop at the first refusal, not burn through the list")
+	})
+})
+
+test("an empty ranking leaves the playlist alone instead of emptying it", async () => {
+	clearPlaylistSetting()
+	// What actually happened in production: ranking failed for the day, every provider was
+	// cooling down, and the sync read that empty result as "nothing belongs here" — logging
+	// "+0 -20" and wiping a playlist the ranking had simply failed to produce.
+	const state = makeState([{ id: "PI1", videoId: "v1" }, { id: "PI2", videoId: "v2" }])
+
+	await withServer(handlerFor(state), async (url) => {
+		const client = makeClient(url)
+		const result = await syncPlaylist({ client, ranked: [] })
+		assert.equal(result.removed, 0)
+		assert.equal(state.deleteCalls, 0, "a failed ranking must not wipe yesterday's selection")
+		assert.equal(state.items.length, 2)
 	})
 })

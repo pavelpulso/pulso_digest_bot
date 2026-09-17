@@ -6,15 +6,25 @@
  * Text length limits for different tasks.
  */
 export const LIMITS = {
-  /** Max post text length for ranking — relevance is decided by the opening, not the full post */
-  RANK_TEXT: 500,
+  /** Max post text length for ranking — relevance is decided by the opening, not the full post.
+   *  Trimmed from 500 to keep batch sizes roughly intact after the completion reserve grew:
+   *  every character cut here buys back room the reasoning model needs to finish its JSON. */
+  RANK_TEXT: 380,
   /** Total token budget per ranking request — prompt AND reserved completion, which
-   *  providers bill together against the per-minute limit */
+   *  providers bill together against the per-minute limit. Cannot be raised to win back batch
+   *  size: Groq caps a request at 8000 tokens including the reserve, and ai-batching asserts
+   *  it. Raising the per-post reserve therefore costs batch size, and the text cap below is
+   *  trimmed to pay for it. */
   RANK_BATCH_TOKENS: 5000,
   /** Max words in a ranking reason — the reserve below is derived from this */
   RANK_REASON_WORDS: 8,
-  /** Completion tokens one scored post needs: id, score, an 8-word Cyrillic reason and a 1-2 word topic */
-  COMPLETION_TOKENS_PER_POST: 135,
+  /** Completion tokens one scored post needs: id, score, an 8-word Cyrillic reason and a 1-2
+   *  word topic. The arithmetic floor for that is ~135, and that floor is what truncated
+   *  ranking in production: gpt-oss-120b on Groq is a reasoning model and spends part of this
+   *  same ceiling on chain-of-thought before writing the visible JSON, exactly as the block
+   *  reserve below already documents. Observed failure: "Recovered 4 items from truncated
+   *  response", then "no JSON array found". Set from behaviour, not from the floor. */
+  COMPLETION_TOKENS_PER_POST: 280,
   /** Cyrillic costs ~2.5 chars per token; English ~4. Assume the expensive case. */
   CHARS_PER_TOKEN: 2.5,
   /** Max post text length for summary */

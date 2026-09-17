@@ -12,6 +12,10 @@ import {
 } from "./prompts.js"
 import { LIMITS, JSON_ARRAY_KEYS, VERDICTS } from "./constants.js"
 
+/** The providers read `responseFormat`; call sites used to pass `type`, so JSON mode was
+ * silently never enabled anywhere. Keeping the shape in one place stops that recurring. */
+const JSON_OBJECT = { type: "json_object" }
+
 export class BaseAI {
   constructor(name, budgets = {}) {
     if (new.target === BaseAI) {
@@ -232,7 +236,7 @@ export class BaseAI {
     const parsed = []
     for (let i = 0; i < batches.length; i++) {
       const maxTokens = batches[i].length * this.completionTokensPerPost + 200
-      const raw = await this._callAPI(buildPrompt(batches[i]), { type: "json_object", maxTokens })
+      const raw = await this._callAPI(buildPrompt(batches[i]), { responseFormat: JSON_OBJECT, maxTokens })
       parsed.push(...this.#parseJSONArray(raw))
       if (typeof onProgress === "function") {
         onProgress(Math.round(((i + 1) / batches.length) * 100))
@@ -264,7 +268,7 @@ export class BaseAI {
     const result = new Map()
     for (const batch of batches) {
       const maxTokens = batch.length * LIMITS.COMPLETION_TOKENS_PER_TITLE + 100
-      const raw = await this._callAPI(buildPrompt(batch), { type: "json_object", maxTokens })
+      const raw = await this._callAPI(buildPrompt(batch), { responseFormat: JSON_OBJECT, maxTokens })
       const parsed = this.#parseJSONArray(raw)
       for (const item of parsed) {
         const id = item?.id != null ? String(item.id) : null
@@ -294,7 +298,7 @@ export class BaseAI {
 
     if (typeof onProgress === "function") onProgress(50)
     const maxTokens = maxBlocks * this.completionTokensPerBlock + 300
-    const raw = await this._callAPI(prompt, { type: "json_object", maxTokens })
+    const raw = await this._callAPI(prompt, { responseFormat: JSON_OBJECT, maxTokens })
     if (typeof onProgress === "function") onProgress(75)
 
     const parsed = this.#parseJSONObject(raw)
@@ -331,7 +335,7 @@ export class BaseAI {
     }))
 
     const prompt = buildAnalyzeChannelPrompt(channel, userProfile, list, systemPrompt)
-    const raw = await this._callAPI(prompt, { type: "json_object" })
+    const raw = await this._callAPI(prompt, { responseFormat: JSON_OBJECT })
     const parsed = this.#parseJSONObject(raw)
 
     return {
@@ -374,7 +378,7 @@ export class BaseAI {
       try {
         const prompt = buildAuditAllChannelsPrompt(userProfile, list, systemPrompt || null)
         console.log(`[auditAllChannels] Processing batch: ${batch.length} channels, prompt length: ${prompt.length}`)
-        const raw = await this._callAPI(prompt, { type: "json_object", maxTokens: 3072 })
+        const raw = await this._callAPI(prompt, { responseFormat: JSON_OBJECT, maxTokens: 3072 })
         console.log("[auditAllChannels] Raw response (first 300 chars):", raw.slice(0, 300))
         const parsed = this.#parseJSONObject(raw)
         console.log("[auditAllChannels] Parsed channels:", Array.isArray(parsed) ? parsed.length : (parsed.channels?.length || 0))
@@ -441,7 +445,7 @@ export class BaseAI {
     const list = _channelUsernames.slice(0, LIMITS.MAX_CHANNELS_ANALYZE)
     const prompt = buildRecommendChannelsPrompt(userProfile, list, systemPrompt)
 
-    const raw = await this._callAPI(prompt, { type: "json_object", maxTokens: 1024 })
+    const raw = await this._callAPI(prompt, { responseFormat: JSON_OBJECT, maxTokens: 1024 })
     const parsed = this.#parseJSONObject(raw)
     const arr = Array.isArray(parsed)
       ? parsed

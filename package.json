@@ -13,6 +13,7 @@
     "auth:youtube": "node src/auth-youtube.js",
     "cron:collect": "node src/cron-job.js --action=collect",
     "cron:digest": "node src/cron-job.js --action=digest",
+    "backfill:archive": "node src/backfill-archive.js",
     "dev": "nodemon src/index.js",
     "deploy": "./deploy-remote.sh",
     "lint": "eslint src/",

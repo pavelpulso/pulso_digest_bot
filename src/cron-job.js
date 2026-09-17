@@ -11,7 +11,7 @@ import bot from "./bot.js"
 import { sendMorningDigests } from "./bot.js"
 import { collectYouTubeVideos } from "./youtube/collector.js"
 import { YouTubeClient } from "./youtube/client.js"
-import { syncPlaylist } from "./youtube/playlist.js"
+import { syncPlaylist, appendToArchive } from "./youtube/playlist.js"
 import { getDigestDate } from "./utils.js"
 import { VIDEO_WINDOW_DAYS } from "./services/BotService.js"
 
@@ -109,8 +109,17 @@ async function runCollection() {
 }
 
 /** Keeps the admin's YouTube playlist in sync with their video selection. The playlist
- * is tied to the single account behind YOUTUBE_REFRESH_TOKEN, so it follows that one user. */
+ * is tied to the single account behind YOUTUBE_REFRESH_TOKEN, so it follows that one user.
+ *
+ * Off by default: the playlist is a delivery surface nobody opened, while every run still
+ * spent YouTube write quota on it. The video section of the digest does not depend on this,
+ * so switching it off costs nothing that was being read. Set YT_PLAYLIST_SYNC=1 to restore. */
 async function runPlaylistSync() {
+  if (process.env.YT_PLAYLIST_SYNC !== "1") {
+    console.log("[cron-job] Playlist sync disabled (set YT_PLAYLIST_SYNC=1 to enable).")
+    return
+  }
+
   const adminId = parseInt(process.env.ADMIN_ID, 10) || 0
   if (!adminId) return
 
@@ -135,6 +144,18 @@ async function runPlaylistSync() {
   console.log(`[cron-job] Playlist synced: +${result.added} -${result.removed} (playlist ${result.playlistId})`)
   if (result.skippedAdds || result.skippedRemoves) {
     console.log(`[cron-job] Playlist write limit hit: skipped ${result.skippedAdds} adds, ${result.skippedRemoves} removes.`)
+  }
+
+  // The archive is a convenience on top of the showcase, so it gets its own try/catch:
+  // a failure here must not make an already-successful sync look broken.
+  try {
+    const archive = await appendToArchive({ client, ranked })
+    console.log(`[cron-job] Archive appended: +${archive.added} (now ${archive.size}, playlist ${archive.playlistId})`)
+    if (archive.skippedAdds) {
+      console.log(`[cron-job] Archive write limit hit: skipped ${archive.skippedAdds} adds.`)
+    }
+  } catch (e) {
+    console.error("[cron-job] Archive append failed:", e.message)
   }
 }
 

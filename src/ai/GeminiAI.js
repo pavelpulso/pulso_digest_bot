@@ -36,6 +36,7 @@ export class GeminiAI extends BaseAI {
       reasoning_effort: "low"
     }
     if (options.maxTokens) body.max_tokens = options.maxTokens
+    if (options.responseFormat) body.response_format = options.responseFormat
 
     const data = await postJson(endpoint, {
       apiKey: this.apiKey,

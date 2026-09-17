@@ -4,6 +4,7 @@
 
 const DEFAULT_TIMEOUT_MS = 60_000
 const QUOTA_WINDOW_MS = 60_000
+const BACKOFF_BASE_MS = 1_000
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -60,6 +61,13 @@ export async function postJson(url, {
 
 		if (!res.ok) {
 			const text = await res.text()
+			// A 5xx is the provider being momentarily unavailable, not a bad request: Gemini
+			// answers a demand spike with 503 "try again later", and without a retry that one
+			// spike burned all three providers (each cooled down) and killed the whole digest.
+			if (res.status >= 500 && attempt < retries) {
+				await sleep(BACKOFF_BASE_MS * 2 ** (attempt - 1))
+				continue
+			}
 			throw new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`)
 		}
 

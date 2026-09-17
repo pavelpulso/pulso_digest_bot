@@ -74,13 +74,76 @@ test("a non-JSON error response surfaces its status and body", async () => {
 		},
 		async (url) => {
 			await assert.rejects(
-				() => postJson(url, { body: {} }),
+				() => postJson(url, { body: {}, sleep: async () => {} }),
 				(err) => {
 					assert.match(err.message, /502/)
 					assert.match(err.message, /proxy is down/)
 					return true
 				}
 			)
+		}
+	)
+})
+
+test("a 503 spike is retried with backoff instead of failing the whole run", async () => {
+	let hits = 0
+	const waits = []
+
+	await withServer(
+		(req, res) => {
+			hits++
+			if (hits < 3) {
+				res.writeHead(503, { "Content-Type": "application/json" })
+				res.end(JSON.stringify({ error: { code: 503, message: "high demand" } }))
+				return
+			}
+			res.writeHead(200, { "Content-Type": "application/json" })
+			res.end(JSON.stringify({ ok: true }))
+		},
+		async (url) => {
+			const data = await postJson(url, { body: {}, sleep: async (ms) => { waits.push(ms) } })
+			assert.deepEqual(data, { ok: true })
+			assert.equal(hits, 3)
+			assert.deepEqual(waits, [1000, 2000], "backs off instead of hammering an overloaded model")
+		}
+	)
+})
+
+test("a 503 that never clears surfaces the provider body so the router can fall back", async () => {
+	let hits = 0
+
+	await withServer(
+		(req, res) => {
+			hits++
+			res.writeHead(503)
+			res.end("still overloaded")
+		},
+		async (url) => {
+			await assert.rejects(
+				() => postJson(url, { body: {}, sleep: async () => {} }),
+				(err) => {
+					assert.match(err.message, /503/)
+					assert.match(err.message, /still overloaded/)
+					return true
+				}
+			)
+			assert.equal(hits, 3, "gives up after the retry budget, not endlessly")
+		}
+	)
+})
+
+test("a 400 is not retried — a bad request will not fix itself", async () => {
+	let hits = 0
+
+	await withServer(
+		(req, res) => {
+			hits++
+			res.writeHead(400)
+			res.end("bad model")
+		},
+		async (url) => {
+			await assert.rejects(() => postJson(url, { body: {}, sleep: async () => {} }), /400/)
+			assert.equal(hits, 1)
 		}
 	)
 })

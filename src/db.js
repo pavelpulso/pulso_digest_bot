@@ -573,6 +573,20 @@ export function markDigestShown(userId, postIds) {
   many(postIds)
 }
 
+/** Every video the digest has ever shown this user, oldest first. `digest_shown` and the
+ * yt rows in `posts` are both kept forever — only video *rankings* are pruned — so this is
+ * the complete history, long past the 7-day candidate window. */
+export function getShownVideoIds(userId) {
+  const rows = db.prepare(
+    `SELECT p.post_id AS videoId
+     FROM digest_shown ds
+     JOIN posts p ON p.id = ds.post_id
+     WHERE ds.user_id = ? AND p.source = 'yt' AND p.post_id IS NOT NULL
+     ORDER BY ds.shown_at ASC`
+  ).all(userId)
+  return rows.map((r) => String(r.videoId))
+}
+
 export function getShownPostIds(userId) {
   const rows = db.prepare("SELECT post_id FROM digest_shown WHERE user_id = ?").all(userId)
   return new Set(rows.map((r) => r.post_id))
