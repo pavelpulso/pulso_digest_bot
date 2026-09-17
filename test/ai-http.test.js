@@ -147,3 +147,63 @@ test("a 400 is not retried — a bad request will not fix itself", async () => {
 		}
 	)
 })
+
+test("an error smuggled inside a 200 is treated as the failure it is", async () => {
+	let hits = 0
+
+	await withServer(
+		(req, res) => {
+			hits++
+			res.writeHead(200, { "Content-Type": "application/json" })
+			res.end(JSON.stringify({ error: { code: 429, message: "rate-limited upstream" } }))
+		},
+		async (url) => {
+			await assert.rejects(
+				() => postJson(url, { body: {}, sleep: async () => {} }),
+				(err) => {
+					assert.match(err.message, /429/)
+					assert.match(err.message, /rate-limited upstream/)
+					return true
+				}
+			)
+			assert.equal(hits, 1, "a non-5xx body error is not worth retrying")
+		}
+	)
+})
+
+test("a 200 carrying an upstream 503 is retried like a real 503", async () => {
+	let hits = 0
+	const waits = []
+
+	await withServer(
+		(req, res) => {
+			hits++
+			res.writeHead(200, { "Content-Type": "application/json" })
+			if (hits < 3) {
+				// OpenRouter's shape when the model behind a route is overloaded.
+				res.end(JSON.stringify({ error: { code: 503, message: "Upstream error: Service temporarily overloaded" } }))
+				return
+			}
+			res.end(JSON.stringify({ choices: [{ message: { content: "{}" } }] }))
+		},
+		async (url) => {
+			const data = await postJson(url, { body: {}, sleep: async (ms) => { waits.push(ms) } })
+			assert.ok(data.choices, "recovers once the upstream clears")
+			assert.equal(hits, 3)
+			assert.deepEqual(waits, [1000, 2000])
+		}
+	)
+})
+
+test("a normal response carrying no error field is untouched", async () => {
+	await withServer(
+		(req, res) => {
+			res.writeHead(200, { "Content-Type": "application/json" })
+			res.end(JSON.stringify({ choices: [{ message: { content: "hi" } }] }))
+		},
+		async (url) => {
+			const data = await postJson(url, { body: {}, sleep: async () => {} })
+			assert.equal(data.choices[0].message.content, "hi")
+		}
+	)
+})

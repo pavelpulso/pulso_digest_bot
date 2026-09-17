@@ -59,11 +59,11 @@ export async function postJson(url, {
 			continue
 		}
 
+		// A 5xx is the provider being momentarily unavailable, not a bad request: Gemini
+		// answers a demand spike with 503 "try again later", and without a retry that one
+		// spike burned all three providers (each cooled down) and killed the whole digest.
 		if (!res.ok) {
 			const text = await res.text()
-			// A 5xx is the provider being momentarily unavailable, not a bad request: Gemini
-			// answers a demand spike with 503 "try again later", and without a retry that one
-			// spike burned all three providers (each cooled down) and killed the whole digest.
 			if (res.status >= 500 && attempt < retries) {
 				await sleep(BACKOFF_BASE_MS * 2 ** (attempt - 1))
 				continue
@@ -71,6 +71,22 @@ export async function postJson(url, {
 			throw new Error(`HTTP ${res.status}: ${text.slice(0, 500)}`)
 		}
 
-		return await res.json()
+		const data = await res.json()
+
+		// OpenRouter reports an upstream failure with HTTP 200 and an error payload, so the
+		// status code alone cannot be trusted. Left unread, such a body reached the providers
+		// as a missing `choices` field and was reported as "empty response" — hiding both the
+		// real cause and, when the upstream was merely overloaded, the fact it was retryable.
+		const status = Number(data?.error?.code)
+		if (data?.error) {
+			const message = data.error.message || JSON.stringify(data.error)
+			if (status >= 500 && attempt < retries) {
+				await sleep(BACKOFF_BASE_MS * 2 ** (attempt - 1))
+				continue
+			}
+			throw new Error(`HTTP ${Number.isFinite(status) ? status : res.status}: ${String(message).slice(0, 500)}`)
+		}
+
+		return data
 	}
 }
