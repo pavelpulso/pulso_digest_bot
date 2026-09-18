@@ -1,3 +1,4 @@
+import { CliProxyAI } from "./CliProxyAI.js"
 import { GeminiAI } from "./GeminiAI.js"
 import { GroqAI } from "./GroqAI.js"
 import { OpenRouterAI } from "./OpenRouterAI.js"
@@ -7,7 +8,9 @@ const COOLDOWN_MS = parseInt(process.env.AI_COOLDOWN_MS, 10) || 15 * 60 * 1000
 
 /**
  * AI router with automatic fallback.
- * Provider order: Gemini → Groq → OpenRouter
+ * Provider order: CliProxy → Gemini → Groq → OpenRouter.
+ * CliProxy leads when configured: it reaches Pro-class models the free tiers cannot,
+ * and isReady() drops it from the chain when the proxy is not set up.
  */
 export class AIRouter {
   constructor(options = {}) {
@@ -29,8 +32,9 @@ export class AIRouter {
   }
 
   #initProviders() {
-    const all = [new GeminiAI(), new GroqAI(), new OpenRouterAI()]
+    const all = [new CliProxyAI(), new GeminiAI(), new GroqAI(), new OpenRouterAI()]
     if (AI_PROVIDER === "auto") return all
+    if (AI_PROVIDER === "cliproxy") return [new CliProxyAI()]
     if (AI_PROVIDER === "gemini") return [new GeminiAI()]
     if (AI_PROVIDER === "groq") return [new GroqAI()]
     if (AI_PROVIDER === "openrouter") return [new OpenRouterAI()]
