@@ -57,3 +57,31 @@ test("a provider that failed is not retried until its cooldown expires", async (
 	await assert.rejects(() => router.rankPosts([{ id: "1" }], ""))
 	assert.equal(calls.Alpha, 2, "cooldown expired, Alpha is tried again")
 })
+
+test("when every provider is cooling the next caller still gets real attempts", async () => {
+	const calls = { Alpha: 0, Beta: 0 }
+	let allFail = true
+	let clock = 1_000_000
+
+	const providers = [
+		makeProvider("Alpha", () => {
+			calls.Alpha++
+			throw new Error("429 quota exceeded")
+		}),
+		makeProvider("Beta", () => {
+			calls.Beta++
+			if (allFail) throw new Error("502 bad gateway")
+			return [{ post_id: "1", score: 5, reason: "" }]
+		})
+	]
+	const router = new AIRouter({ providers, now: () => clock, cooldownMs: 60_000 })
+
+	await assert.rejects(() => router.rankPosts([{ id: "1" }], ""))
+	assert.deepEqual(calls, { Alpha: 1, Beta: 1 }, "first caller burns both providers into cooldown")
+
+	allFail = false
+	clock += 1_000
+	const result = await router.rankPosts([{ id: "1" }], "")
+	assert.equal(result[0].post_id, "1", "second caller is served instead of being refused")
+	assert.equal(calls.Beta, 2, "Beta is actually called again, not skipped as cooling")
+})

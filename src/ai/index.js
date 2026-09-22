@@ -85,6 +85,7 @@ export class AIRouter {
       ? [this.currentProvider, ...this.providers.filter(p => p !== this.currentProvider)]
       : this.providers
 
+    // Все в cooldown — пробуем всех: иначе второй юзер в прогоне не получает ни одной попытки.
     const usable = ordered.filter(p => !this.#isCooling(p))
     return usable.length > 0 ? usable : ordered
   }
@@ -95,11 +96,6 @@ export class AIRouter {
         console.warn(`[AI] Provider ${provider.toString()} not ready, skipping`)
         failures.push({ provider: provider.toString(), message: "not ready" })
         this.#startCooldown(provider)
-        return null
-      }
-
-      if (this.#isCooling(provider)) {
-        failures.push({ provider: provider.toString(), message: "cooling down after a recent failure" })
         return null
       }
 

@@ -12,7 +12,7 @@ export class CliProxyAI extends BaseAI {
     this.apiKey = config.apiKey ?? process.env.CLIPROXY_API_KEY ?? ""
     this.model = config.model ?? process.env.CLIPROXY_MODEL ?? ""
     this.baseUrl = this.#endpointFrom(config.baseUrl ?? process.env.CLIPROXY_BASE_URL ?? "")
-    this.timeoutMs = config.timeoutMs
+    this.timeoutMs = config.timeoutMs ?? (parseInt(process.env.CLIPROXY_TIMEOUT_MS, 10) || 180_000)
   }
 
   #endpointFrom(raw) {
