@@ -44,6 +44,31 @@ test("a 429 with Retry-After waits exactly that long, then succeeds", async () =
 	)
 })
 
+test("a 429 asking to wait longer than a quota minute fails at once so the router can fall back", async () => {
+	let hits = 0
+	const waits = []
+
+	await withServer(
+		(req, res) => {
+			hits++
+			res.writeHead(429, { "Retry-After": "1125353" })
+			res.end(JSON.stringify({ error: { message: "usage_limit_reached" } }))
+		},
+		async (url) => {
+			await assert.rejects(
+				() => postJson(url, { body: {}, sleep: async (ms) => { waits.push(ms) } }),
+				(err) => {
+					assert.match(err.message, /HTTP 429/)
+					assert.match(err.message, /usage_limit_reached/)
+					return true
+				}
+			)
+			assert.deepEqual(waits, [], "a 13-day Retry-After must not be slept on")
+			assert.equal(hits, 1)
+		}
+	)
+})
+
 test("a 429 without Retry-After falls back to a full quota minute", async () => {
 	let hits = 0
 	const waits = []

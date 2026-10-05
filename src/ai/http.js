@@ -51,7 +51,12 @@ export async function postJson(url, {
 
 		if (res.status === 429) {
 			const waitMs = retryAfterMs(res.headers.get("retry-after"))
-			await res.text()
+			const text = await res.text()
+			// An exhausted subscription answers Retry-After in days; sleeping on it hung every
+			// digest for a week instead of letting the router fall back to the next provider.
+			if (waitMs > QUOTA_WINDOW_MS) {
+				throw new Error(`HTTP 429: retry after ${Math.round(waitMs / 1000)}s — ${text.slice(0, 500)}`)
+			}
 			if (attempt === retries) {
 				throw new Error(`HTTP 429: rate limited after ${retries} attempts`)
 			}
