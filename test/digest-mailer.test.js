@@ -18,10 +18,17 @@ test("not ready without a recipient or SMTP", () => {
 	assert.equal(new DigestMailer({ url: "smtp://x", to: "a@b.c" }).isReady(), true)
 })
 
-test("send puts every block into one mail with html and text parts", async () => {
+test("send puts every block with its full source posts into one mail", async () => {
 	const transport = recordingTransport()
 	const mailer = new DigestMailer({ to: "me@example.com", from: "bot@example.com", transport })
-	await mailer.send({ subject: "Pulso 2026-10-04", header: "<b>Digest</b>", blockTexts: ["one\ntwo", "<i>three</i>"] })
+	await mailer.send({
+		subject: "Pulso 2026-10-04",
+		header: "<b>Digest</b>",
+		blocks: [
+			{ text: "one\ntwo", sources: [{ channel: "ai_newz", url: "https://t.me/ai_newz/1", text: "Full <post>\nsecond line" }] },
+			{ text: "<i>three</i>", sources: [] }
+		]
+	})
 
 	assert.equal(transport.sent.length, 1)
 	const [msg] = transport.sent
@@ -29,6 +36,8 @@ test("send puts every block into one mail with html and text parts", async () =>
 	assert.equal(msg.from, "bot@example.com")
 	assert.equal(msg.subject, "Pulso 2026-10-04")
 	assert.match(msg.html, /one<br>two/)
+	assert.match(msg.html, /<a href="https:\/\/t.me\/ai_newz\/1">@ai_newz<\/a>/)
+	assert.match(msg.html, /Full &lt;post&gt;<br>second line/)
 	assert.match(msg.html, /<i>three<\/i>/)
-	assert.equal(msg.text, "Digest\n\none\ntwo\n\nthree")
+	assert.equal(msg.text, "Digest\n\none\ntwo\n\n@ai_newz — https://t.me/ai_newz/1\nFull <post>\nsecond line\n\nthree")
 })

@@ -880,7 +880,7 @@ export class BotService {
 				}
 
 				if (videosEnabled()) await this.sendVideoSection(botInstance.telegram, u.user_id)
-				await this.#mailDigest(u.user_id, digestDateStr, payload.header, blockTexts)
+				await this.mailDigest(u.user_id, digestDateStr, payload, blockTexts)
 
 				// Add digest feedback buttons
 				const feedbackKeyboard = {
@@ -914,11 +914,18 @@ export class BotService {
 		await this.#reportDigestFailures(botInstance, failures, users.length, digestDateStr)
 	}
 
-	async #mailDigest(userId, digestDateStr, header, blockTexts) {
+	async mailDigest(userId, digestDateStr, payload, blockTexts) {
 		const adminId = parseInt(process.env.ADMIN_ID, 10) || 0
 		if (userId !== adminId || !this.mailer.isReady()) return
 		try {
-			await this.mailer.send({ subject: `Pulso digest ${digestDateStr}`, header, blockTexts })
+			const textById = new Map(getPostsByIds(payload.blocks.flatMap((b) => b.ids)).map((p) => [p.id, p.text]))
+			const blocks = payload.blocks.map((b, i) => ({
+				text: blockTexts[i],
+				sources: b.ids
+					.filter((id) => payload.postById[id])
+					.map((id) => ({ channel: payload.postById[id].channel, url: payload.postById[id].postUrl, text: textById.get(id) }))
+			}))
+			await this.mailer.send({ subject: `Pulso digest ${digestDateStr}`, header: payload.header, blocks })
 			console.log("[morning digest] mailed to", this.mailer.to)
 		} catch (e) {
 			console.error("[morning digest] mail failed:", e.message)
