@@ -95,6 +95,7 @@ async function cleanLeadTitles(ai, leads) {
 
 export const VIDEO_WINDOW_DAYS = 7
 const VIDEO_LEAD_COUNT = 3
+export const videosEnabled = () => process.env.YT_VIDEOS !== "0"
 export const VIDEO_DAILY_CAP = 30
 // Size of the synced YouTube playlist (a showcase), distinct from VIDEO_DAILY_CAP (the digest's daily ceiling).
 export const PLAYLIST_SIZE = 20
@@ -878,7 +879,7 @@ export class BotService {
 					if (postId) this.mgr.cache.setBlock(postId, { normalText: blockText, block, postById: payload.postById, reason })
 				}
 
-				await this.sendVideoSection(botInstance.telegram, u.user_id)
+				if (videosEnabled()) await this.sendVideoSection(botInstance.telegram, u.user_id)
 				await this.#mailDigest(u.user_id, digestDateStr, payload.header, blockTexts)
 
 				// Add digest feedback buttons

@@ -13,7 +13,7 @@ import { collectYouTubeVideos } from "./youtube/collector.js"
 import { YouTubeClient } from "./youtube/client.js"
 import { syncPlaylist, appendToArchive } from "./youtube/playlist.js"
 import { getDigestDate } from "./utils.js"
-import { VIDEO_WINDOW_DAYS } from "./services/BotService.js"
+import { VIDEO_WINDOW_DAYS, videosEnabled } from "./services/BotService.js"
 
 const ACTION = process.argv.find(a => a.startsWith("--action="))?.split("=")[1] || "collect"
 
@@ -57,7 +57,9 @@ async function runCollection() {
     }
 
     // YouTube не имеет права отменить уже собранные посты, поэтому свой try/catch.
-    try {
+    if (!videosEnabled()) {
+      console.log("[cron-job] YouTube collection disabled (YT_VIDEOS=0).")
+    } else try {
       const yt = await collectYouTubeVideos({
         client: new YouTubeClient(),
         addedBy: parseInt(process.env.ADMIN_ID, 10) || 0
