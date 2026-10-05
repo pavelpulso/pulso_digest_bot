@@ -34,6 +34,7 @@ import { getUserSystemPrompt } from "./SystemPromptLoader.js"
 import { formatDateLabel, MIN_DIGEST_SCORE, DIGEST_PAGE_SIZE, getDigestDate } from "../utils.js"
 import { UIFormatter } from "../ui/UIFormatter.js"
 import { KeyboardProvider } from "../ui/KeyboardProvider.js"
+import { DigestMailer } from "./DigestMailer.js"
 import { collectChannelPosts } from "../gramjs.js"
 import { computeBoost, computeLikeBoost } from "../youtube/scoring.js"
 import { computeForwardBoost, negativeShare, computePolarityFactor, parseReactions } from "../telegram/signals.js"
@@ -107,8 +108,9 @@ const POST_NORM_MIN_AGE_HOURS = 24
 const POST_NORM_MAX_AGE_DAYS = 90
 
 export class BotService {
-	constructor(botManager) {
+	constructor(botManager, { mailer = new DigestMailer() } = {}) {
 		this.mgr = botManager
+		this.mailer = mailer
 	}
 
 	digestDate() {
@@ -860,11 +862,13 @@ export class BotService {
 				await botInstance.telegram.sendMessage(u.user_id, "<b>Top picks for you:</b>", { parse_mode: "HTML", disable_web_page_preview: true })
 
 				const compact = getDigestFormat(u.user_id) === "compact"
+				const blockTexts = []
 				for (const [index, block] of payload.blocks.entries()) {
 					const postId = block.ids.length === 1 ? block.ids[0] : null
 					const reason = postId ? payload.rankMap[postId]?.reason : null
 					const channel = postId && payload.postById[postId] ? payload.postById[postId].channel : null
 					const blockText = UIFormatter.formatBlockText(block, payload.postById, { compact, isTop: index === 0 })
+					blockTexts.push(blockText)
 					const kb = KeyboardProvider.blockKeyboard(postId, !!reason, false, channel)
 					await botInstance.telegram.sendMessage(u.user_id, blockText, {
 						parse_mode: "HTML",
@@ -875,6 +879,7 @@ export class BotService {
 				}
 
 				await this.sendVideoSection(botInstance.telegram, u.user_id)
+				await this.#mailDigest(u.user_id, digestDateStr, payload.header, blockTexts)
 
 				// Add digest feedback buttons
 				const feedbackKeyboard = {
@@ -906,6 +911,17 @@ export class BotService {
 		}
 
 		await this.#reportDigestFailures(botInstance, failures, users.length, digestDateStr)
+	}
+
+	async #mailDigest(userId, digestDateStr, header, blockTexts) {
+		const adminId = parseInt(process.env.ADMIN_ID, 10) || 0
+		if (userId !== adminId || !this.mailer.isReady()) return
+		try {
+			await this.mailer.send({ subject: `Pulso digest ${digestDateStr}`, header, blockTexts })
+			console.log("[morning digest] mailed to", this.mailer.to)
+		} catch (e) {
+			console.error("[morning digest] mail failed:", e.message)
+		}
 	}
 
 	/**
